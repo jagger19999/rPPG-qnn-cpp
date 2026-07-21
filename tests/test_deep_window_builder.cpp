@@ -270,6 +270,17 @@ void one_second_scheduler_avoids_per_frame_materialization() {
   EXPECT_TRUE(builder.materialization_count() <= static_cast<std::size_t>(25));
 }
 
+void ready_window_remains_ready_pending_after_a_successful_ingest() {
+  rppg_qnn::DeepWindowBuilder builder(6.0, 180, {72, 72});
+  for (int index = 0; index <= 180; ++index) {
+    EXPECT_TRUE(builder.ingest_roi(flat_packet(index / 30.0)));
+  }
+  EXPECT_TRUE(builder.build_latest().has_value());
+  EXPECT_EQ(builder.status(), std::string("ready"));
+  EXPECT_TRUE(builder.ingest_roi(flat_packet(181.0 / 30.0)));
+  EXPECT_EQ(builder.status(), std::string("ready_pending"));
+}
+
 }  // namespace
 
 int main() {
@@ -280,5 +291,6 @@ int main() {
   owns_roi_pixels_after_the_caller_reuses_the_buffer();
   ingests_many_frames_without_materializing_until_requested();
   one_second_scheduler_avoids_per_frame_materialization();
+  ready_window_remains_ready_pending_after_a_successful_ingest();
   return test_support::finish();
 }

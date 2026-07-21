@@ -56,7 +56,8 @@ bool DeepWindowBuilder::ingest_roi(const RoiPacket& packet) {
          frames_.front().timestamp_sec < packet.timestamp_sec - 2.0 * window_sec_) {
     frames_.pop_front();
   }
-  status_ = "sampling";
+  status_ = (status_ == "ready" || status_ == "ready_pending") ? "ready_pending"
+                                                               : "sampling";
   return true;
 }
 

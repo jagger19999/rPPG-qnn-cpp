@@ -30,13 +30,18 @@ class VideoFrameSource final : public FrameSource {
     if (!std::isfinite(nominal_fps_) || nominal_fps_ <= 0.0) {
       input_open_failed("Video input has no usable frame rate: " + path.string());
     }
+    frame_count_ = capture_.get(cv::CAP_PROP_FRAME_COUNT);
   }
 
   std::optional<FramePacket> read() override {
     cv::Mat frame;
     if (!capture_.read(frame) || frame.empty()) {
-      eof_ = true;
-      return std::nullopt;
+      if (std::isfinite(frame_count_) && frame_count_ > 0.0 &&
+          static_cast<double>(next_frame_id_) >= std::ceil(frame_count_)) {
+        eof_ = true;
+        return std::nullopt;
+      }
+      input_open_failed("Video input ended before its reported frame count");
     }
 
     FramePacket packet;
@@ -54,6 +59,7 @@ class VideoFrameSource final : public FrameSource {
   cv::VideoCapture capture_;
   std::uint64_t next_frame_id_{0};
   double nominal_fps_{0.0};
+  double frame_count_{0.0};
   bool eof_{false};
 };
 

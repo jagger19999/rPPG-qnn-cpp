@@ -216,6 +216,98 @@ class SlowSink final : public rppg_qnn::IResultSink {
   void close(int) override {}
 };
 
+class EmptyThrowSink final : public rppg_qnn::IResultSink {
+ public:
+  void publish(const rppg_qnn::PreflightResult&) override {}
+  void publish_runtime_error(const std::string&, const std::string&) override {}
+  void publish(const rppg_qnn::FrameHealth&) override { throw std::runtime_error(""); }
+  void publish(const rppg_qnn::HeartRateResult&) override {}
+  void close(int) override {}
+};
+
+class HeartRateFloodSource final : public rppg_qnn::FrameSource {
+ public:
+  std::optional<rppg_qnn::FramePacket> read() override {
+    if (index_ == 300) {
+      eof_ = true;
+      return std::nullopt;
+    }
+    return rppg_qnn::FramePacket{static_cast<std::uint64_t>(index_),
+                                  static_cast<double>(index_++),
+                                  cv::Mat(96, 96, CV_8UC3, cv::Scalar(1, 100, 3))};
+  }
+  bool eof() const override { return eof_; }
+  double nominal_fps() const override { return 30.0; }
+ private:
+  int index_{0};
+  bool eof_{false};
+};
+
+class DeepScheduleSource final : public rppg_qnn::FrameSource {
+ public:
+  std::optional<rppg_qnn::FramePacket> read() override {
+    if (index_ == 211) {
+      eof_ = true;
+      return std::nullopt;
+    }
+    return rppg_qnn::FramePacket{static_cast<std::uint64_t>(index_),
+                                  index_++ / 30.0,
+                                  cv::Mat(96, 96, CV_8UC3, cv::Scalar(1, 100, 3))};
+  }
+  bool eof() const override { return eof_; }
+  double nominal_fps() const override { return 30.0; }
+ private:
+  int index_{0};
+  bool eof_{false};
+};
+
+class InvalidRoiAtSevenSeconds final : public rppg_qnn::IRoiProcessor {
+ public:
+  rppg_qnn::RoiPacket process(const rppg_qnn::FramePacket& frame) override {
+    cv::Mat roi(64, 64, frame.frame_id == 210U ? CV_8UC1 : CV_8UC3,
+                cv::Scalar(1, 100, 3));
+    return {frame.frame_id, frame.timestamp_sec, std::move(roi),
+            rppg_qnn::FaceBox{16, 20, 64, 64, 1.0}, false};
+  }
+};
+
+class RecordingDeepRuntime final : public rppg_qnn::IDeepRuntime {
+ public:
+  explicit RecordingDeepRuntime(std::vector<double>* input_ends) : input_ends_(input_ends) {}
+  [[nodiscard]] std::string backend_name() const override { return "recording"; }
+  rppg_qnn::HeartRateResult infer(const rppg_qnn::DeepInput& input) override {
+    input_ends_->push_back(input.end_sec);
+    rppg_qnn::HeartRateResult result;
+    result.method = "RECORDING";
+    result.backend = backend_name();
+    result.window_start_sec = input.start_sec;
+    result.window_end_sec = input.end_sec;
+    result.source_fps = input.source_fps;
+    result.source_frame_count = input.source_frame_count;
+    result.max_frame_gap_sec = input.max_frame_gap_sec;
+    return result;
+  }
+ private:
+  std::vector<double>* input_ends_;
+};
+
+class SlowResultSink final : public rppg_qnn::IResultSink {
+ public:
+  explicit SlowResultSink(const std::filesystem::path& path) : inner_(path) {}
+  void publish(const rppg_qnn::PreflightResult& result) override { inner_.publish(result); }
+  void publish_runtime_error(const std::string& code, const std::string& message) override {
+    inner_.publish_runtime_error(code, message);
+  }
+  void publish(const rppg_qnn::FrameHealth& result) override { inner_.publish(result); }
+  void publish(const rppg_qnn::HeartRateResult& result) override {
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    inner_.publish(result);
+  }
+  void close(int exit_code) override { inner_.close(exit_code); }
+ private:
+  rppg_qnn::ResultSink inner_;
+};
+
 rppg_qnn::PipelineDependencies video_dependencies(const std::filesystem::path& video,
                                                    int* reads,
                                                    bool* deep_factory_called) {
@@ -386,6 +478,58 @@ void slow_output_does_not_hold_up_capture() {
   EXPECT_TRUE(std::chrono::steady_clock::now() - final_read >= std::chrono::milliseconds(80));
 }
 
+void empty_output_exception_never_becomes_a_successful_session() {
+  ScopedDirectory directory;
+  rppg_qnn::AppConfig config;
+  config.video = "unused.avi";
+  config.output = directory.path() / "empty-throw";
+  rppg_qnn::Pipeline pipeline(
+      config,
+      {[] { return std::make_unique<SingleFrameSource>(); },
+       [] { return std::make_unique<FixedRoi>(); }, {},
+       [](const std::filesystem::path&) { return std::make_unique<EmptyThrowSink>(); }});
+  ScopedCerrCapture stderr_capture;
+  EXPECT_EQ(pipeline.run(), 13);
+  EXPECT_TRUE(stderr_capture.str().find("OUTPUT_WRITE_FAILED:") == 0U);
+}
+
+void a_full_heart_rate_queue_reserves_one_runtime_error_slot() {
+  ScopedDirectory directory;
+  rppg_qnn::AppConfig config;
+  config.video = "unused.avi";
+  config.output = directory.path() / "queue-full";
+  rppg_qnn::Pipeline pipeline(
+      config,
+      {[] { return std::make_unique<HeartRateFloodSource>(); },
+       [] { return std::make_unique<FixedRoi>(); }, {},
+       [](const std::filesystem::path& path) { return std::make_unique<SlowResultSink>(path); }});
+  ScopedCerrCapture stderr_capture;
+  EXPECT_EQ(pipeline.run(), 13);
+  const std::string summary = read_file(config.output / "session_summary.json");
+  EXPECT_TRUE(summary.find("\"exit_code\":13") != std::string::npos);
+  EXPECT_TRUE(summary.find("\"runtime_error_count\":1") != std::string::npos);
+}
+
+void rejected_roi_does_not_schedule_a_stale_deep_window() {
+  ScopedDirectory directory;
+  std::vector<double> input_ends;
+  rppg_qnn::AppConfig config;
+  config.video = "unused.avi";
+  config.deep = "fake";
+  config.output = directory.path() / "invalid-roi";
+  rppg_qnn::Pipeline pipeline(
+      config,
+      {[] { return std::make_unique<DeepScheduleSource>(); },
+       [] { return std::make_unique<InvalidRoiAtSevenSeconds>(); },
+       [&input_ends] { return std::make_unique<RecordingDeepRuntime>(&input_ends); }, {}});
+
+  EXPECT_EQ(pipeline.run(), 0);
+  EXPECT_EQ(input_ends.size(), static_cast<std::size_t>(1));
+  if (!input_ends.empty()) {
+    EXPECT_EQ(input_ends.front(), 6.0);
+  }
+}
+
 void slow_fake_runtime_keeps_every_capture_frame() {
   ScopedDirectory directory;
   const std::filesystem::path video = directory.path() / "pulse.avi";
@@ -463,6 +607,9 @@ int main() {
   runtime_failures_are_reported_and_closed();
   transient_empty_reads_recover_but_permanent_empty_reads_fail();
   slow_output_does_not_hold_up_capture();
+  empty_output_exception_never_becomes_a_successful_session();
+  a_full_heart_rate_queue_reserves_one_runtime_error_slot();
+  rejected_roi_does_not_schedule_a_stale_deep_window();
   slow_fake_runtime_keeps_every_capture_frame();
   roi_runtime_failures_are_reported_and_closed();
   cli_preflight_only_reports_unavailable_qnn_without_a_camera_or_cascade();

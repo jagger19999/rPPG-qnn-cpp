@@ -73,7 +73,9 @@ bool is_new_window(const std::optional<HeartRateResult>& result,
 
 class AsyncOutputWorker {
  public:
-  explicit AsyncOutputWorker(IResultSink& sink) : sink_(sink), thread_(&AsyncOutputWorker::run, this) {}
+  explicit AsyncOutputWorker(IResultSink& sink) : sink_(sink) {
+    thread_ = std::thread(&AsyncOutputWorker::run, this);
+  }
   ~AsyncOutputWorker() { close_noexcept(); }
 
   AsyncOutputWorker(const AsyncOutputWorker&) = delete;
@@ -83,7 +85,7 @@ class AsyncOutputWorker {
   bool submit(HeartRateResult result) { return submit_result(std::move(result)); }
   bool submit_runtime_error(std::string code, std::string message) {
     std::lock_guard<std::mutex> lock(mutex_);
-    if (closed_ || !failure_.empty() || events_.size() >= kMaxOutputEvents) {
+    if (closed_ || closing_ || failure_ != nullptr || events_.size() >= kMaxOutputEvents) {
       return false;
     }
     OutputEvent event;
@@ -96,9 +98,10 @@ class AsyncOutputWorker {
   }
 
   void close() {
+    std::lock_guard<std::mutex> close_lock(close_mutex_);
     {
       std::lock_guard<std::mutex> lock(mutex_);
-      if (!closed_) {
+      if (!closed_ && !closing_) {
         closing_ = true;
         condition_.notify_one();
       }
@@ -106,10 +109,20 @@ class AsyncOutputWorker {
     if (thread_.joinable()) {
       thread_.join();
     }
-    closed_ = true;
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (!failure_.empty()) {
-      throw AppError(ErrorCode::OutputWriteFailed, failure_);
+    std::exception_ptr failure;
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      closed_ = true;
+      failure = failure_;
+    }
+    if (failure != nullptr) {
+      try {
+        std::rethrow_exception(failure);
+      } catch (const std::exception& error) {
+        throw AppError(ErrorCode::OutputWriteFailed, error.what());
+      } catch (...) {
+        throw AppError(ErrorCode::OutputWriteFailed, "non-standard output failure");
+      }
     }
   }
 
@@ -124,7 +137,7 @@ class AsyncOutputWorker {
 
   bool submit_health(FrameHealth health) {
     std::lock_guard<std::mutex> lock(mutex_);
-    if (closed_ || !failure_.empty()) {
+    if (closed_ || closing_ || failure_ != nullptr) {
       return false;
     }
     latest_health_ = std::move(health);
@@ -134,7 +147,8 @@ class AsyncOutputWorker {
 
   bool submit_result(HeartRateResult result) {
     std::lock_guard<std::mutex> lock(mutex_);
-    if (closed_ || !failure_.empty() || events_.size() >= kMaxOutputEvents) {
+    if (closed_ || closing_ || failure_ != nullptr ||
+        events_.size() >= kMaxOutputEvents - 1U) {
       return false;
     }
     OutputEvent event;
@@ -152,9 +166,9 @@ class AsyncOutputWorker {
       {
         std::unique_lock<std::mutex> lock(mutex_);
         condition_.wait(lock, [this] {
-          return closing_ || !failure_.empty() || latest_health_.has_value() || !events_.empty();
+          return closing_ || failure_ != nullptr || latest_health_.has_value() || !events_.empty();
         });
-        if (!failure_.empty()) {
+        if (failure_ != nullptr) {
           return;
         }
         if (!events_.empty()) {
@@ -177,14 +191,14 @@ class AsyncOutputWorker {
         } else if (health.has_value()) {
           sink_.publish(*health);
         }
-      } catch (const std::exception& error) {
+      } catch (const std::exception&) {
         std::lock_guard<std::mutex> lock(mutex_);
-        failure_ = error.what();
+        failure_ = std::current_exception();
         condition_.notify_all();
         return;
       } catch (...) {
         std::lock_guard<std::mutex> lock(mutex_);
-        failure_ = "non-standard output failure";
+        failure_ = std::current_exception();
         condition_.notify_all();
         return;
       }
@@ -201,12 +215,13 @@ class AsyncOutputWorker {
   IResultSink& sink_;
   std::mutex mutex_;
   std::condition_variable condition_;
+  std::mutex close_mutex_;
   std::optional<FrameHealth> latest_health_;
   std::deque<OutputEvent> events_;
-  std::thread thread_;
   bool closing_{false};
   bool closed_{false};
-  std::string failure_;
+  std::exception_ptr failure_;
+  std::thread thread_;
 };
 
 void require_output(bool submitted) {
@@ -304,10 +319,10 @@ int Pipeline::run() {
           }
         }
         if (deep_builder.has_value()) {
-          (void)deep_builder->ingest_roi(roi);
+          const bool ingested = deep_builder->ingest_roi(roi);
           health.status = deep_builder->status();
-          if (!last_deep_build_sec.has_value() ||
-              roi.timestamp_sec - *last_deep_build_sec >= 1.0) {
+          if (ingested && (!last_deep_build_sec.has_value() ||
+                           roi.timestamp_sec - *last_deep_build_sec >= 1.0)) {
             last_deep_build_sec = roi.timestamp_sec;
             std::optional<DeepInput> input = deep_builder->build_latest();
             health.status = deep_builder->status();
