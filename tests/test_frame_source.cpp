@@ -6,6 +6,7 @@
 #include <cmath>
 #include <filesystem>
 #include <string>
+#include <system_error>
 
 #include <opencv2/core.hpp>
 #include <opencv2/videoio.hpp>
@@ -39,7 +40,10 @@ class TemporaryVideo {
     }
   }
 
-  ~TemporaryVideo() { std::filesystem::remove(path_); }
+  ~TemporaryVideo() noexcept {
+    std::error_code error;
+    std::filesystem::remove(path_, error);
+  }
 
   const std::filesystem::path& path() const { return path_; }
 
@@ -52,6 +56,7 @@ void reads_timestamped_video_frames() {
   auto source = make_video_source(video.path());
 
   EXPECT_TRUE(std::abs(source->nominal_fps() - 24.0) < 0.1);
+  EXPECT_TRUE(!source->eof());
 
   const auto first_packet = source->read();
   EXPECT_TRUE(first_packet.has_value());
@@ -80,6 +85,7 @@ void reads_timestamped_video_frames() {
     EXPECT_TRUE(!packet->bgr.empty());
     EXPECT_TRUE(cv::mean(packet->bgr)[0] > 0.0 || cv::mean(packet->bgr)[1] > 0.0 ||
                 cv::mean(packet->bgr)[2] > 0.0);
+    EXPECT_TRUE(!source->eof());
     previous_timestamp = packet->timestamp_sec;
   }
 
@@ -87,6 +93,18 @@ void reads_timestamped_video_frames() {
 
   EXPECT_TRUE(!source->read().has_value());
   EXPECT_TRUE(source->eof());
+  EXPECT_TRUE(!source->read().has_value());
+  EXPECT_TRUE(source->eof());
+}
+
+void removes_temporary_video_without_throwing() {
+  std::filesystem::path path;
+  {
+    TemporaryVideo video;
+    path = video.path();
+    EXPECT_TRUE(std::filesystem::exists(path));
+  }
+  EXPECT_TRUE(!std::filesystem::exists(path));
 }
 
 void rejects_unopenable_video_input() {
@@ -118,6 +136,7 @@ void rejects_symbolic_and_whitespace_camera_suffixes() {
   EXPECT_TRUE(is_invalid_camera_device_name("/dev/video"));
   EXPECT_TRUE(is_invalid_camera_device_name("/dev/video 0"));
   EXPECT_TRUE(is_invalid_camera_device_name("/dev/video0 "));
+  EXPECT_TRUE(is_invalid_camera_device_name("/dev/video999999999999999999999999"));
 }
 
 void rejects_nonexistent_camera_device() {
@@ -130,6 +149,7 @@ void rejects_nonexistent_camera_device() {
 
 int main() {
   reads_timestamped_video_frames();
+  removes_temporary_video_without_throwing();
   rejects_unopenable_video_input();
   rejects_invalid_camera_device_name();
   rejects_symbolic_and_whitespace_camera_suffixes();

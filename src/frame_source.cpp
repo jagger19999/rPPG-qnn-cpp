@@ -101,7 +101,8 @@ class CameraFrameSource final : public FrameSource {
 
     const double negotiated_width = capture_.get(cv::CAP_PROP_FRAME_WIDTH);
     const double negotiated_height = capture_.get(cv::CAP_PROP_FRAME_HEIGHT);
-    if (negotiated_width <= 0.0 || negotiated_height <= 0.0) {
+    if (!std::isfinite(negotiated_width) || negotiated_width <= 0.0 ||
+        !std::isfinite(negotiated_height) || negotiated_height <= 0.0) {
       throw AppError(ErrorCode::CameraFormatUnsupported,
                      "Camera reported an unsupported frame format");
     }
