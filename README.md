@@ -16,7 +16,7 @@
 
 ```bash
 sudo apt update
-sudo apt install -y build-essential cmake ninja-build pkg-config \
+sudo apt install -y build-essential cmake ninja-build pkg-config file \
   libopencv-dev opencv-data v4l-utils
 ```
 
@@ -45,7 +45,9 @@ export CMAKE_PREFIX_PATH="$AARCH64_SYSROOT/usr"
 ./scripts/build_linux.sh aarch64
 ```
 
-脚本使用仓库内的 `cmake/Toolchains/aarch64-linux.cmake`。交叉构建只编译测试，不在宿主机运行 AArch64 测试；测试应在台架上补跑。可通过 `BUILD_DIR` 和 `STAGE_DIR` 使用独立的构建、安装目录。
+脚本使用仓库内的 `cmake/Toolchains/aarch64-linux.cmake`。交叉构建只编译测试，不在宿主机运行 AArch64 测试；测试应在台架上补跑。打包前，脚本用 `file` 强制确认交叉产物是 Linux ELF AArch64；原生模式也会确认产物格式和架构与当前主机一致。
+
+`native` 与 `aarch64` 必须使用不同的 `BUILD_DIR`。脚本会在构建目录记录模式；发现模式不符，或发现没有可信模式标记的旧 `CMakeCache.txt` 时会在配置前停止。升级自早期版本时请指定一个新的空构建目录。可通过 `BUILD_DIR` 和 `STAGE_DIR` 使用独立目录，路径中允许空格。
 
 安装包布局：
 
@@ -57,7 +59,7 @@ stage/rppg-qnn/
   share/rppg-qnn/config/runtime-defaults.env
 ```
 
-发布包不应出现 `models/`、`.pth`、`.onnx`、`.dlc` 或 Python 文件。
+发布包不应出现 `models/`、`.pth`、`.onnx`、`.dlc` 或 Python 文件。每次打包都先安装到 `STAGE_DIR` 同级的全新临时目录，核对固定文件白名单和架构，再替换最终目录；旧目录里的模型、Python 文件或其他污染不会遗留。为避免误删，`STAGE_DIR` 不允许指向源码目录、构建目录或符号链接。
 
 ## QAIRT/QNN 环境
 
@@ -69,6 +71,12 @@ export QAIRT_TARGET_LIB_DIR=/opt/qairt/2.xx.x/lib/aarch64-linux
 ```
 
 启动脚本只把发布包的 `lib` 和可选的 `QAIRT_TARGET_LIB_DIR` 前置到当前 `LD_LIBRARY_PATH`，不会使用 `sudo`、复制文件到系统库目录或覆盖全局配置。
+
+安装包附带可修改的环境默认值。文件中的变量带有 `export`，因此 source 后对启动的子进程可见：
+
+```bash
+source stage/rppg-qnn/share/rppg-qnn/config/runtime-defaults.env
+```
 
 先用绝对路径做动态库预检：
 
