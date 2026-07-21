@@ -57,7 +57,7 @@ std::optional<DeepInput> DeepWindowBuilder::add_roi(const RoiPacket& packet) {
     frames_.pop_front();
   }
   if (packet.timestamp_sec - frames_.front().timestamp_sec < window_sec_) {
-    status_ = "sampling";
+    status_ = "start_coverage_missing";
     return std::nullopt;
   }
 
@@ -65,11 +65,19 @@ std::optional<DeepInput> DeepWindowBuilder::add_roi(const RoiPacket& packet) {
   const double start = end - window_sec_;
   std::vector<const Frame*> source;
   source.reserve(frames_.size());
+  const Frame* prestart = nullptr;
   for (const Frame& frame : frames_) {
-    if (frame.timestamp_sec >= start && frame.timestamp_sec <= end) {
+    if (frame.timestamp_sec <= start) {
+      prestart = &frame;
+    } else if (frame.timestamp_sec <= end) {
       source.push_back(&frame);
     }
   }
+  if (prestart == nullptr) {
+    status_ = "start_coverage_missing";
+    return std::nullopt;
+  }
+  source.insert(source.begin(), prestart);
   if (source.size() < 2U) {
     status_ = "sampling";
     return std::nullopt;
@@ -131,6 +139,6 @@ std::optional<DeepInput> DeepWindowBuilder::add_roi(const RoiPacket& packet) {
   return input;
 }
 
-const std::string& DeepWindowBuilder::status() const { return status_; }
+std::string DeepWindowBuilder::status() const { return status_; }
 
 }  // namespace rppg_qnn

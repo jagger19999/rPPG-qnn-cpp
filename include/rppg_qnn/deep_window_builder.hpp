@@ -17,7 +17,7 @@ class DeepWindowBuilder {
                     cv::Size output_size);
 
   [[nodiscard]] std::optional<DeepInput> add_roi(const RoiPacket& packet);
-  [[nodiscard]] const std::string& status() const;
+  [[nodiscard]] std::string status() const;
 
  private:
   struct Frame {
