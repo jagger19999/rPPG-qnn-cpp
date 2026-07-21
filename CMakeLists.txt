@@ -2,6 +2,8 @@ cmake_minimum_required(VERSION 3.20)
 
 project(rppg_qnn_cpp VERSION 0.1.0 LANGUAGES CXX)
 
+include(GNUInstallDirs)
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -30,6 +32,19 @@ endif()
 add_executable(rppg_qnn_live src/main.cpp)
 target_link_libraries(rppg_qnn_live PRIVATE rppg_qnn_core)
 target_compile_options(rppg_qnn_live PRIVATE -Wall -Wextra -Wpedantic -Werror)
+if(UNIX AND NOT APPLE)
+  set_target_properties(rppg_qnn_live PROPERTIES
+                        INSTALL_RPATH "$ORIGIN/../${CMAKE_INSTALL_LIBDIR}")
+endif()
+
+install(TARGETS rppg_qnn_live
+        RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+install(PROGRAMS packaging/run_rppg_qnn.sh
+        DESTINATION ${CMAKE_INSTALL_BINDIR})
+install(FILES README.md
+        DESTINATION ${CMAKE_INSTALL_DATADIR}/rppg-qnn)
+install(FILES config/runtime-defaults.env
+        DESTINATION ${CMAKE_INSTALL_DATADIR}/rppg-qnn/config)
 
 include(CTest)
 if(BUILD_TESTING)
@@ -130,4 +145,8 @@ if(BUILD_TESTING)
   add_dependencies(test_pipeline rppg_qnn_live)
   add_test(NAME pipeline COMMAND test_pipeline)
   set_tests_properties(pipeline PROPERTIES TIMEOUT 30)
+
+  add_test(NAME packaging
+           COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_packaging.sh
+                        ${CMAKE_CURRENT_SOURCE_DIR})
 endif()
