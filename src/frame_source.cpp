@@ -67,6 +67,12 @@ int parse_camera_index(const std::string& camera) {
 
   const char* const begin = camera.data() + kPrefixLength;
   const char* const end = camera.data() + camera.size();
+  for (const char* character = begin; character != end; ++character) {
+    if (*character < '0' || *character > '9') {
+      input_open_failed("Camera device must be /dev/video followed by an index: " + camera);
+    }
+  }
+
   int index = 0;
   const auto conversion = std::from_chars(begin, end, index);
   if (conversion.ec != std::errc{} || conversion.ptr != end || index < 0) {

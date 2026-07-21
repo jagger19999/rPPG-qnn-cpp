@@ -53,14 +53,28 @@ void reads_timestamped_video_frames() {
 
   EXPECT_TRUE(std::abs(source->nominal_fps() - 24.0) < 0.1);
 
-  double previous_timestamp = -1.0;
-  for (std::uint64_t expected_id = 0; expected_id < 12; ++expected_id) {
+  const auto first_packet = source->read();
+  EXPECT_TRUE(first_packet.has_value());
+  if (!first_packet.has_value()) {
+    return;
+  }
+  EXPECT_EQ(first_packet->frame_id, 0U);
+  EXPECT_TRUE(std::abs(first_packet->timestamp_sec) < 1e-12);
+  EXPECT_TRUE(first_packet->bgr.cols == 64 && first_packet->bgr.rows == 48);
+  EXPECT_TRUE(!first_packet->bgr.empty());
+  const cv::Mat first_frame_snapshot = first_packet->bgr.clone();
+
+  double previous_timestamp = first_packet->timestamp_sec;
+  for (std::uint64_t expected_id = 1; expected_id < 12; ++expected_id) {
     const auto packet = source->read();
     EXPECT_TRUE(packet.has_value());
     if (!packet.has_value()) {
       break;
     }
     EXPECT_EQ(packet->frame_id, expected_id);
+    EXPECT_TRUE(std::abs(packet->timestamp_sec -
+                         static_cast<double>(expected_id) / source->nominal_fps()) <
+                1e-12);
     EXPECT_TRUE(packet->timestamp_sec > previous_timestamp);
     EXPECT_TRUE(packet->bgr.cols == 64 && packet->bgr.rows == 48);
     EXPECT_TRUE(!packet->bgr.empty());
@@ -68,6 +82,8 @@ void reads_timestamped_video_frames() {
                 cv::mean(packet->bgr)[2] > 0.0);
     previous_timestamp = packet->timestamp_sec;
   }
+
+  EXPECT_TRUE(cv::norm(first_packet->bgr, first_frame_snapshot, cv::NORM_INF) == 0.0);
 
   EXPECT_TRUE(!source->read().has_value());
   EXPECT_TRUE(source->eof());
@@ -84,6 +100,26 @@ void rejects_invalid_camera_device_name() {
   EXPECT_APP_ERROR(make_camera_source(config), ErrorCode::CameraOpenFailed);
 }
 
+bool is_invalid_camera_device_name(const std::string& camera) {
+  AppConfig config;
+  config.camera = camera;
+  try {
+    (void)make_camera_source(config);
+  } catch (const rppg_qnn::AppError& error) {
+    return error.code() == ErrorCode::CameraOpenFailed &&
+           std::string(error.what()).rfind("Camera device must be /dev/video", 0) == 0;
+  }
+  return false;
+}
+
+void rejects_symbolic_and_whitespace_camera_suffixes() {
+  EXPECT_TRUE(is_invalid_camera_device_name("/dev/video-0"));
+  EXPECT_TRUE(is_invalid_camera_device_name("/dev/video+0"));
+  EXPECT_TRUE(is_invalid_camera_device_name("/dev/video"));
+  EXPECT_TRUE(is_invalid_camera_device_name("/dev/video 0"));
+  EXPECT_TRUE(is_invalid_camera_device_name("/dev/video0 "));
+}
+
 void rejects_nonexistent_camera_device() {
   AppConfig config;
   config.camera = "/dev/video999999";
@@ -96,6 +132,7 @@ int main() {
   reads_timestamped_video_frames();
   rejects_unopenable_video_input();
   rejects_invalid_camera_device_name();
+  rejects_symbolic_and_whitespace_camera_suffixes();
   rejects_nonexistent_camera_device();
   return test_support::finish();
 }
