@@ -10,6 +10,7 @@ namespace rppg_qnn {
 
 struct LibraryProbe {
   bool loaded{false};
+  std::string attempted_path;
   std::string resolved_path;
   std::string error;
 };

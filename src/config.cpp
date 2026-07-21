@@ -5,6 +5,7 @@
 #include <charconv>
 #include <cctype>
 #include <cmath>
+#include <cstdlib>
 #include <set>
 #include <stdexcept>
 #include <string>
@@ -83,10 +84,20 @@ void require_one_of(const std::string& value,
   config_invalid(message);
 }
 
+void apply_environment_default(std::string& configured_value,
+                               const char* environment_variable) {
+  const char* environment_value = std::getenv(environment_variable);
+  if (environment_value != nullptr && *environment_value != '\0') {
+    configured_value = environment_value;
+  }
+}
+
 }  // namespace
 
 AppConfig parse_config(const std::vector<std::string>& args) {
   AppConfig config;
+  apply_environment_default(config.qnn_gpu_library, "RPPG_QNN_GPU_LIBRARY");
+  apply_environment_default(config.opencl_library, "RPPG_OPENCL_LIBRARY");
   std::set<std::string> seen;
 
   for (std::size_t index = 1; index < args.size(); ++index) {

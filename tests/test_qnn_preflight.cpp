@@ -2,6 +2,18 @@
 
 extern "C" void clGetPlatformIDs() {}
 
+#elif defined(RPPG_FAKE_DEPENDENCY_LIBRARY)
+
+extern "C" int rppg_qnn_fake_dependency_symbol() { return 7; }
+
+#elif defined(RPPG_FAKE_PRIMARY_LIBRARY)
+
+extern "C" int rppg_qnn_fake_dependency_symbol();
+
+extern "C" int rppg_qnn_fake_primary_entry() {
+  return rppg_qnn_fake_dependency_symbol();
+}
+
 #else
 
 #include "rppg_qnn/config.hpp"
@@ -9,8 +21,10 @@ extern "C" void clGetPlatformIDs() {}
 
 #include <dlfcn.h>
 #include <cstdlib>
+#include <chrono>
 #include <filesystem>
 #include <string>
+#include <utility>
 
 #include "test_support.hpp"
 
@@ -29,6 +43,23 @@ bool is_attempted_or_resolved_path(const std::string& path,
                                    const std::string& attempted_path) {
   return path == attempted_path || std::filesystem::path(path).is_absolute();
 }
+
+std::string canonical_path(const std::string& path) {
+  return std::filesystem::canonical(path).string();
+}
+
+class ScopedPathRemoval {
+ public:
+  explicit ScopedPathRemoval(std::filesystem::path path) : path_(std::move(path)) {}
+
+  ~ScopedPathRemoval() {
+    std::error_code error;
+    std::filesystem::remove(path_, error);
+  }
+
+ private:
+  std::filesystem::path path_;
+};
 
 std::string platform_c_library() {
   Dl_info info{};
@@ -87,6 +118,30 @@ int main() {
   EXPECT_TRUE(contains(incompatible.error, "QNN_API_INCOMPATIBLE"));
   EXPECT_TRUE(contains(incompatible.error, "rppg_qnn_symbol_that_does_not_exist"));
 
+  const std::string primary_library = RPPG_FAKE_PRIMARY_LIBRARY_PATH;
+  const std::string dependency_library = RPPG_FAKE_DEPENDENCY_LIBRARY_PATH;
+  const auto primary_with_dependency_symbol = probe_library(
+      primary_library, {"rppg_qnn_fake_dependency_symbol"});
+  EXPECT_TRUE(primary_with_dependency_symbol.loaded);
+  EXPECT_EQ(primary_with_dependency_symbol.attempted_path, primary_library);
+  EXPECT_EQ(canonical_path(primary_with_dependency_symbol.resolved_path),
+            canonical_path(primary_library));
+  EXPECT_TRUE(canonical_path(primary_with_dependency_symbol.resolved_path) !=
+              canonical_path(dependency_library));
+
+  const auto symlink_path = std::filesystem::temp_directory_path() /
+      ("rppg_qnn_primary_" + std::to_string(
+          std::chrono::steady_clock::now().time_since_epoch().count()));
+  ScopedPathRemoval remove_symlink(symlink_path);
+  std::error_code symlink_error;
+  std::filesystem::create_symlink(primary_library, symlink_path, symlink_error);
+  EXPECT_EQ(symlink_error, std::error_code{});
+  const auto symlink_probe = probe_library(
+      symlink_path.string(), {"rppg_qnn_fake_primary_entry"});
+  EXPECT_TRUE(symlink_probe.loaded);
+  EXPECT_EQ(symlink_probe.attempted_path, symlink_path.string());
+  EXPECT_EQ(canonical_path(symlink_probe.resolved_path), canonical_path(primary_library));
+
   EnvironmentValue qnn_environment("RPPG_QNN_GPU_LIBRARY");
   EnvironmentValue opencl_environment("RPPG_OPENCL_LIBRARY");
   setenv("RPPG_QNN_GPU_LIBRARY", "/environment/qnn.so", 1);
@@ -100,7 +155,7 @@ int main() {
   EXPECT_EQ(explicit_result.qnn_gpu_library, "/cli/qnn.so");
   EXPECT_EQ(explicit_result.opencl_library, "/cli/opencl.so");
 
-  AppConfig environment_config;
+  const AppConfig environment_config = parse_config({"rppg_qnn_live", "--preflight-only"});
   const auto environment_result = run_qnn_preflight(environment_config);
   EXPECT_EQ(environment_result.qnn_gpu_library, "/environment/qnn.so");
   EXPECT_EQ(environment_result.opencl_library, "/environment/opencl.so");
@@ -108,9 +163,11 @@ int main() {
 
   unsetenv("RPPG_QNN_GPU_LIBRARY");
   unsetenv("RPPG_OPENCL_LIBRARY");
-  const AppConfig default_config;
+  const AppConfig default_config = parse_config({"rppg_qnn_live", "--preflight-only"});
   EXPECT_EQ(default_config.qnn_gpu_library, "libQnnGpu.so");
   EXPECT_EQ(default_config.opencl_library, "libOpenCL.so");
+  setenv("RPPG_QNN_GPU_LIBRARY", c_library.c_str(), 1);
+  setenv("RPPG_OPENCL_LIBRARY", RPPG_FAKE_OPENCL_LIBRARY_PATH, 1);
   const auto default_result = run_qnn_preflight(default_config);
   EXPECT_TRUE(is_attempted_or_resolved_path(default_result.qnn_gpu_library,
                                             default_config.qnn_gpu_library));
@@ -127,6 +184,8 @@ int main() {
   EXPECT_TRUE(missing_qnn_with_opencl.opencl_available);
   EXPECT_EQ(missing_qnn_with_opencl.qnn_gpu_available, false);
   EXPECT_TRUE(contains(missing_qnn_with_opencl.error, "QNN_LIBRARY_NOT_FOUND"));
+  EXPECT_TRUE(contains(missing_qnn_with_opencl.error,
+                       "/definitely/not/a/qnn/library.so"));
 
   AppConfig opencl_missing_symbol_config;
   opencl_missing_symbol_config.qnn_gpu_library = c_library;

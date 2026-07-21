@@ -94,13 +94,24 @@ if(BUILD_TESTING)
   target_compile_definitions(fake_opencl PRIVATE RPPG_FAKE_OPENCL_LIBRARY)
   target_compile_options(fake_opencl PRIVATE -Wall -Wextra -Wpedantic -Werror)
 
+  add_library(fake_dependency SHARED tests/test_qnn_preflight.cpp)
+  target_compile_definitions(fake_dependency PRIVATE RPPG_FAKE_DEPENDENCY_LIBRARY)
+  target_compile_options(fake_dependency PRIVATE -Wall -Wextra -Wpedantic -Werror)
+
+  add_library(fake_primary SHARED tests/test_qnn_preflight.cpp)
+  target_compile_definitions(fake_primary PRIVATE RPPG_FAKE_PRIMARY_LIBRARY)
+  target_compile_options(fake_primary PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  target_link_libraries(fake_primary PRIVATE fake_dependency)
+
   add_executable(test_qnn_preflight tests/test_qnn_preflight.cpp)
   target_link_libraries(test_qnn_preflight PRIVATE rppg_qnn_core)
   target_include_directories(test_qnn_preflight PRIVATE tests)
   target_compile_definitions(
       test_qnn_preflight PRIVATE
-      RPPG_FAKE_OPENCL_LIBRARY_PATH="$<TARGET_FILE:fake_opencl>")
+      RPPG_FAKE_OPENCL_LIBRARY_PATH="$<TARGET_FILE:fake_opencl>"
+      RPPG_FAKE_PRIMARY_LIBRARY_PATH="$<TARGET_FILE:fake_primary>"
+      RPPG_FAKE_DEPENDENCY_LIBRARY_PATH="$<TARGET_FILE:fake_dependency>")
   target_compile_options(test_qnn_preflight PRIVATE -Wall -Wextra -Wpedantic -Werror)
-  add_dependencies(test_qnn_preflight fake_opencl)
+  add_dependencies(test_qnn_preflight fake_opencl fake_primary fake_dependency)
   add_test(NAME qnn_preflight COMMAND test_qnn_preflight)
 endif()

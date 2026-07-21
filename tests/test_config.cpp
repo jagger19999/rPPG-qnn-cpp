@@ -1,6 +1,7 @@
 #include "rppg_qnn/config.hpp"
 #include "rppg_qnn/error.hpp"
 
+#include <cstdlib>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -23,6 +24,30 @@ std::vector<std::string> args(std::initializer_list<const char*> values) {
   return result;
 }
 
+class EnvironmentValue {
+ public:
+  explicit EnvironmentValue(const char* name) : name_(name) {
+    const char* value = std::getenv(name);
+    if (value != nullptr) {
+      had_value_ = true;
+      value_ = value;
+    }
+  }
+
+  ~EnvironmentValue() {
+    if (had_value_) {
+      setenv(name_.c_str(), value_.c_str(), 1);
+    } else {
+      unsetenv(name_.c_str());
+    }
+  }
+
+ private:
+  std::string name_;
+  bool had_value_{false};
+  std::string value_;
+};
+
 void expect_defaults(const AppConfig& config) {
   EXPECT_EQ(config.camera, "/dev/video0");
   EXPECT_TRUE(config.video.empty());
@@ -41,8 +66,33 @@ void expect_defaults(const AppConfig& config) {
 }  // namespace
 
 int main() {
+  EnvironmentValue qnn_environment("RPPG_QNN_GPU_LIBRARY");
+  EnvironmentValue opencl_environment("RPPG_OPENCL_LIBRARY");
+  unsetenv("RPPG_QNN_GPU_LIBRARY");
+  unsetenv("RPPG_OPENCL_LIBRARY");
+
   const auto defaults = parse_config(args({}));
   expect_defaults(defaults);
+
+  setenv("RPPG_QNN_GPU_LIBRARY", "/environment/qnn.so", 1);
+  setenv("RPPG_OPENCL_LIBRARY", "/environment/opencl.so", 1);
+  const auto environment_defaults = parse_config(args({}));
+  EXPECT_EQ(environment_defaults.qnn_gpu_library, "/environment/qnn.so");
+  EXPECT_EQ(environment_defaults.opencl_library, "/environment/opencl.so");
+
+  setenv("RPPG_QNN_GPU_LIBRARY", "", 1);
+  setenv("RPPG_OPENCL_LIBRARY", "", 1);
+  const auto empty_environment_defaults = parse_config(args({}));
+  EXPECT_EQ(empty_environment_defaults.qnn_gpu_library, "libQnnGpu.so");
+  EXPECT_EQ(empty_environment_defaults.opencl_library, "libOpenCL.so");
+
+  setenv("RPPG_QNN_GPU_LIBRARY", "/environment/qnn.so", 1);
+  setenv("RPPG_OPENCL_LIBRARY", "/environment/opencl.so", 1);
+  const auto explicit_default_libraries = parse_config(args({
+      "--qnn-gpu-library", "libQnnGpu.so", "--opencl-library", "libOpenCL.so",
+  }));
+  EXPECT_EQ(explicit_default_libraries.qnn_gpu_library, "libQnnGpu.so");
+  EXPECT_EQ(explicit_default_libraries.opencl_library, "libOpenCL.so");
 
   const auto camera = parse_config(
       args({"--camera", "/dev/video2", "--fps", "30"}));
