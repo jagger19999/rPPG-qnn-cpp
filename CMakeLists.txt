@@ -90,9 +90,17 @@ if(BUILD_TESTING)
   target_compile_options(test_deep_worker PRIVATE -Wall -Wextra -Wpedantic -Werror)
   add_test(NAME deep_worker COMMAND test_deep_worker)
 
+  add_library(fake_opencl SHARED tests/test_qnn_preflight.cpp)
+  target_compile_definitions(fake_opencl PRIVATE RPPG_FAKE_OPENCL_LIBRARY)
+  target_compile_options(fake_opencl PRIVATE -Wall -Wextra -Wpedantic -Werror)
+
   add_executable(test_qnn_preflight tests/test_qnn_preflight.cpp)
   target_link_libraries(test_qnn_preflight PRIVATE rppg_qnn_core)
   target_include_directories(test_qnn_preflight PRIVATE tests)
+  target_compile_definitions(
+      test_qnn_preflight PRIVATE
+      RPPG_FAKE_OPENCL_LIBRARY_PATH="$<TARGET_FILE:fake_opencl>")
   target_compile_options(test_qnn_preflight PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  add_dependencies(test_qnn_preflight fake_opencl)
   add_test(NAME qnn_preflight COMMAND test_qnn_preflight)
 endif()

@@ -1,10 +1,15 @@
+#if defined(RPPG_FAKE_OPENCL_LIBRARY)
+
+extern "C" void clGetPlatformIDs() {}
+
+#else
+
 #include "rppg_qnn/config.hpp"
 #include "rppg_qnn/qnn_preflight.hpp"
 
 #include <dlfcn.h>
 #include <cstdlib>
 #include <string>
-#include <vector>
 
 #include "test_support.hpp"
 
@@ -26,30 +31,6 @@ std::string platform_c_library() {
     return {};
   }
   return info.dli_fname;
-}
-
-std::string platform_opencl_library() {
-#if defined(__APPLE__)
-  const std::vector<std::string> candidates{
-      "/System/Library/Frameworks/OpenCL.framework/OpenCL"};
-#else
-  const std::vector<std::string> candidates{"libOpenCL.so.1", "libOpenCL.so"};
-#endif
-  for (const auto& candidate : candidates) {
-    void* handle = dlopen(candidate.c_str(), RTLD_NOW | RTLD_LOCAL);
-    if (handle == nullptr) {
-      continue;
-    }
-    dlerror();
-    void* platform_ids = dlsym(handle, "clGetPlatformIDs");
-    const char* lookup_error = dlerror();
-    const bool has_platform_ids = platform_ids != nullptr && lookup_error == nullptr;
-    dlclose(handle);
-    if (has_platform_ids) {
-      return candidate;
-    }
-  }
-  return {};
 }
 
 class EnvironmentValue {
@@ -124,22 +105,30 @@ int main() {
   const auto default_result = run_qnn_preflight(AppConfig{});
   EXPECT_EQ(default_result.qnn_gpu_library, "libQnnGpu.so");
   EXPECT_EQ(default_result.opencl_library, "libOpenCL.so");
+  EXPECT_EQ(default_result.qnn_gpu_available, false);
   EXPECT_TRUE(contains(default_result.error, "QNN_LIBRARY_NOT_FOUND"));
+
+  AppConfig opencl_missing_symbol_config;
+  opencl_missing_symbol_config.qnn_gpu_library = c_library;
+  opencl_missing_symbol_config.opencl_library = c_library;
+  const auto opencl_missing_symbol = run_qnn_preflight(opencl_missing_symbol_config);
+  EXPECT_EQ(opencl_missing_symbol.opencl_available, false);
+  EXPECT_EQ(opencl_missing_symbol.qnn_gpu_available, false);
+  EXPECT_TRUE(contains(opencl_missing_symbol.error, "QNN_API_INCOMPATIBLE"));
 
   AppConfig mixed_failure_config;
   mixed_failure_config.qnn_gpu_library = "/definitely/not/a/qnn/library.so";
   mixed_failure_config.opencl_library = c_library;
   const auto mixed_failure = run_qnn_preflight(mixed_failure_config);
+  EXPECT_EQ(mixed_failure.qnn_gpu_available, false);
   EXPECT_TRUE(contains(mixed_failure.error, "QNN_LIBRARY_NOT_FOUND"));
   EXPECT_TRUE(contains(mixed_failure.error, "QNN_API_INCOMPATIBLE"));
   EXPECT_TRUE(contains(mixed_failure.error, "QNN GPU"));
   EXPECT_TRUE(contains(mixed_failure.error, "OpenCL"));
 
-  const std::string opencl_library = platform_opencl_library();
-  EXPECT_TRUE(!opencl_library.empty());
   AppConfig readiness_config;
   readiness_config.qnn_gpu_library = c_library;
-  readiness_config.opencl_library = opencl_library;
+  readiness_config.opencl_library = RPPG_FAKE_OPENCL_LIBRARY_PATH;
   const auto readiness = run_qnn_preflight(readiness_config);
   EXPECT_TRUE(readiness.opencl_available);
   EXPECT_TRUE(readiness.qnn_gpu_available);
@@ -147,3 +136,5 @@ int main() {
 
   return test_support::finish();
 }
+
+#endif
