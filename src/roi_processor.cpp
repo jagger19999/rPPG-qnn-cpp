@@ -141,23 +141,50 @@ RoiProcessor::RoiProcessor(FaceDetector detector) : detector_(std::move(detector
 
 RoiPacket RoiProcessor::process(const FramePacket& frame) {
   if (frame.bgr.empty()) {
+    last_face_.reset();
+    last_frame_size_.reset();
+    fallback_frames_remaining_ = 0;
+    force_detection_ = true;
     return empty_packet(frame);
   }
 
-  const bool should_detect = (processed_frames_ % 10U) == 0U;
-  ++processed_frames_;
+  const cv::Size frame_size = frame.bgr.size();
+  const bool size_changed =
+      last_frame_size_.has_value() &&
+      (last_frame_size_->width != frame_size.width ||
+       last_frame_size_->height != frame_size.height);
+  if (size_changed) {
+    last_face_.reset();
+    fallback_frames_remaining_ = 0;
+    force_detection_ = true;
+  }
+
+  const bool should_detect = force_detection_ || fallback_frames_remaining_ == 0;
   if (should_detect) {
-    last_face_ = largest_usable_face(detector_(frame.bgr), frame.bgr.size());
+    last_face_.reset();
+    fallback_frames_remaining_ = 0;
+    force_detection_ = true;
+    const auto detected_faces = detector_(frame.bgr);
+    last_face_ = largest_usable_face(detected_faces, frame_size);
+    last_frame_size_ = frame_size;
+    fallback_frames_remaining_ = 9;
+    force_detection_ = false;
     if (!last_face_.has_value()) {
       return empty_packet(frame);
     }
-  } else if (!last_face_.has_value()) {
-    return empty_packet(frame);
   }
 
+  if (!should_detect) {
+    --fallback_frames_remaining_;
+  }
+  if (!last_face_.has_value()) {
+    return empty_packet(frame);
+  }
   const auto roi = cheek_roi(*last_face_, frame.bgr.size());
   if (!roi.has_value()) {
     last_face_.reset();
+    fallback_frames_remaining_ = 0;
+    force_detection_ = true;
     return empty_packet(frame);
   }
 

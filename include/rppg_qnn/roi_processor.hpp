@@ -41,7 +41,9 @@ class RoiProcessor {
  private:
   FaceDetector detector_;
   std::optional<FaceBox> last_face_;
-  std::uint64_t processed_frames_{0};
+  std::optional<cv::Size> last_frame_size_;
+  int fallback_frames_remaining_{0};
+  bool force_detection_{true};
 };
 
 }  // namespace rppg_qnn

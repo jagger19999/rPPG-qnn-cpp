@@ -3,6 +3,7 @@
 
 #include <filesystem>
 #include <limits>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -166,6 +167,94 @@ void rejects_an_empty_injected_detector() {
   EXPECT_APP_ERROR(RoiProcessor(FaceDetector{}), ErrorCode::ConfigInvalid);
 }
 
+void empty_frame_clears_cached_face_and_forces_the_next_detection() {
+  int detector_calls = 0;
+  FaceDetector detector = [&detector_calls](const cv::Mat&) {
+    ++detector_calls;
+    if (detector_calls == 1) {
+      return std::vector<FaceBox>{FaceBox{20, 20, 100, 100, 0.5}};
+    }
+    return std::vector<FaceBox>{FaceBox{60, 50, 80, 90, 0.7}};
+  };
+  RoiProcessor processor(detector);
+
+  const FramePacket initial{1, 1.0, cv::Mat(200, 200, CV_8UC3, cv::Scalar())};
+  EXPECT_TRUE(processor.process(initial).face.has_value());
+
+  const FramePacket empty{2, 2.0, {}};
+  const auto empty_result = processor.process(empty);
+  EXPECT_TRUE(!empty_result.face.has_value());
+  EXPECT_TRUE(empty_result.roi_bgr.empty());
+
+  const FramePacket next{3, 3.0, cv::Mat(200, 200, CV_8UC3, cv::Scalar())};
+  const auto redetected = processor.process(next);
+  EXPECT_EQ(detector_calls, 2);
+  EXPECT_TRUE(redetected.face.has_value());
+  EXPECT_TRUE(!redetected.used_fallback);
+  if (redetected.face.has_value()) {
+    EXPECT_EQ(redetected.face->x, 60);
+    EXPECT_EQ(redetected.face->y, 50);
+  }
+}
+
+void size_change_discards_the_cached_face_and_redetects_immediately() {
+  int detector_calls = 0;
+  FaceDetector detector = [&detector_calls](const cv::Mat&) {
+    ++detector_calls;
+    if (detector_calls == 1) {
+      return std::vector<FaceBox>{FaceBox{20, 20, 100, 100, 0.5}};
+    }
+    return std::vector<FaceBox>{FaceBox{10, 10, 80, 60, 0.6}};
+  };
+  RoiProcessor processor(detector);
+
+  const FramePacket large{1, 1.0, cv::Mat(200, 200, CV_8UC3, cv::Scalar())};
+  EXPECT_TRUE(processor.process(large).face.has_value());
+
+  const FramePacket resized{2, 2.0, cv::Mat(80, 100, CV_8UC3, cv::Scalar())};
+  const auto redetected = processor.process(resized);
+  EXPECT_EQ(detector_calls, 2);
+  EXPECT_TRUE(redetected.face.has_value());
+  EXPECT_TRUE(!redetected.used_fallback);
+  EXPECT_TRUE(!redetected.roi_bgr.empty());
+  if (redetected.face.has_value()) {
+    EXPECT_EQ(redetected.face->x, 10);
+    EXPECT_EQ(redetected.face->y, 10);
+    EXPECT_EQ(redetected.face->width, 80);
+    EXPECT_EQ(redetected.face->height, 60);
+  }
+  EXPECT_TRUE(redetected.roi_bgr.cols <= resized.bgr.cols);
+  EXPECT_TRUE(redetected.roi_bgr.rows <= resized.bgr.rows);
+}
+
+void detector_exception_leaves_the_next_valid_frame_due_for_detection() {
+  int detector_calls = 0;
+  FaceDetector detector = [&detector_calls](const cv::Mat&) {
+    ++detector_calls;
+    if (detector_calls == 1) {
+      throw std::runtime_error("detector failed");
+    }
+    return std::vector<FaceBox>{FaceBox{30, 30, 90, 90, 0.9}};
+  };
+  RoiProcessor processor(detector);
+  const FramePacket frame{1, 1.0, cv::Mat(200, 200, CV_8UC3, cv::Scalar())};
+
+  bool threw = false;
+  try {
+    (void)processor.process(frame);
+  } catch (const std::runtime_error&) {
+    threw = true;
+  }
+  EXPECT_TRUE(threw);
+  EXPECT_EQ(detector_calls, 1);
+
+  const auto retry = processor.process(frame);
+  EXPECT_EQ(detector_calls, 2);
+  EXPECT_TRUE(retry.face.has_value());
+  EXPECT_TRUE(!retry.used_fallback);
+  EXPECT_TRUE(!retry.roi_bgr.empty());
+}
+
 }  // namespace
 
 int main() {
@@ -176,5 +265,8 @@ int main() {
   reuses_clipped_largest_face_until_the_next_detection_interval();
   empty_input_and_empty_detection_never_return_a_full_frame();
   rejects_an_empty_injected_detector();
+  empty_frame_clears_cached_face_and_forces_the_next_detection();
+  size_change_discards_the_cached_face_and_redetects_immediately();
+  detector_exception_leaves_the_next_valid_frame_due_for_detection();
   return test_support::finish();
 }
