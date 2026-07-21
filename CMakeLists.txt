@@ -10,7 +10,7 @@ option(RPPG_ENABLE_SANITIZERS "Enable AddressSanitizer and UndefinedBehaviorSani
 
 find_package(OpenCV 4 REQUIRED COMPONENTS core imgproc videoio objdetect)
 
-add_library(rppg_qnn_core src/contracts.cpp)
+add_library(rppg_qnn_core src/contracts.cpp src/error.cpp)
 target_include_directories(rppg_qnn_core PUBLIC include)
 target_link_libraries(rppg_qnn_core PUBLIC ${OpenCV_LIBS} ${CMAKE_DL_LIBS})
 target_compile_options(rppg_qnn_core PRIVATE -Wall -Wextra -Wpedantic -Werror)

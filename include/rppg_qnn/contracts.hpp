@@ -1,10 +1,30 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <string>
 #include <vector>
 
 namespace rppg_qnn {
+
+struct FrameHealth {
+  int schema_version{1};
+  std::uint64_t frame_id{0};
+  double timestamp_sec{0.0};
+  double capture_fps{0.0};
+  bool face_found{false};
+  double face_confidence{0.0};
+  std::string status{"sampling"};
+};
+
+struct PreflightResult {
+  int schema_version{1};
+  bool qnn_gpu_available{false};
+  bool opencl_available{false};
+  std::string qnn_gpu_library;
+  std::string opencl_library;
+  std::string error;
+};
 
 struct HeartRateResult {
   int schema_version{1};
