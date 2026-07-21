@@ -45,7 +45,9 @@ bool is_attempted_or_resolved_path(const std::string& path,
 }
 
 std::string canonical_path(const std::string& path) {
-  return std::filesystem::canonical(path).string();
+  std::error_code error;
+  const std::filesystem::path canonical = std::filesystem::canonical(path, error);
+  return error ? path : canonical.string();
 }
 
 class ScopedPathRemoval {
@@ -110,7 +112,7 @@ int main() {
 
   const auto c_library_probe = probe_library(c_library, {"dlopen"});
   EXPECT_TRUE(c_library_probe.loaded);
-  EXPECT_EQ(c_library_probe.resolved_path, c_library);
+  EXPECT_EQ(canonical_path(c_library_probe.resolved_path), canonical_path(c_library));
   EXPECT_TRUE(c_library_probe.error.empty());
 
   const auto incompatible = probe_library(c_library, {"rppg_qnn_symbol_that_does_not_exist"});
