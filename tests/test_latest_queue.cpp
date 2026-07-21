@@ -63,6 +63,8 @@ int main() {
     });
 
     wait_started_future.wait();
+    const auto before_close = result_future.wait_for(100ms);
+    EXPECT_EQ(before_close, std::future_status::timeout);
     queue.close();
 
     const auto completion = result_future.wait_for(250ms);
