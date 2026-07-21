@@ -9,6 +9,7 @@ extern "C" void clGetPlatformIDs() {}
 
 #include <dlfcn.h>
 #include <cstdlib>
+#include <filesystem>
 #include <string>
 
 #include "test_support.hpp"
@@ -22,6 +23,11 @@ using rppg_qnn::run_qnn_preflight;
 
 bool contains(const std::string& value, const std::string& fragment) {
   return value.find(fragment) != std::string::npos;
+}
+
+bool is_attempted_or_resolved_path(const std::string& path,
+                                   const std::string& attempted_path) {
+  return path == attempted_path || std::filesystem::path(path).is_absolute();
 }
 
 std::string platform_c_library() {
@@ -102,11 +108,25 @@ int main() {
 
   unsetenv("RPPG_QNN_GPU_LIBRARY");
   unsetenv("RPPG_OPENCL_LIBRARY");
-  const auto default_result = run_qnn_preflight(AppConfig{});
-  EXPECT_EQ(default_result.qnn_gpu_library, "libQnnGpu.so");
-  EXPECT_EQ(default_result.opencl_library, "libOpenCL.so");
-  EXPECT_EQ(default_result.qnn_gpu_available, false);
-  EXPECT_TRUE(contains(default_result.error, "QNN_LIBRARY_NOT_FOUND"));
+  const AppConfig default_config;
+  EXPECT_EQ(default_config.qnn_gpu_library, "libQnnGpu.so");
+  EXPECT_EQ(default_config.opencl_library, "libOpenCL.so");
+  const auto default_result = run_qnn_preflight(default_config);
+  EXPECT_TRUE(is_attempted_or_resolved_path(default_result.qnn_gpu_library,
+                                            default_config.qnn_gpu_library));
+  EXPECT_TRUE(is_attempted_or_resolved_path(default_result.opencl_library,
+                                            default_config.opencl_library));
+  EXPECT_TRUE(!default_result.qnn_gpu_available || default_result.opencl_available);
+
+  AppConfig missing_qnn_with_opencl_config;
+  missing_qnn_with_opencl_config.qnn_gpu_library =
+      "/definitely/not/a/qnn/library.so";
+  missing_qnn_with_opencl_config.opencl_library = RPPG_FAKE_OPENCL_LIBRARY_PATH;
+  const auto missing_qnn_with_opencl =
+      run_qnn_preflight(missing_qnn_with_opencl_config);
+  EXPECT_TRUE(missing_qnn_with_opencl.opencl_available);
+  EXPECT_EQ(missing_qnn_with_opencl.qnn_gpu_available, false);
+  EXPECT_TRUE(contains(missing_qnn_with_opencl.error, "QNN_LIBRARY_NOT_FOUND"));
 
   AppConfig opencl_missing_symbol_config;
   opencl_missing_symbol_config.qnn_gpu_library = c_library;
