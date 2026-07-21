@@ -15,19 +15,9 @@ target_include_directories(rppg_qnn_core PUBLIC include)
 target_link_libraries(rppg_qnn_core PUBLIC ${OpenCV_LIBS} ${CMAKE_DL_LIBS})
 target_compile_options(rppg_qnn_core PRIVATE -Wall -Wextra -Wpedantic -Werror)
 
-if(RPPG_ENABLE_SANITIZERS)
-  target_compile_options(rppg_qnn_core PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
-  target_link_options(rppg_qnn_core PRIVATE -fsanitize=address,undefined)
-endif()
-
 add_executable(rppg_qnn_live src/main.cpp)
 target_link_libraries(rppg_qnn_live PRIVATE rppg_qnn_core)
 target_compile_options(rppg_qnn_live PRIVATE -Wall -Wextra -Wpedantic -Werror)
-
-if(RPPG_ENABLE_SANITIZERS)
-  target_compile_options(rppg_qnn_live PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
-  target_link_options(rppg_qnn_live PRIVATE -fsanitize=address,undefined)
-endif()
 
 include(CTest)
 if(BUILD_TESTING)
@@ -36,10 +26,17 @@ if(BUILD_TESTING)
   target_include_directories(test_contracts PRIVATE tests)
   target_compile_options(test_contracts PRIVATE -Wall -Wextra -Wpedantic -Werror)
 
-  if(RPPG_ENABLE_SANITIZERS)
+  add_test(NAME contracts COMMAND test_contracts)
+endif()
+
+if(RPPG_ENABLE_SANITIZERS AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+  target_compile_options(rppg_qnn_core PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
+  target_link_options(rppg_qnn_core PRIVATE -fsanitize=address,undefined)
+  target_compile_options(rppg_qnn_live PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
+  target_link_options(rppg_qnn_live PRIVATE -fsanitize=address,undefined)
+
+  if(BUILD_TESTING)
     target_compile_options(test_contracts PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
     target_link_options(test_contracts PRIVATE -fsanitize=address,undefined)
   endif()
-
-  add_test(NAME contracts COMMAND test_contracts)
 endif()
