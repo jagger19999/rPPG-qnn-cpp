@@ -34,6 +34,14 @@ if(BUILD_TESTING)
   target_compile_options(test_config PRIVATE -Wall -Wextra -Wpedantic -Werror)
 
   add_test(NAME config COMMAND test_config)
+
+  find_package(Threads REQUIRED)
+  add_executable(test_latest_queue tests/test_latest_queue.cpp)
+  target_include_directories(test_latest_queue PRIVATE include tests)
+  target_link_libraries(test_latest_queue PRIVATE Threads::Threads)
+  target_compile_options(test_latest_queue PRIVATE -Wall -Wextra -Wpedantic -Werror)
+
+  add_test(NAME latest_queue COMMAND test_latest_queue)
 endif()
 
 if(RPPG_ENABLE_SANITIZERS AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
