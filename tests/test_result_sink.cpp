@@ -2,6 +2,7 @@
 #include "rppg_qnn/result_sink.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <filesystem>
@@ -9,8 +10,10 @@
 #include <iostream>
 #include <iterator>
 #include <limits>
+#include <locale>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -47,6 +50,22 @@ class ScopedCoutCapture {
   std::streambuf* previous_;
 };
 
+class ScopedGlobalLocale {
+ public:
+  explicit ScopedGlobalLocale(const std::locale& replacement) : previous_(std::locale()) {
+    std::locale::global(replacement);
+  }
+  ~ScopedGlobalLocale() { std::locale::global(previous_); }
+
+ private:
+  std::locale previous_;
+};
+
+class CommaNumpunct final : public std::numpunct<char> {
+ protected:
+  char do_decimal_point() const override { return ','; }
+};
+
 std::string read_file(const std::filesystem::path& path) {
   std::ifstream input(path, std::ios::binary);
   return {std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
@@ -59,6 +78,46 @@ std::vector<std::string> json_lines(const std::string& contents) {
     lines.push_back(line);
   }
   return lines;
+}
+
+bool is_valid_utf8(const std::string& value) {
+  for (std::size_t index = 0; index < value.size();) {
+    const unsigned char first = static_cast<unsigned char>(value[index++]);
+    if (first <= 0x7fU) {
+      continue;
+    }
+    int remaining = 0;
+    unsigned int code_point = 0;
+    if (first >= 0xc2U && first <= 0xdfU) {
+      remaining = 1;
+      code_point = first & 0x1fU;
+    } else if (first >= 0xe0U && first <= 0xefU) {
+      remaining = 2;
+      code_point = first & 0x0fU;
+    } else if (first >= 0xf0U && first <= 0xf4U) {
+      remaining = 3;
+      code_point = first & 0x07U;
+    } else {
+      return false;
+    }
+    if (index + static_cast<std::size_t>(remaining) > value.size()) {
+      return false;
+    }
+    for (int count = 0; count < remaining; ++count) {
+      const unsigned char continuation = static_cast<unsigned char>(value[index++]);
+      if ((continuation & 0xc0U) != 0x80U) {
+        return false;
+      }
+      code_point = (code_point << 6U) | (continuation & 0x3fU);
+    }
+    if ((remaining == 1 && code_point < 0x80U) ||
+        (remaining == 2 && code_point < 0x800U) ||
+        (remaining == 3 && code_point < 0x10000U) ||
+        (code_point >= 0xd800U && code_point <= 0xdfffU) || code_point > 0x10ffffU) {
+      return false;
+    }
+  }
+  return true;
 }
 
 class JsonParser {
@@ -434,6 +493,9 @@ void test_frame_health_is_batched_on_one_second_boundaries() {
   const std::vector<std::vector<std::string>> records =
       csv_records(read_file(directory.path() / "heart_rate.csv"));
   EXPECT_EQ(records.size(), static_cast<std::size_t>(1));
+  const std::string summary = read_file(directory.path() / "session_summary.json");
+  EXPECT_TRUE(summary.find("\"frame_health_count\":3") != std::string::npos);
+  EXPECT_TRUE(summary.find("\"heart_rate_count\":0") != std::string::npos);
 }
 
 void test_constructor_failure_and_idempotent_close() {
@@ -452,11 +514,120 @@ void test_constructor_failure_and_idempotent_close() {
   EXPECT_TRUE(std::filesystem::exists(normal_directory.path() / "session_summary.json"));
 }
 
+void test_machine_output_ignores_global_comma_locale() {
+  ScopedDirectory directory;
+  ScopedGlobalLocale comma_locale(std::locale(std::locale(), new CommaNumpunct));
+  rppg_qnn::ResultSink sink(directory.path());
+  rppg_qnn::HeartRateResult result = make_heart_rate(true);
+  sink.publish(result);
+  sink.close(0);
+
+  const std::string events = read_file(directory.path() / "events.jsonl");
+  const std::string csv = read_file(directory.path() / "heart_rate.csv");
+  EXPECT_TRUE(events.find("\"bpm\":72.5") != std::string::npos);
+  EXPECT_TRUE(events.find("72,5") == std::string::npos);
+  EXPECT_TRUE(csv.find("72.5") != std::string::npos);
+  EXPECT_EQ(csv_records(csv)[1].size(), static_cast<std::size_t>(14));
+}
+
+void test_invalid_utf8_is_replaced_in_json_and_csv() {
+  ScopedDirectory directory;
+  rppg_qnn::ResultSink sink(directory.path());
+  rppg_qnn::HeartRateResult result = make_heart_rate(false);
+  std::string invalid_utf8;
+  invalid_utf8 += static_cast<char>(0x80);
+  invalid_utf8 += static_cast<char>(0xff);
+  invalid_utf8 += static_cast<char>(0xc0);
+  invalid_utf8 += static_cast<char>(0xaf);
+  invalid_utf8 += static_cast<char>(0xe2);
+  invalid_utf8 += static_cast<char>(0x82);
+  invalid_utf8 += static_cast<char>(0xed);
+  invalid_utf8 += static_cast<char>(0xa0);
+  invalid_utf8 += static_cast<char>(0x80);
+  invalid_utf8 += static_cast<char>(0xf4);
+  invalid_utf8 += static_cast<char>(0x90);
+  invalid_utf8 += static_cast<char>(0x80);
+  invalid_utf8 += static_cast<char>(0x80);
+  result.method = std::string("valid-") + u8"心" + invalid_utf8;
+  result.invalid_reason = invalid_utf8;
+  sink.publish(result);
+  sink.close(0);
+
+  const std::string events = read_file(directory.path() / "events.jsonl");
+  const std::string csv = read_file(directory.path() / "heart_rate.csv");
+  const std::string replacement("\xef\xbf\xbd");
+  EXPECT_TRUE(is_valid_utf8(events));
+  EXPECT_TRUE(is_valid_utf8(csv));
+  EXPECT_TRUE(events.find(u8"心") != std::string::npos);
+  EXPECT_TRUE(events.find(replacement) != std::string::npos);
+  EXPECT_TRUE(csv.find(replacement) != std::string::npos);
+  EXPECT_TRUE(events.find(invalid_utf8) == std::string::npos);
+  EXPECT_TRUE(csv.find(invalid_utf8) == std::string::npos);
+}
+
+void test_summary_rename_failure_is_retryable_with_first_exit_code() {
+  ScopedDirectory directory;
+  rppg_qnn::ResultSink sink(directory.path());
+  sink.publish(make_heart_rate(true));
+  const std::filesystem::path summary_path = directory.path() / "session_summary.json";
+  std::filesystem::create_directory(summary_path);
+  EXPECT_APP_ERROR(sink.close(23), rppg_qnn::ErrorCode::OutputWriteFailed);
+  std::filesystem::remove(summary_path);
+  sink.close(99);
+
+  const std::string summary = read_file(summary_path);
+  EXPECT_TRUE(summary.find("\"exit_code\":23") != std::string::npos);
+  EXPECT_TRUE(!std::filesystem::exists(directory.path() / "session_summary.json.tmp"));
+  EXPECT_APP_ERROR(sink.publish(make_heart_rate(true)), rppg_qnn::ErrorCode::OutputWriteFailed);
+}
+
+void test_multiple_sinks_write_complete_terminal_lines() {
+  ScopedDirectory first_directory;
+  ScopedDirectory second_directory;
+  ScopedCoutCapture output;
+  rppg_qnn::ResultSink first(first_directory.path());
+  rppg_qnn::ResultSink second(second_directory.path());
+  std::atomic<int> ready{0};
+  std::atomic<bool> start{false};
+  const auto publish_many = [&ready, &start](rppg_qnn::ResultSink& sink) {
+    ready.fetch_add(1);
+    while (!start.load()) {
+    }
+    for (int index = 0; index < 16; ++index) {
+      rppg_qnn::HeartRateResult result = make_heart_rate(true);
+      result.bpm = 60.0 + static_cast<double>(index);
+      sink.publish(result);
+    }
+    sink.close(0);
+  };
+  std::thread first_thread(publish_many, std::ref(first));
+  std::thread second_thread(publish_many, std::ref(second));
+  while (ready.load() != 2) {
+  }
+  start.store(true);
+  first_thread.join();
+  second_thread.join();
+
+  std::istringstream lines(output.str());
+  std::size_t line_count = 0;
+  for (std::string line; std::getline(lines, line);) {
+    ++line_count;
+    EXPECT_TRUE(line.find("heart_rate bpm=") == 0);
+    EXPECT_TRUE(line.find(" confidence=") != std::string::npos);
+    EXPECT_TRUE(line.find(" valid=true") != std::string::npos);
+  }
+  EXPECT_EQ(line_count, static_cast<std::size_t>(32));
+}
+
 }  // namespace
 
 int main() {
   test_persisted_events_csv_and_summary();
   test_frame_health_is_batched_on_one_second_boundaries();
   test_constructor_failure_and_idempotent_close();
+  test_machine_output_ignores_global_comma_locale();
+  test_invalid_utf8_is_replaced_in_json_and_csv();
+  test_summary_rename_failure_is_retryable_with_first_exit_code();
+  test_multiple_sinks_write_complete_terminal_lines();
   return test_support::finish();
 }

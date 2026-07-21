@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <fstream>
 #include <mutex>
+#include <string>
 
 namespace rppg_qnn {
 
@@ -28,11 +29,18 @@ class ResultSink {
   void close(int exit_code);
 
  private:
+  enum class State { Open, SummaryPending, Closed, Failed };
+
+  [[noreturn]] void fail_permanently(std::string message);
+  void ensure_open_for_publish() const;
+
   std::filesystem::path output_dir_;
   std::ofstream events_;
   std::ofstream heart_rate_;
   std::mutex mutex_;
-  bool closed_{false};
+  State state_{State::Open};
+  int summary_exit_code_{0};
+  std::string failed_message_;
   bool has_frame_timestamp_{false};
   double last_frame_timestamp_sec_{0.0};
   std::size_t preflight_count_{0};
