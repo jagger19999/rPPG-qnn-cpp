@@ -33,9 +33,9 @@ std::string_view to_string(ErrorCode code) noexcept {
       return "INFERENCE_FAILED";
     case ErrorCode::OutputWriteFailed:
       return "OUTPUT_WRITE_FAILED";
-    default:
-      return "UNKNOWN_ERROR";
   }
+
+  return "UNKNOWN_ERROR";
 }
 
 }  // namespace rppg_qnn
