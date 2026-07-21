@@ -16,6 +16,8 @@ constexpr double kSampleRateHz = 30.0;
 constexpr double kMinimumHz = 0.7;
 constexpr double kMaximumHz = 3.0;
 constexpr double kPi = 3.14159265358979323846;
+constexpr double kConfidenceThreshold = 0.10;
+constexpr double kPowerEpsilon = 1e-12;
 constexpr std::int64_t kMaximumDimension = 4096;
 constexpr std::int64_t kMaximumFrames = 4096;
 
@@ -109,7 +111,7 @@ class FakeDeepRuntime final : public IDeepRuntime {
     double total_power = 0.0;
     double peak_power = 0.0;
     int peak_bin = first_bin;
-    for (int bin = first_bin; bin <= last_bin; ++bin) {
+    for (int bin = 1; bin <= static_cast<int>(frames / 2U); ++bin) {
       double real = 0.0;
       double imaginary = 0.0;
       for (std::size_t index = 0; index < frames; ++index) {
@@ -119,18 +121,30 @@ class FakeDeepRuntime final : public IDeepRuntime {
         imaginary -= waveform[index] * std::sin(phase);
       }
       const double power = real * real + imaginary * imaginary;
+      if (!std::isfinite(power)) {
+        result.inference_ms = std::chrono::duration<double, std::milli>(
+                                std::chrono::steady_clock::now() - started)
+                                .count();
+        return result;
+      }
       total_power += power;
-      if (power > peak_power) {
+      if (bin >= first_bin && bin <= last_bin && power > peak_power) {
         peak_power = power;
         peak_bin = bin;
       }
     }
-    if (peak_power > 0.0 && total_power > 0.0) {
-      result.is_valid = true;
-      result.invalid_reason.clear();
-      result.bpm = static_cast<double>(peak_bin) * kSampleRateHz * 60.0 /
-                   static_cast<double>(frames);
-      result.confidence = peak_power / total_power;
+    if (std::isfinite(peak_power) && std::isfinite(total_power) &&
+        peak_power > kPowerEpsilon && total_power > kPowerEpsilon) {
+      const double confidence = peak_power / total_power;
+      if (std::isfinite(confidence)) {
+        result.confidence = confidence;
+        if (confidence >= kConfidenceThreshold) {
+          result.is_valid = true;
+          result.invalid_reason.clear();
+          result.bpm = static_cast<double>(peak_bin) * kSampleRateHz * 60.0 /
+                       static_cast<double>(frames);
+        }
+      }
     }
     result.inference_ms = std::chrono::duration<double, std::milli>(
                             std::chrono::steady_clock::now() - started)

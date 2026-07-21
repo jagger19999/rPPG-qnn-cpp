@@ -6,11 +6,13 @@
 #include <cmath>
 #include <atomic>
 #include <condition_variable>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <stdexcept>
 #include <thread>
 #include <utility>
+#include <vector>
 
 namespace {
 
@@ -31,6 +33,38 @@ rppg_qnn::DeepInput valid_input(double end_sec) {
     input.tensor.insert(input.tensor.end(), {10.0F, green, 20.0F});
   }
   return input;
+}
+
+rppg_qnn::DeepInput ready_input(double end_sec) {
+  rppg_qnn::DeepInput input = valid_input(end_sec);
+  input.shape = {180, 72, 72, 3};
+  input.tensor.assign(180U * 72U * 72U * 3U, 0.0F);
+  for (std::size_t index = 0; index < input.tensor.size(); index += 3U) {
+    input.tensor[index] = 10.0F;
+    input.tensor[index + 1U] = 128.0F;
+    input.tensor[index + 2U] = 20.0F;
+  }
+  return input;
+}
+
+void set_green_signal(rppg_qnn::DeepInput* input,
+                      const std::function<float(int)>& green_at) {
+  for (int index = 0; index < 180; ++index) {
+    (*input).tensor[static_cast<std::size_t>(index) * 3U + 1U] = green_at(index);
+  }
+}
+
+void expect_finite_result(const rppg_qnn::HeartRateResult& result) {
+  EXPECT_TRUE(std::isfinite(result.window_start_sec));
+  EXPECT_TRUE(std::isfinite(result.window_end_sec));
+  EXPECT_TRUE(std::isfinite(result.bpm));
+  EXPECT_TRUE(std::isfinite(result.confidence));
+  EXPECT_TRUE(std::isfinite(result.source_fps));
+  EXPECT_TRUE(std::isfinite(result.max_frame_gap_sec));
+  EXPECT_TRUE(std::isfinite(result.inference_ms));
+  for (float value : result.waveform) {
+    EXPECT_TRUE(std::isfinite(value));
+  }
 }
 
 bool wait_for_result(rppg_qnn::DeepWorker& worker, double minimum_end_sec) {
@@ -114,6 +148,7 @@ void fake_runtime_estimates_sine_and_preserves_metadata() {
     non_flat = non_flat || std::abs(value) > 0.01F;
   }
   EXPECT_TRUE(non_flat);
+  expect_finite_result(result);
 
   auto malformed = valid_input(6.0);
   malformed.shape = {180, 1, 1};
@@ -122,14 +157,61 @@ void fake_runtime_estimates_sine_and_preserves_metadata() {
   EXPECT_EQ(invalid.invalid_reason, std::string("model_input_invalid"));
   EXPECT_TRUE(std::isfinite(invalid.window_start_sec));
   EXPECT_TRUE(std::isfinite(invalid.window_end_sec));
+  expect_finite_result(invalid);
+}
+
+void fake_runtime_rejects_low_confidence_signals() {
+  auto runtime = rppg_qnn::make_fake_deep_runtime(0ms);
+  auto flat = valid_input(6.0);
+  set_green_signal(&flat, [](int) { return 128.0F; });
+  auto result = runtime->infer(flat);
+  EXPECT_TRUE(!result.is_valid);
+  EXPECT_EQ(result.invalid_reason, std::string("low_confidence"));
+  expect_finite_result(result);
+
+  auto out_of_band = valid_input(6.0);
+  set_green_signal(&out_of_band, [](int index) {
+    return 128.0F + 20.0F * static_cast<float>(
+        std::sin(2.0 * 3.14159265358979323846 * 0.5 * index / 30.0));
+  });
+  result = runtime->infer(out_of_band);
+  EXPECT_TRUE(!result.is_valid);
+  EXPECT_EQ(result.invalid_reason, std::string("low_confidence"));
+  expect_finite_result(result);
+
+  auto equal_bins = valid_input(6.0);
+  set_green_signal(&equal_bins, [](int index) {
+    double green = 128.0;
+    for (int bin = 5; bin <= 18; ++bin) {
+      green += 2.0 * std::sin(2.0 * 3.14159265358979323846 * bin * index / 180.0);
+    }
+    return static_cast<float>(green);
+  });
+  result = runtime->infer(equal_bins);
+  EXPECT_TRUE(!result.is_valid);
+  EXPECT_EQ(result.invalid_reason, std::string("low_confidence"));
+  EXPECT_TRUE(std::abs(result.confidence - 1.0 / 14.0) < 0.01);
+  expect_finite_result(result);
+}
+
+void worker_survives_idle_timeouts() {
+  rppg_qnn::DeepWorker worker(rppg_qnn::make_fake_deep_runtime(0ms), 5ms);
+  std::this_thread::sleep_for(30ms);
+  EXPECT_TRUE(worker.submit(valid_input(7.0)));
+  EXPECT_TRUE(wait_for_result(worker, 7.0));
 }
 
 void worker_is_latest_only_nonblocking_and_closes_safely() {
   rppg_qnn::DeepWorker worker(rppg_qnn::make_fake_deep_runtime(100ms));
-  const auto start = std::chrono::steady_clock::now();
+  std::vector<rppg_qnn::DeepInput> inputs;
+  inputs.reserve(20U);
   for (int index = 0; index < 20; ++index) {
+    inputs.push_back(ready_input(6.0 + index));
+  }
+  const auto start = std::chrono::steady_clock::now();
+  for (rppg_qnn::DeepInput& input : inputs) {
     const auto submit_start = std::chrono::steady_clock::now();
-    EXPECT_TRUE(worker.submit(valid_input(6.0 + index)));
+    EXPECT_TRUE(worker.submit(std::move(input)));
     EXPECT_TRUE(std::chrono::steady_clock::now() - submit_start < 5ms);
   }
   EXPECT_TRUE(std::chrono::steady_clock::now() - start < 20ms);
@@ -197,6 +279,8 @@ void worker_converts_runtime_exceptions_into_safe_invalid_results() {
 
 int main() {
   fake_runtime_estimates_sine_and_preserves_metadata();
+  fake_runtime_rejects_low_confidence_signals();
+  worker_survives_idle_timeouts();
   worker_is_latest_only_nonblocking_and_closes_safely();
   close_drains_the_latest_pending_input();
   worker_converts_runtime_exceptions_into_safe_invalid_results();

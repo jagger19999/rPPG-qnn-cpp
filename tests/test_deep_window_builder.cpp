@@ -199,11 +199,59 @@ void reports_capture_quality_and_rejects_invalid_rois() {
   EXPECT_TRUE(rejected_oversized_output);
 }
 
+void recovers_from_error_and_uses_earlier_frames_for_ties() {
+  rppg_qnn::DeepWindowBuilder recovering(6.0, 180, {72, 72});
+  rppg_qnn::RoiPacket empty{0, 0.0, {}, std::nullopt, false};
+  EXPECT_TRUE(!recovering.add_roi(empty).has_value());
+  EXPECT_EQ(recovering.status(), std::string("empty_roi"));
+  std::optional<rppg_qnn::DeepInput> recovered;
+  for (int index = 0; index <= 180; ++index) {
+    recovered = recovering.add_roi(patterned_packet(index / 30.0, index));
+  }
+  EXPECT_TRUE(recovered.has_value());
+  EXPECT_EQ(recovering.status(), std::string("ready"));
+
+  rppg_qnn::DeepWindowBuilder tie_builder(6.0, 180, {72, 72});
+  EXPECT_TRUE(!tie_builder.add_roi(patterned_packet(0.0, 1)).has_value());
+  EXPECT_TRUE(!tie_builder.add_roi(patterned_packet(0.020, 2)).has_value());
+  EXPECT_TRUE(!tie_builder.add_roi(patterned_packet(0.04666666666666667, 3)).has_value());
+  std::optional<rppg_qnn::DeepInput> tied;
+  for (int index = 0; index < 178; ++index) {
+    const double timestamp = 0.080 + (6.0 - 0.080) * index / 177.0;
+    tied = tie_builder.add_roi(patterned_packet(timestamp, index + 4));
+  }
+  EXPECT_TRUE(tied.has_value());
+  if (tied.has_value()) {
+    expect_rgb_at(*tied, 1U, 2, 0, 0);
+  }
+}
+
+void owns_roi_pixels_after_the_caller_reuses_the_buffer() {
+  rppg_qnn::DeepWindowBuilder builder(6.0, 180, {72, 72});
+  cv::Mat roi(72, 72, CV_8UC3, cv::Scalar(9, 8, 7));
+  std::optional<rppg_qnn::DeepInput> output;
+  for (int index = 0; index <= 180; ++index) {
+    output = builder.add_roi({0, index / 30.0, roi, std::nullopt, false});
+    roi.setTo(cv::Scalar(1, 2, 3));
+    if (index != 180) {
+      roi.setTo(cv::Scalar(9, 8, 7));
+    }
+  }
+  EXPECT_TRUE(output.has_value());
+  if (output.has_value()) {
+    EXPECT_EQ(output->tensor[0], 7.0F);
+    EXPECT_EQ(output->tensor[1], 8.0F);
+    EXPECT_EQ(output->tensor[2], 9.0F);
+  }
+}
+
 }  // namespace
 
 int main() {
   builds_first_ready_rgb_nhwc_window_from_jittered_capture();
   uses_the_prestart_frame_for_the_first_target_and_has_a_coverage_policy();
   reports_capture_quality_and_rejects_invalid_rois();
+  recovers_from_error_and_uses_earlier_frames_for_ties();
+  owns_roi_pixels_after_the_caller_reuses_the_buffer();
   return test_support::finish();
 }

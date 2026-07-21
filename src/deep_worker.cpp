@@ -24,10 +24,14 @@ HeartRateResult worker_failure(const DeepInput& input) {
 
 }  // namespace
 
-DeepWorker::DeepWorker(std::unique_ptr<IDeepRuntime> runtime)
-    : runtime_(std::move(runtime)) {
+DeepWorker::DeepWorker(std::unique_ptr<IDeepRuntime> runtime,
+                       std::chrono::milliseconds idle_wait)
+    : runtime_(std::move(runtime)), idle_wait_(idle_wait) {
   if (!runtime_) {
     throw std::invalid_argument("Deep runtime must not be null");
+  }
+  if (idle_wait_ <= std::chrono::milliseconds::zero()) {
+    throw std::invalid_argument("Deep worker idle wait must be positive");
   }
   thread_ = std::thread(&DeepWorker::run, this);
 }
@@ -51,7 +55,14 @@ void DeepWorker::close() {
 }
 
 void DeepWorker::run() {
-  while (auto input = queue_.wait_pop(std::chrono::hours(24))) {
+  while (true) {
+    auto input = queue_.wait_pop(idle_wait_);
+    if (!input.has_value()) {
+      if (queue_.closed()) {
+        return;
+      }
+      continue;
+    }
     const auto started = std::chrono::steady_clock::now();
     try {
       publish(runtime_->infer(*input));
