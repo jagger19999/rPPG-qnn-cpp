@@ -498,6 +498,21 @@ void test_frame_health_is_batched_on_one_second_boundaries() {
   EXPECT_TRUE(summary.find("\"heart_rate_count\":0") != std::string::npos);
 }
 
+void test_runtime_errors_are_machine_readable() {
+  ScopedDirectory directory;
+  rppg_qnn::ResultSink sink(directory.path());
+  sink.publish_runtime_error("UNEXPECTED_EXCEPTION", "bad \"message\"\nnext");
+  sink.close(1);
+  const std::vector<std::string> events = json_lines(read_file(directory.path() / "events.jsonl"));
+  EXPECT_EQ(events.size(), static_cast<std::size_t>(1));
+  if (events.size() == 1) {
+    expect_json_event(events.front(), "runtime_error");
+    EXPECT_TRUE(events.front().find("\"error_code\":\"UNEXPECTED_EXCEPTION\"") !=
+                std::string::npos);
+    EXPECT_TRUE(events.front().find("\\\"message\\\"") != std::string::npos);
+  }
+}
+
 void test_constructor_failure_and_idempotent_close() {
   ScopedDirectory directory;
   {
@@ -624,6 +639,7 @@ void test_multiple_sinks_write_complete_terminal_lines() {
 int main() {
   test_persisted_events_csv_and_summary();
   test_frame_health_is_batched_on_one_second_boundaries();
+  test_runtime_errors_are_machine_readable();
   test_constructor_failure_and_idempotent_close();
   test_machine_output_ignores_global_comma_locale();
   test_invalid_utf8_is_replaced_in_json_and_csv();

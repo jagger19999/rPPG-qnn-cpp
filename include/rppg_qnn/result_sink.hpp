@@ -21,6 +21,7 @@ class ResultSink {
   ResultSink& operator=(const ResultSink&) = delete;
 
   void publish(const PreflightResult& result);
+  void publish_runtime_error(const std::string& error_code, const std::string& message);
   // Frame-health events are emitted for the first finite timestamp and then at
   // most once per elapsed second. Non-finite and backwards timestamps are
   // discarded so they cannot defeat the throttle.
@@ -44,6 +45,7 @@ class ResultSink {
   bool has_frame_timestamp_{false};
   double last_frame_timestamp_sec_{0.0};
   std::size_t preflight_count_{0};
+  std::size_t runtime_error_count_{0};
   std::size_t frame_health_count_{0};
   std::size_t heart_rate_count_{0};
   std::size_t valid_heart_rate_count_{0};

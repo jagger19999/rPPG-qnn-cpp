@@ -195,6 +195,20 @@ void ResultSink::publish(const PreflightResult& result) {
   ++preflight_count_;
 }
 
+void ResultSink::publish_runtime_error(const std::string& error_code,
+                                       const std::string& message) {
+  std::lock_guard<std::mutex> lock(mutex_);
+  ensure_open_for_publish();
+  events_ << "{\"schema_version\":1,\"event_type\":\"runtime_error\""
+          << ",\"error_code\":" << json_string(error_code)
+          << ",\"message\":" << json_string(message) << "}\n";
+  events_.flush();
+  if (!events_) {
+    fail_permanently("could not write runtime error");
+  }
+  ++runtime_error_count_;
+}
+
 void ResultSink::publish(const FrameHealth& result) {
   std::lock_guard<std::mutex> lock(mutex_);
   ensure_open_for_publish();

@@ -31,12 +31,18 @@ using FaceDetector = std::function<std::vector<FaceBox>(const cv::Mat&)>;
 
 std::optional<cv::Rect> cheek_roi(const FaceBox& face, cv::Size frame_size);
 
-class RoiProcessor {
+class IRoiProcessor {
+ public:
+  virtual ~IRoiProcessor() = default;
+  virtual RoiPacket process(const FramePacket& frame) = 0;
+};
+
+class RoiProcessor final : public IRoiProcessor {
  public:
   explicit RoiProcessor(const std::filesystem::path& cascade_path);
   explicit RoiProcessor(FaceDetector detector);
 
-  RoiPacket process(const FramePacket& frame);
+  RoiPacket process(const FramePacket& frame) override;
 
  private:
   FaceDetector detector_;
