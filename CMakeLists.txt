@@ -10,10 +10,21 @@ option(RPPG_ENABLE_SANITIZERS "Enable AddressSanitizer and UndefinedBehaviorSani
 
 find_package(OpenCV 4 REQUIRED COMPONENTS core imgproc videoio objdetect)
 
+if(RPPG_ENABLE_SANITIZERS AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+  add_library(rppg_qnn_sanitizers INTERFACE)
+  target_compile_options(rppg_qnn_sanitizers INTERFACE
+                         -fsanitize=address,undefined -fno-omit-frame-pointer)
+  target_link_options(rppg_qnn_sanitizers INTERFACE
+                      -fsanitize=address,undefined)
+endif()
+
 add_library(rppg_qnn_core src/config.cpp src/contracts.cpp src/error.cpp)
 target_include_directories(rppg_qnn_core PUBLIC include)
 target_link_libraries(rppg_qnn_core PUBLIC ${OpenCV_LIBS} ${CMAKE_DL_LIBS})
 target_compile_options(rppg_qnn_core PRIVATE -Wall -Wextra -Wpedantic -Werror)
+if(TARGET rppg_qnn_sanitizers)
+  target_link_libraries(rppg_qnn_core PUBLIC rppg_qnn_sanitizers)
+endif()
 
 add_executable(rppg_qnn_live src/main.cpp)
 target_link_libraries(rppg_qnn_live PRIVATE rppg_qnn_core)
@@ -40,11 +51,9 @@ if(BUILD_TESTING)
   target_include_directories(test_latest_queue PRIVATE include tests)
   target_link_libraries(test_latest_queue PRIVATE Threads::Threads)
   target_compile_options(test_latest_queue PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  if(TARGET rppg_qnn_sanitizers)
+    target_link_libraries(test_latest_queue PRIVATE rppg_qnn_sanitizers)
+  endif()
 
   add_test(NAME latest_queue COMMAND test_latest_queue)
-endif()
-
-if(RPPG_ENABLE_SANITIZERS AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
-  target_compile_options(rppg_qnn_core PUBLIC -fsanitize=address,undefined -fno-omit-frame-pointer)
-  target_link_options(rppg_qnn_core PUBLIC -fsanitize=address,undefined)
 endif()
