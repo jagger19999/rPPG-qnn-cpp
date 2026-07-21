@@ -50,6 +50,35 @@ double green_signal(double timestamp) {
   return 100.0 + 2.0 * std::sin(2.0 * kPi * 1.2 * timestamp);
 }
 
+void add_frequency_samples(rppg_qnn::GreenPredictor& predictor,
+                           double frequency_hz,
+                           double baseline = 100.0,
+                           double amplitude = 2.0) {
+  for (int index = 0; index <= 600; ++index) {
+    const double timestamp = static_cast<double>(index) / 30.0;
+    const double green = baseline + amplitude * std::sin(
+        2.0 * kPi * frequency_hz * (timestamp - 5.0));
+    predictor.add_sample(timestamp, cv::Scalar(30.0, green, 40.0));
+  }
+}
+
+void expect_finite_result(const rppg_qnn::GreenPredictor& predictor) {
+  const auto result = predictor.latest_result();
+  EXPECT_TRUE(result.has_value());
+  if (!result.has_value()) {
+    return;
+  }
+  EXPECT_TRUE(std::isfinite(result->window_start_sec));
+  EXPECT_TRUE(std::isfinite(result->window_end_sec));
+  EXPECT_TRUE(std::isfinite(result->bpm));
+  EXPECT_TRUE(std::isfinite(result->confidence));
+  EXPECT_TRUE(std::isfinite(result->source_fps));
+  EXPECT_TRUE(std::isfinite(result->max_frame_gap_sec));
+  for (float value : result->waveform) {
+    EXPECT_TRUE(std::isfinite(value));
+  }
+}
+
 void valid_jittered_signal_estimates_72_bpm() {
   rppg_qnn::GreenPredictor predictor;
   add_sine_samples(predictor, 20.0, 29.0, true);
@@ -77,6 +106,52 @@ void valid_jittered_signal_estimates_72_bpm() {
     waveform_sum += value;
   }
   EXPECT_TRUE(std::abs(waveform_sum / static_cast<double>(result->waveform.size())) < 0.01);
+}
+
+void frequency_band_edges_are_stable() {
+  rppg_qnn::GreenPredictor lower;
+  add_frequency_samples(lower, 0.7);
+  const auto lower_result = lower.latest_result();
+  EXPECT_TRUE(lower_result.has_value());
+  if (lower_result.has_value()) {
+    EXPECT_TRUE(lower_result->is_valid);
+    EXPECT_TRUE(std::abs(lower_result->bpm - 42.0) <= 0.01);
+  }
+
+  rppg_qnn::GreenPredictor upper;
+  add_frequency_samples(upper, 3.0);
+  const auto upper_result = upper.latest_result();
+  EXPECT_TRUE(upper_result.has_value());
+  if (upper_result.has_value()) {
+    EXPECT_TRUE(upper_result->is_valid);
+    EXPECT_EQ(upper_result->bpm, 180.0);
+  }
+}
+
+void halfway_frequency_chooses_the_higher_bin() {
+  rppg_qnn::GreenPredictor predictor;
+  add_frequency_samples(predictor, 2.95);
+  const auto result = predictor.latest_result();
+  EXPECT_TRUE(result.has_value());
+  if (result.has_value()) {
+    EXPECT_TRUE(result->is_valid);
+    EXPECT_TRUE(std::abs(result->bpm - 180.0) <= 0.01);
+  }
+}
+
+void extreme_finite_green_values_never_produce_nonfinite_results() {
+  rppg_qnn::GreenPredictor large_baseline;
+  add_frequency_samples(large_baseline, 1.2, 1e155, 1e153);
+  expect_finite_result(large_baseline);
+
+  rppg_qnn::GreenPredictor alternating_extremes;
+  const double extreme = std::numeric_limits<double>::max() / 2.0;
+  for (int index = 0; index <= 360; ++index) {
+    const double timestamp = static_cast<double>(index) / 30.0;
+    const double green = index % 2 == 0 ? extreme : -extreme;
+    alternating_extremes.add_sample(timestamp, cv::Scalar(extreme, green, -extreme));
+  }
+  expect_finite_result(alternating_extremes);
 }
 
 void short_stream_reports_sampling() {
@@ -191,6 +266,9 @@ void public_reset_clears_result_and_evaluation_state() {
 
 int main() {
   valid_jittered_signal_estimates_72_bpm();
+  frequency_band_edges_are_stable();
+  halfway_frequency_chooses_the_higher_bin();
+  extreme_finite_green_values_never_produce_nonfinite_results();
   short_stream_reports_sampling();
   low_source_fps_is_rejected();
   capture_gap_is_rejected_at_high_average_fps();
