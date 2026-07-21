@@ -70,11 +70,20 @@ std::optional<HeartRateResult> GreenPredictor::latest_result() const {
 
 std::size_t GreenPredictor::buffered_count() const { return samples_.size(); }
 
+double GreenPredictor::buffered_span_sec() const {
+  if (samples_.size() < 2U) {
+    return 0.0;
+  }
+  return samples_.back().timestamp_sec - samples_.front().timestamp_sec;
+}
+
 std::size_t GreenPredictor::evaluation_count() const { return evaluation_count_; }
 
 void GreenPredictor::reset() {
   samples_.clear();
+  latest_.reset();
   last_evaluation_timestamp_sec_.reset();
+  evaluation_count_ = 0;
 }
 
 void GreenPredictor::set_sampling_result() { latest_ = invalid_result("sampling"); }
@@ -82,17 +91,25 @@ void GreenPredictor::set_sampling_result() { latest_ = invalid_result("sampling"
 void GreenPredictor::evaluate() {
   const double window_end = samples_.back().timestamp_sec;
   const double window_start = window_end - kWindowSeconds;
-  std::vector<Sample> source;
-  source.reserve(samples_.size());
-  for (const Sample& sample : samples_) {
-    if (sample.timestamp_sec >= window_start) {
-      source.push_back(sample);
-    }
-  }
 
   HeartRateResult result = invalid_result("sampling");
   result.window_start_sec = window_start;
   result.window_end_sec = window_end;
+  const auto lower = std::lower_bound(
+      samples_.begin(), samples_.end(), window_start,
+      [](const Sample& sample, double timestamp) {
+        return sample.timestamp_sec < timestamp;
+      });
+  if (lower == samples_.end() ||
+      (lower == samples_.begin() && lower->timestamp_sec > window_start)) {
+    latest_ = result;
+    last_evaluation_timestamp_sec_ = window_end;
+    ++evaluation_count_;
+    return;
+  }
+
+  const auto source_begin = lower == samples_.begin() ? lower : std::prev(lower);
+  std::vector<Sample> source(source_begin, samples_.end());
   result.source_frame_count = source.size();
   if (source.size() < 2U) {
     latest_ = result;
@@ -124,6 +141,7 @@ void GreenPredictor::evaluate() {
     std::vector<double> resampled;
     resampled.reserve(kResampleCount);
     std::size_t right_index = 1U;
+    bool all_targets_covered = true;
     for (std::size_t index = 0; index < kResampleCount; ++index) {
       const double target_time =
           window_start + static_cast<double>(index) / kResampleFps;
@@ -132,15 +150,29 @@ void GreenPredictor::evaluate() {
         ++right_index;
       }
       if (right_index == source.size()) {
-        right_index = source.size() - 1U;
+        all_targets_covered = false;
+        break;
       }
       const Sample& right = source[right_index];
       const Sample& left = source[right_index - 1U];
+      if (left.timestamp_sec > target_time || right.timestamp_sec < target_time) {
+        all_targets_covered = false;
+        break;
+      }
       const double span = right.timestamp_sec - left.timestamp_sec;
-      const double fraction = span > 0.0
-                                  ? (target_time - left.timestamp_sec) / span
-                                  : 0.0;
+      if (span <= 0.0) {
+        all_targets_covered = false;
+        break;
+      }
+      const double fraction = (target_time - left.timestamp_sec) / span;
       resampled.push_back(left.green + fraction * (right.green - left.green));
+    }
+
+    if (!all_targets_covered) {
+      latest_ = result;
+      last_evaluation_timestamp_sec_ = window_end;
+      ++evaluation_count_;
+      return;
     }
 
     double mean_time = 0.0;

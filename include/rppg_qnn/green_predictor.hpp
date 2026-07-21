@@ -16,6 +16,7 @@ class GreenPredictor {
 
   [[nodiscard]] std::optional<HeartRateResult> latest_result() const;
   [[nodiscard]] std::size_t buffered_count() const;
+  [[nodiscard]] double buffered_span_sec() const;
   [[nodiscard]] std::size_t evaluation_count() const;
   void reset();
 
