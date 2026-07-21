@@ -29,13 +29,13 @@ if [[ "${mode}" == aarch64 ]]; then
   : "${AARCH64_SYSROOT:?AARCH64_SYSROOT is required for aarch64 mode}"
 fi
 
-script_dir=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-source_dir=$(CDPATH= cd -- "${script_dir}/.." && pwd)
+script_dir=$(CDPATH= cd -P -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
+source_dir=$(CDPATH= cd -P -- "${script_dir}/.." && pwd -P)
 build_dir=${BUILD_DIR:-"${source_dir}/build-linux-${mode}"}
 requested_stage_dir=${STAGE_DIR:-"${source_dir}/stage/rppg-qnn"}
 
 mkdir -p "${build_dir}"
-build_dir=$(CDPATH= cd -- "${build_dir}" && pwd)
+build_dir=$(CDPATH= cd -P -- "${build_dir}" && pwd -P)
 [[ "${build_dir}" != "${source_dir}" ]] || die 'BUILD_DIR cannot be the source directory'
 
 mode_marker="${build_dir}/.rppg-build-mode"
@@ -60,10 +60,22 @@ case "${stage_name}" in
   ''|'.'|'..'|'/') die 'STAGE_DIR must name a package directory' ;;
 esac
 mkdir -p "${stage_parent_input}"
-stage_parent=$(CDPATH= cd -- "${stage_parent_input}" && pwd)
+stage_parent=$(CDPATH= cd -P -- "${stage_parent_input}" && pwd -P)
 stage_dir="${stage_parent}/${stage_name}"
-[[ "${stage_dir}" != "${source_dir}" && "${stage_dir}" != "${build_dir}" ]] ||
-  die 'STAGE_DIR cannot be the source or build directory'
+
+path_is_same_or_ancestor() {
+  local candidate=${1%/}
+  local protected=${2%/}
+  local boundary
+  [[ "${candidate}" == "${protected}" ]] && return 0
+  boundary="${candidate}/"
+  [[ "${protected:0:${#boundary}}" == "${boundary}" ]]
+}
+
+if path_is_same_or_ancestor "${stage_dir}" "${source_dir}" ||
+   path_is_same_or_ancestor "${stage_dir}" "${build_dir}"; then
+  die 'STAGE_DIR cannot be the source/build directory or any of their ancestors'
+fi
 if [[ -L "${stage_dir}" ]]; then
   die 'STAGE_DIR cannot be a symbolic link'
 fi

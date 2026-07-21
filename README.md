@@ -59,7 +59,7 @@ stage/rppg-qnn/
   share/rppg-qnn/config/runtime-defaults.env
 ```
 
-发布包不应出现 `models/`、`.pth`、`.onnx`、`.dlc` 或 Python 文件。每次打包都先安装到 `STAGE_DIR` 同级的全新临时目录，核对固定文件白名单和架构，再替换最终目录；旧目录里的模型、Python 文件或其他污染不会遗留。为避免误删，`STAGE_DIR` 不允许指向源码目录、构建目录或符号链接。
+发布包不应出现 `models/`、`.pth`、`.onnx`、`.dlc` 或 Python 文件。每次打包都先安装到 `STAGE_DIR` 同级的全新临时目录，核对固定文件白名单和架构，再替换最终目录；旧目录里的模型、Python 文件或其他污染不会遗留。为避免误删，脚本按物理绝对路径检查边界：`STAGE_DIR` 不允许是源码目录、构建目录或它们的任何祖先，也不能是符号链接；位于源码目录下的默认 `stage/rppg-qnn` 仍然合法。
 
 ## QAIRT/QNN 环境
 

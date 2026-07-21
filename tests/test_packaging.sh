@@ -20,6 +20,17 @@ expect_failure() {
   fi
 }
 
+expect_exit_two() {
+  local output_file=$1
+  shift
+  local status
+  set +e
+  "$@" >"${output_file}" 2>&1
+  status=$?
+  set -e
+  [[ ${status} -eq 2 ]] || fail "expected exit 2, got ${status}: $*"
+}
+
 tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/rppg-qnn-packaging.XXXXXX")
 trap 'rm -rf "${tmp_dir}"' EXIT
 
@@ -98,6 +109,9 @@ grep -q "<${tmp_dir}/sample.avi>" "${tmp_dir}/live.log" ||
 cat >"${fake_tools}/cmake" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+if [[ -n ${RPPG_TEST_CMAKE_CALLED:-} ]]; then
+  printf 'called\n' >>"${RPPG_TEST_CMAKE_CALLED}"
+fi
 if [[ ${1:-} == --build ]]; then
   mkdir -p "$2"
   printf '#!/usr/bin/env bash\nexit 0\n' >"$2/rppg_qnn_live"
@@ -225,5 +239,86 @@ grep -qx 'RPPG_OPENCL_LIBRARY=libOpenCL.so' <<<"${child_environment}" ||
 grep -qx 'RPPG_HAAR_CASCADE=/usr/share/opencv4/haarcascades/haarcascade_frontalface_default.xml' \
   <<<"${child_environment}" ||
   fail 'sourced defaults did not export RPPG_HAAR_CASCADE to a child process'
+
+make_sandbox_source() {
+  local destination=$1
+  mkdir -p "${destination}/scripts" "${destination}/packaging" "${destination}/config" \
+    "${destination}/cmake/Toolchains"
+  cp "${BUILD_SCRIPT}" "${destination}/scripts/build_linux.sh"
+  cp "${LAUNCHER}" "${destination}/packaging/run_rppg_qnn.sh"
+  cp "${DEFAULT_CONFIG}" "${destination}/config/runtime-defaults.env"
+  cp "${SOURCE_DIR}/README.md" "${destination}/README.md"
+  cp "${SOURCE_DIR}/cmake/Toolchains/aarch64-linux.cmake" \
+    "${destination}/cmake/Toolchains/aarch64-linux.cmake"
+  chmod +x "${destination}/scripts/build_linux.sh" \
+    "${destination}/packaging/run_rppg_qnn.sh"
+}
+
+source_parent_root="${tmp_dir}/source parent boundary"
+source_parent_repo="${source_parent_root}/repo"
+source_parent_build="${tmp_dir}/source parent external build"
+make_sandbox_source "${source_parent_repo}"
+mkdir -p "${source_parent_build}"
+printf 'source-safe' >"${source_parent_repo}/source.sentinel"
+printf 'build-safe' >"${source_parent_build}/build.sentinel"
+cmake_called="${tmp_dir}/source-parent-cmake-called"
+expect_exit_two "${tmp_dir}/source-parent-boundary.log" env \
+  RPPG_TEST_CMAKE_CALLED="${cmake_called}" RPPG_TEST_SOURCE_DIR="${source_parent_repo}" \
+  RPPG_TEST_FILE_OUTPUT="${native_file_output}" PATH="${fake_tools}:${PATH}" \
+  BUILD_DIR="${source_parent_build}" STAGE_DIR="${source_parent_root}" \
+  "${source_parent_repo}/scripts/build_linux.sh" native
+[[ ! -e "${cmake_called}" && $(<"${source_parent_repo}/source.sentinel") == source-safe &&
+   $(<"${source_parent_build}/build.sentinel") == build-safe ]] ||
+  fail 'source-parent STAGE_DIR reached CMake or changed a protected sentinel'
+
+build_parent_root="${tmp_dir}/build parent boundary"
+build_parent_repo="${tmp_dir}/build parent repo"
+build_parent_build="${build_parent_root}/build"
+make_sandbox_source "${build_parent_repo}"
+mkdir -p "${build_parent_build}"
+printf 'source-safe' >"${build_parent_repo}/source.sentinel"
+printf 'build-safe' >"${build_parent_build}/build.sentinel"
+cmake_called="${tmp_dir}/build-parent-cmake-called"
+expect_exit_two "${tmp_dir}/build-parent-boundary.log" env \
+  RPPG_TEST_CMAKE_CALLED="${cmake_called}" RPPG_TEST_SOURCE_DIR="${build_parent_repo}" \
+  RPPG_TEST_FILE_OUTPUT="${native_file_output}" PATH="${fake_tools}:${PATH}" \
+  BUILD_DIR="${build_parent_build}" STAGE_DIR="${build_parent_root}" \
+  "${build_parent_repo}/scripts/build_linux.sh" native
+[[ ! -e "${cmake_called}" && $(<"${build_parent_repo}/source.sentinel") == source-safe &&
+   $(<"${build_parent_build}/build.sentinel") == build-safe ]] ||
+  fail 'build-parent STAGE_DIR reached CMake or changed a protected sentinel'
+
+common_root="${tmp_dir}/common ancestor boundary"
+common_repo="${common_root}/repo"
+common_build="${common_root}/build"
+make_sandbox_source "${common_repo}"
+mkdir -p "${common_build}"
+printf 'source-safe' >"${common_repo}/source.sentinel"
+printf 'build-safe' >"${common_build}/build.sentinel"
+parent_alias="${tmp_dir}/physical parent alias"
+ln -s "${tmp_dir}" "${parent_alias}"
+common_root_via_alias="${parent_alias}/$(basename -- "${common_root}")"
+cmake_called="${tmp_dir}/common-parent-cmake-called"
+expect_exit_two "${tmp_dir}/common-parent-boundary.log" env \
+  RPPG_TEST_CMAKE_CALLED="${cmake_called}" RPPG_TEST_SOURCE_DIR="${common_repo}" \
+  RPPG_TEST_FILE_OUTPUT="${native_file_output}" PATH="${fake_tools}:${PATH}" \
+  BUILD_DIR="${common_build}" STAGE_DIR="${common_root_via_alias}" \
+  "${common_repo}/scripts/build_linux.sh" native
+[[ ! -e "${cmake_called}" && $(<"${common_repo}/source.sentinel") == source-safe &&
+   $(<"${common_build}/build.sentinel") == build-safe ]] ||
+  fail 'symlink-resolved common-ancestor STAGE_DIR changed protected data'
+
+descendant_root="${tmp_dir}/allowed descendant boundary"
+descendant_repo="${descendant_root}/repo"
+descendant_build="${tmp_dir}/allowed descendant build"
+descendant_stage="${descendant_repo}/stage/package"
+make_sandbox_source "${descendant_repo}"
+printf 'source-safe' >"${descendant_repo}/source.sentinel"
+RPPG_TEST_SOURCE_DIR="${descendant_repo}" RPPG_TEST_FILE_OUTPUT="${native_file_output}" \
+  PATH="${fake_tools}:${PATH}" BUILD_DIR="${descendant_build}" \
+  STAGE_DIR="${descendant_stage}" "${descendant_repo}/scripts/build_linux.sh" native
+[[ $(<"${descendant_repo}/source.sentinel") == source-safe &&
+   -x "${descendant_stage}/bin/rppg_qnn_live" ]] ||
+  fail 'a safe STAGE_DIR below the source directory was rejected or damaged the source'
 
 printf 'packaging behavior passed\n'
