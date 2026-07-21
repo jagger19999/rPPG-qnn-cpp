@@ -3,10 +3,11 @@
 #include "rppg_qnn/frame_source.hpp"
 
 #include <filesystem>
+#include <functional>
 #include <optional>
+#include <vector>
 
 #include <opencv2/core.hpp>
-#include <opencv2/objdetect.hpp>
 
 namespace rppg_qnn {
 
@@ -26,16 +27,19 @@ struct RoiPacket {
   bool used_fallback{false};
 };
 
+using FaceDetector = std::function<std::vector<FaceBox>(const cv::Mat&)>;
+
 std::optional<cv::Rect> cheek_roi(const FaceBox& face, cv::Size frame_size);
 
 class RoiProcessor {
  public:
   explicit RoiProcessor(const std::filesystem::path& cascade_path);
+  explicit RoiProcessor(FaceDetector detector);
 
   RoiPacket process(const FramePacket& frame);
 
  private:
-  cv::CascadeClassifier cascade_;
+  FaceDetector detector_;
   std::optional<FaceBox> last_face_;
   std::uint64_t processed_frames_{0};
 };
