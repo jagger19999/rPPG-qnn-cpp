@@ -10,7 +10,7 @@ option(RPPG_ENABLE_SANITIZERS "Enable AddressSanitizer and UndefinedBehaviorSani
 
 find_package(OpenCV 4 REQUIRED COMPONENTS core imgproc videoio objdetect)
 
-add_library(rppg_qnn_core src/contracts.cpp src/error.cpp)
+add_library(rppg_qnn_core src/config.cpp src/contracts.cpp src/error.cpp)
 target_include_directories(rppg_qnn_core PUBLIC include)
 target_link_libraries(rppg_qnn_core PUBLIC ${OpenCV_LIBS} ${CMAKE_DL_LIBS})
 target_compile_options(rppg_qnn_core PRIVATE -Wall -Wextra -Wpedantic -Werror)
@@ -27,6 +27,13 @@ if(BUILD_TESTING)
   target_compile_options(test_contracts PRIVATE -Wall -Wextra -Wpedantic -Werror)
 
   add_test(NAME contracts COMMAND test_contracts)
+
+  add_executable(test_config tests/test_config.cpp)
+  target_link_libraries(test_config PRIVATE rppg_qnn_core)
+  target_include_directories(test_config PRIVATE tests)
+  target_compile_options(test_config PRIVATE -Wall -Wextra -Wpedantic -Werror)
+
+  add_test(NAME config COMMAND test_config)
 endif()
 
 if(RPPG_ENABLE_SANITIZERS AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
