@@ -2,9 +2,8 @@
 
 #include <atomic>
 #include <chrono>
-#include <memory>
+#include <future>
 #include <thread>
-#include <utility>
 #include <vector>
 
 #include "test_support.hpp"
@@ -54,21 +53,24 @@ int main() {
 
   {
     rppg_qnn::LatestQueue<int> queue;
-    std::atomic<bool> entered_wait{false};
-    std::atomic<bool> woke{false};
+    std::promise<void> wait_started;
+    auto wait_started_future = wait_started.get_future();
+    std::promise<std::optional<int>> result;
+    auto result_future = result.get_future();
     std::thread waiter([&] {
-      entered_wait.store(true, std::memory_order_release);
-      const auto value = queue.wait_pop(5s);
-      woke.store(!value.has_value(), std::memory_order_release);
+      wait_started.set_value();
+      result.set_value(queue.wait_pop(5s));
     });
 
-    while (!entered_wait.load(std::memory_order_acquire)) {
-      std::this_thread::yield();
-    }
-    std::this_thread::sleep_for(10ms);
+    wait_started_future.wait();
     queue.close();
+
+    const auto completion = result_future.wait_for(250ms);
+    EXPECT_EQ(completion, std::future_status::ready);
+    if (completion == std::future_status::ready) {
+      EXPECT_TRUE(!result_future.get().has_value());
+    }
     waiter.join();
-    EXPECT_TRUE(woke.load(std::memory_order_acquire));
   }
 
   {
