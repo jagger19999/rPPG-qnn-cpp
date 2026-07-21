@@ -18,7 +18,7 @@ if(RPPG_ENABLE_SANITIZERS AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
                       -fsanitize=address,undefined)
 endif()
 
-add_library(rppg_qnn_core src/config.cpp src/contracts.cpp src/error.cpp src/frame_source.cpp)
+add_library(rppg_qnn_core src/config.cpp src/contracts.cpp src/error.cpp src/frame_source.cpp src/roi_processor.cpp)
 target_include_directories(rppg_qnn_core PUBLIC include)
 target_link_libraries(rppg_qnn_core PUBLIC ${OpenCV_LIBS} ${CMAKE_DL_LIBS})
 target_compile_options(rppg_qnn_core PRIVATE -Wall -Wextra -Wpedantic -Werror)
@@ -63,4 +63,11 @@ if(BUILD_TESTING)
   target_compile_options(test_frame_source PRIVATE -Wall -Wextra -Wpedantic -Werror)
 
   add_test(NAME frame_source COMMAND test_frame_source)
+
+  add_executable(test_roi_processor tests/test_roi_processor.cpp)
+  target_link_libraries(test_roi_processor PRIVATE rppg_qnn_core)
+  target_include_directories(test_roi_processor PRIVATE tests)
+  target_compile_options(test_roi_processor PRIVATE -Wall -Wextra -Wpedantic -Werror)
+
+  add_test(NAME roi_processor COMMAND test_roi_processor)
 endif()
