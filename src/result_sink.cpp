@@ -231,6 +231,15 @@ void ResultSink::publish(const FrameHealth& result) {
   has_frame_timestamp_ = true;
   last_frame_timestamp_sec_ = result.timestamp_sec;
   ++frame_health_count_;
+  std::ostringstream terminal = classic_output();
+  terminal << "frame_health frame_id=" << result.frame_id
+           << " timestamp_sec=" << json_number(result.timestamp_sec)
+           << " capture_fps=" << json_number(result.capture_fps)
+           << " face_found=" << json_bool(result.face_found)
+           << " face_confidence=" << json_number(result.face_confidence)
+           << " status=" << sanitize_utf8(result.status) << '\n';
+  std::lock_guard<std::mutex> terminal_lock(terminal_mutex);
+  std::cout << terminal.str();
 }
 
 void ResultSink::publish(const HeartRateResult& result) {

@@ -470,6 +470,7 @@ void test_persisted_events_csv_and_summary() {
 
 void test_frame_health_is_batched_on_one_second_boundaries() {
   ScopedDirectory directory;
+  ScopedCoutCapture output;
   rppg_qnn::ResultSink sink(directory.path());
   rppg_qnn::FrameHealth frame;
   for (double timestamp : {0.0, 0.99, 1.0, 1.5, 2.0,
@@ -496,6 +497,12 @@ void test_frame_health_is_batched_on_one_second_boundaries() {
   const std::string summary = read_file(directory.path() / "session_summary.json");
   EXPECT_TRUE(summary.find("\"frame_health_count\":3") != std::string::npos);
   EXPECT_TRUE(summary.find("\"heart_rate_count\":0") != std::string::npos);
+  const std::string terminal = output.str();
+  EXPECT_EQ(static_cast<std::size_t>(std::count(terminal.begin(), terminal.end(), '\n')),
+            static_cast<std::size_t>(3));
+  EXPECT_TRUE(terminal.find("frame_health frame_id=1 timestamp_sec=0") !=
+              std::string::npos);
+  EXPECT_TRUE(terminal.find("status=sampling") != std::string::npos);
 }
 
 void test_runtime_errors_are_machine_readable() {
@@ -532,7 +539,12 @@ void test_constructor_failure_and_idempotent_close() {
 void test_machine_output_ignores_global_comma_locale() {
   ScopedDirectory directory;
   ScopedGlobalLocale comma_locale(std::locale(std::locale(), new CommaNumpunct));
+  ScopedCoutCapture terminal;
   rppg_qnn::ResultSink sink(directory.path());
+  rppg_qnn::FrameHealth health;
+  health.timestamp_sec = 0.0;
+  health.capture_fps = 72.5;
+  sink.publish(health);
   rppg_qnn::HeartRateResult result = make_heart_rate(true);
   sink.publish(result);
   sink.close(0);
@@ -543,6 +555,7 @@ void test_machine_output_ignores_global_comma_locale() {
   EXPECT_TRUE(events.find("72,5") == std::string::npos);
   EXPECT_TRUE(csv.find("72.5") != std::string::npos);
   EXPECT_EQ(csv_records(csv)[1].size(), static_cast<std::size_t>(14));
+  EXPECT_TRUE(terminal.str().find("capture_fps=72.5") != std::string::npos);
 }
 
 void test_invalid_utf8_is_replaced_in_json_and_csv() {

@@ -9,6 +9,7 @@
 
 #include <cmath>
 #include <deque>
+#include <iostream>
 #include <memory>
 #include <optional>
 #include <stdexcept>
@@ -47,6 +48,16 @@ std::string error_code(const std::exception& error) {
                               : std::string(to_string(app_error->code()));
 }
 
+AppError preflight_error(const PreflightResult& result) {
+  if (result.error.find("QNN_LIBRARY_NOT_FOUND") != std::string::npos) {
+    return AppError(ErrorCode::QnnLibraryNotFound, result.error);
+  }
+  if (result.error.find("QNN_API_INCOMPATIBLE") != std::string::npos) {
+    return AppError(ErrorCode::QnnApiIncompatible, result.error);
+  }
+  return AppError(ErrorCode::QnnGpuInitFailed, result.error);
+}
+
 double capture_fps(std::deque<double>* timestamps, double timestamp_sec) {
   if (!std::isfinite(timestamp_sec)) {
     return 0.0;
@@ -80,10 +91,16 @@ Pipeline::Pipeline(AppConfig config, PipelineDependencies dependencies)
 int Pipeline::run() {
   std::unique_ptr<ResultSink> sink;
   std::unique_ptr<DeepWorker> worker;
+  bool preflight_failure_reported{false};
   try {
     sink = std::make_unique<ResultSink>(config_.output);
-    sink->publish(run_qnn_preflight(config_));
+    const PreflightResult preflight = run_qnn_preflight(config_);
+    sink->publish(preflight);
     if (config_.preflight_only) {
+      if (!preflight.qnn_gpu_available) {
+        preflight_failure_reported = true;
+        throw preflight_error(preflight);
+      }
       sink->close(0);
       return 0;
     }
@@ -136,13 +153,15 @@ int Pipeline::run() {
           }
         }
         if (deep_builder.has_value()) {
-          const std::optional<DeepInput> input = deep_builder->add_roi(roi);
+          std::optional<DeepInput> input = deep_builder->add_roi(roi);
           health.status = deep_builder->status();
           if (input.has_value() &&
               (!last_submitted_deep_end.has_value() ||
                input->end_sec - *last_submitted_deep_end >= 1.0)) {
-            last_submitted_deep_end = input->end_sec;
-            if (!worker->submit(*input)) {
+            const double submitted_end_sec = input->end_sec;
+            if (worker->submit(std::move(*input))) {
+              last_submitted_deep_end = submitted_end_sec;
+            } else {
               health.status = "deep_submit_closed";
             }
           }
@@ -171,15 +190,18 @@ int Pipeline::run() {
     }
     const int exit_code = error_exit_code(error);
     if (sink) {
-      try {
-        sink->publish_runtime_error(error_code(error), error.what());
-      } catch (...) {
+      if (!preflight_failure_reported) {
+        try {
+          sink->publish_runtime_error(error_code(error), error.what());
+        } catch (...) {
+        }
       }
       try {
         sink->close(exit_code);
       } catch (...) {
       }
     }
+    std::cerr << error_code(error) << ": " << error.what() << '\n';
     return exit_code;
   }
 }

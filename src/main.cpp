@@ -27,6 +27,8 @@ std::filesystem::path cascade_path() {
       "/opt/homebrew/opt/opencv/share/opencv4/haarcascades/haarcascade_frontalface_default.xml",
       "/usr/local/opt/opencv/share/opencv4/haarcascades/haarcascade_frontalface_default.xml",
       "/opt/homebrew/share/opencv4/haarcascades/haarcascade_frontalface_default.xml",
+      "/opt/homebrew/opt/opencv@4/share/opencv4/haarcascades/haarcascade_frontalface_default.xml",
+      "/usr/local/opt/opencv@4/share/opencv4/haarcascades/haarcascade_frontalface_default.xml",
   };
   for (const auto& candidate : candidates) {
     std::error_code error;
@@ -65,13 +67,12 @@ int main(int argc, char* argv[]) {
       args.emplace_back(argv[index]);
     }
     rppg_qnn::AppConfig config = rppg_qnn::parse_config(args);
-    const std::filesystem::path cascade = cascade_path();
     rppg_qnn::PipelineDependencies dependencies{
         [config] {
           return config.video.empty() ? rppg_qnn::make_camera_source(config)
                                       : rppg_qnn::make_video_source(config.video);
         },
-        [cascade] { return std::make_unique<rppg_qnn::RoiProcessor>(cascade); },
+        [] { return std::make_unique<rppg_qnn::RoiProcessor>(cascade_path()); },
         [] { return rppg_qnn::make_fake_deep_runtime(std::chrono::milliseconds(0)); }};
     rppg_qnn::Pipeline pipeline(std::move(config), std::move(dependencies));
     return pipeline.run();
