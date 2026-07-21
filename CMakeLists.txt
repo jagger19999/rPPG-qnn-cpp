@@ -18,7 +18,7 @@ if(RPPG_ENABLE_SANITIZERS AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
                       -fsanitize=address,undefined)
 endif()
 
-add_library(rppg_qnn_core src/config.cpp src/contracts.cpp src/error.cpp)
+add_library(rppg_qnn_core src/config.cpp src/contracts.cpp src/error.cpp src/frame_source.cpp)
 target_include_directories(rppg_qnn_core PUBLIC include)
 target_link_libraries(rppg_qnn_core PUBLIC ${OpenCV_LIBS} ${CMAKE_DL_LIBS})
 target_compile_options(rppg_qnn_core PRIVATE -Wall -Wextra -Wpedantic -Werror)
@@ -56,4 +56,11 @@ if(BUILD_TESTING)
   endif()
 
   add_test(NAME latest_queue COMMAND test_latest_queue)
+
+  add_executable(test_frame_source tests/test_frame_source.cpp)
+  target_link_libraries(test_frame_source PRIVATE rppg_qnn_core)
+  target_include_directories(test_frame_source PRIVATE tests)
+  target_compile_options(test_frame_source PRIVATE -Wall -Wextra -Wpedantic -Werror)
+
+  add_test(NAME frame_source COMMAND test_frame_source)
 endif()
