@@ -8,7 +8,6 @@
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
-#include <iostream>
 #include <memory>
 #include <string>
 #include <utility>
@@ -39,24 +38,6 @@ std::filesystem::path cascade_path() {
   return candidates.front();
 }
 
-int app_exit_code(const rppg_qnn::AppError& error) {
-  switch (error.code()) {
-    case rppg_qnn::ErrorCode::ConfigInvalid: return 2;
-    case rppg_qnn::ErrorCode::CameraOpenFailed: return 3;
-    case rppg_qnn::ErrorCode::CameraFormatUnsupported: return 4;
-    case rppg_qnn::ErrorCode::LowCaptureFps: return 5;
-    case rppg_qnn::ErrorCode::FaceNotFound: return 6;
-    case rppg_qnn::ErrorCode::QnnLibraryNotFound: return 7;
-    case rppg_qnn::ErrorCode::QnnApiIncompatible: return 8;
-    case rppg_qnn::ErrorCode::QnnGpuInitFailed: return 9;
-    case rppg_qnn::ErrorCode::ModelManifestInvalid: return 10;
-    case rppg_qnn::ErrorCode::ModelLoadFailed: return 11;
-    case rppg_qnn::ErrorCode::InferenceFailed: return 12;
-    case rppg_qnn::ErrorCode::OutputWriteFailed: return 13;
-  }
-  return 1;
-}
-
 }  // namespace
 
 int main(int argc, char* argv[]) {
@@ -73,14 +54,15 @@ int main(int argc, char* argv[]) {
                                       : rppg_qnn::make_video_source(config.video);
         },
         [] { return std::make_unique<rppg_qnn::RoiProcessor>(cascade_path()); },
-        [] { return rppg_qnn::make_fake_deep_runtime(std::chrono::milliseconds(0)); }};
+        [] { return rppg_qnn::make_fake_deep_runtime(std::chrono::milliseconds(0)); },
+        {}};
     rppg_qnn::Pipeline pipeline(std::move(config), std::move(dependencies));
     return pipeline.run();
   } catch (const rppg_qnn::AppError& error) {
-    std::cerr << rppg_qnn::to_string(error.code()) << ": " << error.what() << '\n';
-    return app_exit_code(error);
+    rppg_qnn::print_error_line(rppg_qnn::to_string(error.code()), error.what());
+    return rppg_qnn::exit_code_for(error.code());
   } catch (const std::exception& error) {
-    std::cerr << "UNEXPECTED_EXCEPTION: " << error.what() << '\n';
+    rppg_qnn::print_error_line("UNEXPECTED_EXCEPTION", error.what());
     return 1;
   }
 }

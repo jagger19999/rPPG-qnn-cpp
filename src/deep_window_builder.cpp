@@ -34,34 +34,43 @@ DeepWindowBuilder::DeepWindowBuilder(double window_sec, std::size_t sample_count
   }
 }
 
-std::optional<DeepInput> DeepWindowBuilder::add_roi(const RoiPacket& packet) {
+bool DeepWindowBuilder::ingest_roi(const RoiPacket& packet) {
   if (!std::isfinite(packet.timestamp_sec)) {
     status_ = "invalid_timestamp";
-    return std::nullopt;
+    return false;
   }
   if (packet.roi_bgr.empty()) {
     status_ = "empty_roi";
-    return std::nullopt;
+    return false;
   }
   if (packet.roi_bgr.type() != CV_8UC3) {
     status_ = "invalid_roi_format";
-    return std::nullopt;
+    return false;
   }
   if (!frames_.empty() && packet.timestamp_sec <= frames_.back().timestamp_sec) {
     status_ = "nonmonotonic_timestamp";
-    return std::nullopt;
+    return false;
   }
   frames_.push_back({packet.timestamp_sec, packet.roi_bgr.clone()});
   while (!frames_.empty() &&
          frames_.front().timestamp_sec < packet.timestamp_sec - 2.0 * window_sec_) {
     frames_.pop_front();
   }
-  if (packet.timestamp_sec - frames_.front().timestamp_sec < window_sec_) {
+  status_ = "sampling";
+  return true;
+}
+
+std::optional<DeepInput> DeepWindowBuilder::build_latest() {
+  if (frames_.empty()) {
+    status_ = "sampling";
+    return std::nullopt;
+  }
+  const double end = frames_.back().timestamp_sec;
+  if (end - frames_.front().timestamp_sec < window_sec_) {
     status_ = "start_coverage_missing";
     return std::nullopt;
   }
 
-  const double end = packet.timestamp_sec;
   const double start = end - window_sec_;
   std::vector<const Frame*> source;
   source.reserve(frames_.size());
@@ -102,6 +111,7 @@ std::optional<DeepInput> DeepWindowBuilder::add_roi(const RoiPacket& packet) {
     return std::nullopt;
   }
 
+  ++materialization_count_;
   DeepInput input;
   input.start_sec = start;
   input.end_sec = end;
@@ -139,6 +149,14 @@ std::optional<DeepInput> DeepWindowBuilder::add_roi(const RoiPacket& packet) {
   return input;
 }
 
+std::optional<DeepInput> DeepWindowBuilder::add_roi(const RoiPacket& packet) {
+  return ingest_roi(packet) ? build_latest() : std::nullopt;
+}
+
 std::string DeepWindowBuilder::status() const { return status_; }
+
+std::size_t DeepWindowBuilder::materialization_count() const {
+  return materialization_count_;
+}
 
 }  // namespace rppg_qnn

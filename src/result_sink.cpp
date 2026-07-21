@@ -329,6 +329,7 @@ void ResultSink::close(int exit_code) {
   summary << "{\"schema_version\":1,\"event_type\":\"session_end\",\"exit_code\":"
           << summary_exit_code_ << ",\"preflight_count\":" << preflight_count_
           << ",\"frame_health_count\":" << frame_health_count_
+          << ",\"runtime_error_count\":" << runtime_error_count_
           << ",\"heart_rate_count\":" << heart_rate_count_
           << ",\"valid_heart_rate_count\":" << valid_heart_rate_count_
           << ",\"invalid_heart_rate_count\":" << invalid_heart_rate_count_ << '}';

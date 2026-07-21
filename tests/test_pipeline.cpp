@@ -3,6 +3,7 @@
 #include "rppg_qnn/deep_runtime.hpp"
 #include "rppg_qnn/frame_source.hpp"
 #include "rppg_qnn/roi_processor.hpp"
+#include "rppg_qnn/result_sink.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -16,6 +17,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -155,6 +157,65 @@ class SingleFrameSource final : public rppg_qnn::FrameSource {
   bool read_{false};
 };
 
+class RecoveringSource final : public rppg_qnn::FrameSource {
+ public:
+  std::optional<rppg_qnn::FramePacket> read() override {
+    if (calls_++ == 0) {
+      return std::nullopt;
+    }
+    if (calls_ == 2) {
+      return rppg_qnn::FramePacket{0, 0.0, cv::Mat(96, 96, CV_8UC3, cv::Scalar())};
+    }
+    eof_ = true;
+    return std::nullopt;
+  }
+  bool eof() const override { return eof_; }
+  double nominal_fps() const override { return 30.0; }
+ private:
+  int calls_{0};
+  bool eof_{false};
+};
+
+class PermanentEmptySource final : public rppg_qnn::FrameSource {
+ public:
+  std::optional<rppg_qnn::FramePacket> read() override { return std::nullopt; }
+  bool eof() const override { return false; }
+  double nominal_fps() const override { return 30.0; }
+};
+
+class FastSource final : public rppg_qnn::FrameSource {
+ public:
+  explicit FastSource(std::chrono::steady_clock::time_point* final_read)
+      : final_read_(final_read) {}
+  std::optional<rppg_qnn::FramePacket> read() override {
+    if (index_ == 120) {
+      *final_read_ = std::chrono::steady_clock::now();
+      eof_ = true;
+      return std::nullopt;
+    }
+    return rppg_qnn::FramePacket{static_cast<std::uint64_t>(index_),
+                                  index_++ / 30.0,
+                                  cv::Mat(96, 96, CV_8UC3, cv::Scalar(1, 2, 3))};
+  }
+  bool eof() const override { return eof_; }
+  double nominal_fps() const override { return 30.0; }
+ private:
+  int index_{0};
+  bool eof_{false};
+  std::chrono::steady_clock::time_point* final_read_;
+};
+
+class SlowSink final : public rppg_qnn::IResultSink {
+ public:
+  void publish(const rppg_qnn::PreflightResult&) override {}
+  void publish_runtime_error(const std::string&, const std::string&) override {}
+  void publish(const rppg_qnn::FrameHealth&) override {
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+  }
+  void publish(const rppg_qnn::HeartRateResult&) override {}
+  void close(int) override {}
+};
+
 rppg_qnn::PipelineDependencies video_dependencies(const std::filesystem::path& video,
                                                    int* reads,
                                                    bool* deep_factory_called) {
@@ -166,7 +227,8 @@ rppg_qnn::PipelineDependencies video_dependencies(const std::filesystem::path& v
       [deep_factory_called] {
         *deep_factory_called = true;
         return rppg_qnn::make_fake_deep_runtime(std::chrono::milliseconds(0));
-      }};
+      },
+      {}};
 }
 
 void synthetic_video_runs_green_and_fake_deep_to_completion() {
@@ -221,6 +283,7 @@ void disabled_deep_never_constructs_runtime_or_loses_frames() {
         return std::make_unique<CountingSource>(rppg_qnn::make_video_source(video), &reads);
       },
       [] { return std::make_unique<FixedRoi>(); },
+      {},
       {}};
   EXPECT_TRUE(!dependencies.make_deep_runtime);
   rppg_qnn::Pipeline pipeline(config, std::move(dependencies));
@@ -264,7 +327,8 @@ void runtime_failures_are_reported_and_closed() {
         throw std::runtime_error("deterministic source failure");
       },
       [] { return std::make_unique<ThrowingRoi>(); },
-      [] { return rppg_qnn::make_fake_deep_runtime(std::chrono::milliseconds(0)); }};
+      [] { return rppg_qnn::make_fake_deep_runtime(std::chrono::milliseconds(0)); },
+      {}};
   rppg_qnn::Pipeline pipeline(config, std::move(dependencies));
 
   ScopedCerrCapture stderr_capture;
@@ -281,15 +345,83 @@ void runtime_failures_are_reported_and_closed() {
             static_cast<std::size_t>(1));
 }
 
+void transient_empty_reads_recover_but_permanent_empty_reads_fail() {
+  ScopedDirectory directory;
+  rppg_qnn::AppConfig recovered_config;
+  recovered_config.video = "unused.avi";
+  recovered_config.output = directory.path() / "recovered";
+  rppg_qnn::Pipeline recovered(
+      recovered_config,
+      {[] { return std::make_unique<RecoveringSource>(); },
+       [] { return std::make_unique<FixedRoi>(); }, {}, {}});
+  EXPECT_EQ(recovered.run(), 0);
+
+  rppg_qnn::AppConfig failed_config;
+  failed_config.video = "unused.avi";
+  failed_config.output = directory.path() / "empty";
+  rppg_qnn::Pipeline failed(
+      failed_config,
+      {[] { return std::make_unique<PermanentEmptySource>(); },
+       [] { return std::make_unique<FixedRoi>(); }, {}, {}});
+  ScopedCerrCapture stderr_capture;
+  EXPECT_EQ(failed.run(), 3);
+  EXPECT_TRUE(read_file(failed_config.output / "events.jsonl").find("runtime_error") !=
+              std::string::npos);
+  EXPECT_TRUE(read_file(failed_config.output / "session_summary.json").find("\"exit_code\":3") !=
+              std::string::npos);
+}
+
+void slow_output_does_not_hold_up_capture() {
+  ScopedDirectory directory;
+  std::chrono::steady_clock::time_point final_read{};
+  rppg_qnn::AppConfig config;
+  config.video = "unused.avi";
+  config.output = directory.path() / "slow";
+  rppg_qnn::Pipeline pipeline(
+      config,
+      {[&final_read] { return std::make_unique<FastSource>(&final_read); },
+       [] { return std::make_unique<FixedRoi>(); }, {},
+       [](const std::filesystem::path&) { return std::make_unique<SlowSink>(); }});
+  EXPECT_EQ(pipeline.run(), 0);
+  EXPECT_TRUE(std::chrono::steady_clock::now() - final_read >= std::chrono::milliseconds(80));
+}
+
+void slow_fake_runtime_keeps_every_capture_frame() {
+  ScopedDirectory directory;
+  const std::filesystem::path video = directory.path() / "pulse.avi";
+  write_pulse_video(video);
+  int reads = 0;
+  rppg_qnn::AppConfig config;
+  config.video = video.string();
+  config.deep = "fake";
+  config.output = directory.path() / "slow-deep";
+  rppg_qnn::Pipeline pipeline(
+      config,
+      {[video, &reads] {
+         return std::make_unique<CountingSource>(rppg_qnn::make_video_source(video), &reads);
+       },
+       [] { return std::make_unique<FixedRoi>(); },
+       [] { return rppg_qnn::make_fake_deep_runtime(std::chrono::milliseconds(100)); },
+       {}});
+  const auto started = std::chrono::steady_clock::now();
+  EXPECT_EQ(pipeline.run(), 0);
+  EXPECT_EQ(reads, 480);
+  EXPECT_TRUE(std::chrono::steady_clock::now() - started < std::chrono::seconds(5));
+  EXPECT_TRUE(read_file(config.output / "events.jsonl").find("FAKE_DEEP") !=
+              std::string::npos);
+}
+
 void roi_runtime_failures_are_reported_and_closed() {
   ScopedDirectory directory;
   rppg_qnn::AppConfig config;
   config.video = "unused.avi";
+  config.deep = "fake";
   config.output = directory.path() / "roi-error";
   rppg_qnn::PipelineDependencies dependencies{
       [] { return std::make_unique<SingleFrameSource>(); },
       [] { return std::make_unique<ThrowingRoi>(); },
-      [] { return rppg_qnn::make_fake_deep_runtime(std::chrono::milliseconds(0)); }};
+      [] { return rppg_qnn::make_fake_deep_runtime(std::chrono::milliseconds(0)); },
+      {}};
   rppg_qnn::Pipeline pipeline(config, std::move(dependencies));
 
   EXPECT_TRUE(pipeline.run() != 0);
@@ -329,6 +461,9 @@ int main() {
   disabled_deep_never_constructs_runtime_or_loses_frames();
   preflight_does_not_construct_capture_or_roi();
   runtime_failures_are_reported_and_closed();
+  transient_empty_reads_recover_but_permanent_empty_reads_fail();
+  slow_output_does_not_hold_up_capture();
+  slow_fake_runtime_keeps_every_capture_frame();
   roi_runtime_failures_are_reported_and_closed();
   cli_preflight_only_reports_unavailable_qnn_without_a_camera_or_cascade();
   return test_support::finish();

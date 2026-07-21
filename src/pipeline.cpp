@@ -5,41 +5,29 @@
 #include "rppg_qnn/error.hpp"
 #include "rppg_qnn/green_predictor.hpp"
 #include "rppg_qnn/qnn_preflight.hpp"
-#include "rppg_qnn/result_sink.hpp"
 
+#include <chrono>
 #include <cmath>
+#include <condition_variable>
 #include <deque>
-#include <iostream>
+#include <exception>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <utility>
 
 namespace rppg_qnn {
 namespace {
 
-int exit_code_for(const AppError& error) {
-  switch (error.code()) {
-    case ErrorCode::ConfigInvalid: return 2;
-    case ErrorCode::CameraOpenFailed: return 3;
-    case ErrorCode::CameraFormatUnsupported: return 4;
-    case ErrorCode::LowCaptureFps: return 5;
-    case ErrorCode::FaceNotFound: return 6;
-    case ErrorCode::QnnLibraryNotFound: return 7;
-    case ErrorCode::QnnApiIncompatible: return 8;
-    case ErrorCode::QnnGpuInitFailed: return 9;
-    case ErrorCode::ModelManifestInvalid: return 10;
-    case ErrorCode::ModelLoadFailed: return 11;
-    case ErrorCode::InferenceFailed: return 12;
-    case ErrorCode::OutputWriteFailed: return 13;
-  }
-  return 1;
-}
+constexpr std::size_t kMaxEmptyReads = 3U;
+constexpr std::size_t kMaxOutputEvents = 256U;
 
 int error_exit_code(const std::exception& error) {
   const auto* app_error = dynamic_cast<const AppError*>(&error);
-  return app_error == nullptr ? 1 : exit_code_for(*app_error);
+  return app_error == nullptr ? 1 : exit_code_for(app_error->code());
 }
 
 std::string error_code(const std::exception& error) {
@@ -83,17 +71,166 @@ bool is_new_window(const std::optional<HeartRateResult>& result,
   return true;
 }
 
+class AsyncOutputWorker {
+ public:
+  explicit AsyncOutputWorker(IResultSink& sink) : sink_(sink), thread_(&AsyncOutputWorker::run, this) {}
+  ~AsyncOutputWorker() { close_noexcept(); }
+
+  AsyncOutputWorker(const AsyncOutputWorker&) = delete;
+  AsyncOutputWorker& operator=(const AsyncOutputWorker&) = delete;
+
+  bool submit(FrameHealth health) { return submit_health(std::move(health)); }
+  bool submit(HeartRateResult result) { return submit_result(std::move(result)); }
+  bool submit_runtime_error(std::string code, std::string message) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (closed_ || !failure_.empty() || events_.size() >= kMaxOutputEvents) {
+      return false;
+    }
+    OutputEvent event;
+    event.kind = OutputEvent::Kind::RuntimeError;
+    event.error_code = std::move(code);
+    event.error_message = std::move(message);
+    events_.push_back(std::move(event));
+    condition_.notify_one();
+    return true;
+  }
+
+  void close() {
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      if (!closed_) {
+        closing_ = true;
+        condition_.notify_one();
+      }
+    }
+    if (thread_.joinable()) {
+      thread_.join();
+    }
+    closed_ = true;
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!failure_.empty()) {
+      throw AppError(ErrorCode::OutputWriteFailed, failure_);
+    }
+  }
+
+ private:
+  struct OutputEvent {
+    enum class Kind { HeartRate, RuntimeError };
+    Kind kind{Kind::HeartRate};
+    HeartRateResult heart_rate;
+    std::string error_code;
+    std::string error_message;
+  };
+
+  bool submit_health(FrameHealth health) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (closed_ || !failure_.empty()) {
+      return false;
+    }
+    latest_health_ = std::move(health);
+    condition_.notify_one();
+    return true;
+  }
+
+  bool submit_result(HeartRateResult result) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (closed_ || !failure_.empty() || events_.size() >= kMaxOutputEvents) {
+      return false;
+    }
+    OutputEvent event;
+    event.kind = OutputEvent::Kind::HeartRate;
+    event.heart_rate = std::move(result);
+    events_.push_back(std::move(event));
+    condition_.notify_one();
+    return true;
+  }
+
+  void run() {
+    while (true) {
+      std::optional<FrameHealth> health;
+      std::optional<OutputEvent> event;
+      {
+        std::unique_lock<std::mutex> lock(mutex_);
+        condition_.wait(lock, [this] {
+          return closing_ || !failure_.empty() || latest_health_.has_value() || !events_.empty();
+        });
+        if (!failure_.empty()) {
+          return;
+        }
+        if (!events_.empty()) {
+          event = std::move(events_.front());
+          events_.pop_front();
+        } else if (latest_health_.has_value()) {
+          health = std::move(latest_health_);
+          latest_health_.reset();
+        } else if (closing_) {
+          return;
+        }
+      }
+      try {
+        if (event.has_value()) {
+          if (event->kind == OutputEvent::Kind::HeartRate) {
+            sink_.publish(event->heart_rate);
+          } else {
+            sink_.publish_runtime_error(event->error_code, event->error_message);
+          }
+        } else if (health.has_value()) {
+          sink_.publish(*health);
+        }
+      } catch (const std::exception& error) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        failure_ = error.what();
+        condition_.notify_all();
+        return;
+      } catch (...) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        failure_ = "non-standard output failure";
+        condition_.notify_all();
+        return;
+      }
+    }
+  }
+
+  void close_noexcept() noexcept {
+    try {
+      close();
+    } catch (...) {
+    }
+  }
+
+  IResultSink& sink_;
+  std::mutex mutex_;
+  std::condition_variable condition_;
+  std::optional<FrameHealth> latest_health_;
+  std::deque<OutputEvent> events_;
+  std::thread thread_;
+  bool closing_{false};
+  bool closed_{false};
+  std::string failure_;
+};
+
+void require_output(bool submitted) {
+  if (!submitted) {
+    throw AppError(ErrorCode::OutputWriteFailed, "asynchronous output worker unavailable");
+  }
+}
+
 }  // namespace
 
 Pipeline::Pipeline(AppConfig config, PipelineDependencies dependencies)
     : config_(std::move(config)), dependencies_(std::move(dependencies)) {}
 
 int Pipeline::run() {
-  std::unique_ptr<ResultSink> sink;
+  std::unique_ptr<IResultSink> sink;
+  std::unique_ptr<AsyncOutputWorker> output;
   std::unique_ptr<DeepWorker> worker;
   bool preflight_failure_reported{false};
   try {
-    sink = std::make_unique<ResultSink>(config_.output);
+    sink = dependencies_.make_sink ? dependencies_.make_sink(config_.output)
+                                   : std::make_unique<ResultSink>(config_.output);
+    if (!sink) {
+      throw AppError(ErrorCode::OutputWriteFailed, "result sink factory returned null");
+    }
     const PreflightResult preflight = run_qnn_preflight(config_);
     sink->publish(preflight);
     if (config_.preflight_only) {
@@ -112,6 +249,7 @@ int Pipeline::run() {
     if (!source || !roi_processor) {
       throw AppError(ErrorCode::ConfigInvalid, "Pipeline factories must not return null");
     }
+    output = std::make_unique<AsyncOutputWorker>(*sink);
 
     std::optional<DeepWindowBuilder> deep_builder;
     if (config_.deep == "fake") {
@@ -132,8 +270,21 @@ int Pipeline::run() {
     std::deque<double> timestamps;
     std::size_t published_green_evaluations = 0;
     std::optional<double> published_deep_end;
-    std::optional<double> last_submitted_deep_end;
-    while (const std::optional<FramePacket> frame = source->read()) {
+    std::optional<double> last_deep_build_sec;
+    std::size_t empty_reads = 0;
+    while (true) {
+      std::optional<FramePacket> frame = source->read();
+      if (!frame.has_value()) {
+        if (source->eof()) {
+          break;
+        }
+        if (++empty_reads > kMaxEmptyReads) {
+          throw AppError(ErrorCode::CameraOpenFailed, "too many consecutive empty frame reads");
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        continue;
+      }
+      empty_reads = 0;
       RoiPacket roi = roi_processor->process(*frame);
       FrameHealth health;
       health.frame_id = frame->frame_id;
@@ -149,29 +300,28 @@ int Pipeline::run() {
           published_green_evaluations = green.evaluation_count();
           const std::optional<HeartRateResult> result = green.latest_result();
           if (result.has_value()) {
-            sink->publish(*result);
+            require_output(output->submit(*result));
           }
         }
         if (deep_builder.has_value()) {
-          std::optional<DeepInput> input = deep_builder->add_roi(roi);
+          (void)deep_builder->ingest_roi(roi);
           health.status = deep_builder->status();
-          if (input.has_value() &&
-              (!last_submitted_deep_end.has_value() ||
-               input->end_sec - *last_submitted_deep_end >= 1.0)) {
-            const double submitted_end_sec = input->end_sec;
-            if (worker->submit(std::move(*input))) {
-              last_submitted_deep_end = submitted_end_sec;
-            } else {
-              health.status = "deep_submit_closed";
+          if (!last_deep_build_sec.has_value() ||
+              roi.timestamp_sec - *last_deep_build_sec >= 1.0) {
+            last_deep_build_sec = roi.timestamp_sec;
+            std::optional<DeepInput> input = deep_builder->build_latest();
+            health.status = deep_builder->status();
+            if (input.has_value()) {
+              require_output(worker->submit(std::move(*input)));
             }
           }
         }
       }
-      sink->publish(health);
+      require_output(output->submit(std::move(health)));
       const std::optional<HeartRateResult> deep_result =
           worker ? worker->latest_result() : std::optional<HeartRateResult>{};
       if (is_new_window(deep_result, &published_deep_end)) {
-        sink->publish(*deep_result);
+        require_output(output->submit(*deep_result));
       }
     }
 
@@ -179,29 +329,50 @@ int Pipeline::run() {
       worker->close();
       const std::optional<HeartRateResult> result = worker->latest_result();
       if (is_new_window(result, &published_deep_end)) {
-        sink->publish(*result);
+        require_output(output->submit(*result));
       }
     }
+    output->close();
     sink->close(0);
     return 0;
   } catch (const std::exception& error) {
+    std::string cleanup_failure;
     if (worker) {
-      worker->close();
+      try {
+        worker->close();
+      } catch (const std::exception& cleanup_error) {
+        cleanup_failure = cleanup_error.what();
+      }
     }
     const int exit_code = error_exit_code(error);
-    if (sink) {
+    if (output) {
       if (!preflight_failure_reported) {
-        try {
-          sink->publish_runtime_error(error_code(error), error.what());
-        } catch (...) {
-        }
+        (void)output->submit_runtime_error(error_code(error), error.what());
       }
       try {
-        sink->close(exit_code);
-      } catch (...) {
+        output->close();
+      } catch (const std::exception& cleanup_error) {
+        cleanup_failure = cleanup_error.what();
+      }
+    } else if (sink && !preflight_failure_reported) {
+      try {
+        sink->publish_runtime_error(error_code(error), error.what());
+      } catch (const std::exception& cleanup_error) {
+        cleanup_failure = cleanup_error.what();
       }
     }
-    std::cerr << error_code(error) << ": " << error.what() << '\n';
+    if (sink) {
+      try {
+        sink->close(exit_code);
+      } catch (const std::exception& cleanup_error) {
+        cleanup_failure = cleanup_error.what();
+      }
+    }
+    std::string message = error.what();
+    if (!cleanup_failure.empty()) {
+      message += "; output cleanup failed: " + cleanup_failure;
+    }
+    print_error_line(error_code(error), message);
     return exit_code;
   }
 }

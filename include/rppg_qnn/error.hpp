@@ -32,5 +32,7 @@ class AppError : public std::runtime_error {
 };
 
 std::string_view to_string(ErrorCode code) noexcept;
+int exit_code_for(ErrorCode code) noexcept;
+void print_error_line(std::string_view code, std::string_view message);
 
 }  // namespace rppg_qnn

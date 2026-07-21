@@ -245,6 +245,31 @@ void owns_roi_pixels_after_the_caller_reuses_the_buffer() {
   }
 }
 
+void ingests_many_frames_without_materializing_until_requested() {
+  rppg_qnn::DeepWindowBuilder builder(6.0, 180, {72, 72});
+  for (int index = 0; index <= 210; ++index) {
+    EXPECT_TRUE(builder.ingest_roi(patterned_packet(index / 30.0, index)));
+  }
+  EXPECT_EQ(builder.materialization_count(), static_cast<std::size_t>(0));
+  const auto output = builder.build_latest();
+  EXPECT_TRUE(output.has_value());
+  EXPECT_EQ(builder.materialization_count(), static_cast<std::size_t>(1));
+}
+
+void one_second_scheduler_avoids_per_frame_materialization() {
+  rppg_qnn::DeepWindowBuilder builder(6.0, 180, {72, 72});
+  std::optional<double> last_build;
+  for (int index = 0; index < 900; ++index) {
+    const double timestamp = index / 30.0;
+    EXPECT_TRUE(builder.ingest_roi(flat_packet(timestamp)));
+    if (!last_build.has_value() || timestamp - *last_build >= 1.0) {
+      last_build = timestamp;
+      (void)builder.build_latest();
+    }
+  }
+  EXPECT_TRUE(builder.materialization_count() <= static_cast<std::size_t>(25));
+}
+
 }  // namespace
 
 int main() {
@@ -253,5 +278,7 @@ int main() {
   reports_capture_quality_and_rejects_invalid_rois();
   recovers_from_error_and_uses_earlier_frames_for_ties();
   owns_roi_pixels_after_the_caller_reuses_the_buffer();
+  ingests_many_frames_without_materializing_until_requested();
+  one_second_scheduler_avoids_per_frame_materialization();
   return test_support::finish();
 }

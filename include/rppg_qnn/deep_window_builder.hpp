@@ -16,8 +16,11 @@ class DeepWindowBuilder {
   DeepWindowBuilder(double window_sec, std::size_t sample_count,
                     cv::Size output_size);
 
+  [[nodiscard]] bool ingest_roi(const RoiPacket& packet);
+  [[nodiscard]] std::optional<DeepInput> build_latest();
   [[nodiscard]] std::optional<DeepInput> add_roi(const RoiPacket& packet);
   [[nodiscard]] std::string status() const;
+  [[nodiscard]] std::size_t materialization_count() const;
 
  private:
   struct Frame {
@@ -30,6 +33,7 @@ class DeepWindowBuilder {
   cv::Size output_size_;
   std::deque<Frame> frames_;
   std::string status_{"sampling"};
+  std::size_t materialization_count_{0};
 };
 
 }  // namespace rppg_qnn

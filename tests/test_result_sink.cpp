@@ -456,6 +456,7 @@ void test_persisted_events_csv_and_summary() {
   EXPECT_TRUE(summary.find("\"exit_code\":7") != std::string::npos);
   EXPECT_TRUE(summary.find("\"preflight_count\":1") != std::string::npos);
   EXPECT_TRUE(summary.find("\"frame_health_count\":0") != std::string::npos);
+  EXPECT_TRUE(summary.find("\"runtime_error_count\":0") != std::string::npos);
   EXPECT_TRUE(summary.find("\"heart_rate_count\":2") != std::string::npos);
   EXPECT_TRUE(summary.find("\"valid_heart_rate_count\":1") != std::string::npos);
   EXPECT_TRUE(summary.find("\"invalid_heart_rate_count\":1") != std::string::npos);
@@ -511,6 +512,7 @@ void test_runtime_errors_are_machine_readable() {
   sink.publish_runtime_error("UNEXPECTED_EXCEPTION", "bad \"message\"\nnext");
   sink.close(1);
   const std::vector<std::string> events = json_lines(read_file(directory.path() / "events.jsonl"));
+  const std::string summary = read_file(directory.path() / "session_summary.json");
   EXPECT_EQ(events.size(), static_cast<std::size_t>(1));
   if (events.size() == 1) {
     expect_json_event(events.front(), "runtime_error");
@@ -518,6 +520,7 @@ void test_runtime_errors_are_machine_readable() {
                 std::string::npos);
     EXPECT_TRUE(events.front().find("\\\"message\\\"") != std::string::npos);
   }
+  EXPECT_TRUE(summary.find("\"runtime_error_count\":1") != std::string::npos);
 }
 
 void test_constructor_failure_and_idempotent_close() {

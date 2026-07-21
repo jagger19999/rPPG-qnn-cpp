@@ -9,25 +9,37 @@
 
 namespace rppg_qnn {
 
-class ResultSink {
+class IResultSink {
+ public:
+  virtual ~IResultSink() = default;
+  virtual void publish(const PreflightResult& result) = 0;
+  virtual void publish_runtime_error(const std::string& error_code,
+                                     const std::string& message) = 0;
+  virtual void publish(const FrameHealth& result) = 0;
+  virtual void publish(const HeartRateResult& result) = 0;
+  virtual void close(int exit_code) = 0;
+};
+
+class ResultSink final : public IResultSink {
  public:
   explicit ResultSink(std::filesystem::path output_dir);
 
   // The destructor makes a best-effort close with exit code 1 and never throws.
   // Call close explicitly to observe output failures.
-  ~ResultSink() noexcept;
+  ~ResultSink() noexcept override;
 
   ResultSink(const ResultSink&) = delete;
   ResultSink& operator=(const ResultSink&) = delete;
 
-  void publish(const PreflightResult& result);
-  void publish_runtime_error(const std::string& error_code, const std::string& message);
+  void publish(const PreflightResult& result) override;
+  void publish_runtime_error(const std::string& error_code,
+                             const std::string& message) override;
   // Frame-health events are emitted for the first finite timestamp and then at
   // most once per elapsed second. Non-finite and backwards timestamps are
   // discarded so they cannot defeat the throttle.
-  void publish(const FrameHealth& result);
-  void publish(const HeartRateResult& result);
-  void close(int exit_code);
+  void publish(const FrameHealth& result) override;
+  void publish(const HeartRateResult& result) override;
+  void close(int exit_code) override;
 
  private:
   enum class State { Open, SummaryPending, Closed, Failed };
