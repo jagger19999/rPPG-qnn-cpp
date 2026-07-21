@@ -58,10 +58,13 @@ void DeepWorker::run() {
   while (true) {
     auto input = queue_.wait_pop(idle_wait_);
     if (!input.has_value()) {
-      if (queue_.closed()) {
+      if (!queue_.closed()) {
+        continue;
+      }
+      input = queue_.wait_pop(std::chrono::milliseconds::zero());
+      if (!input.has_value()) {
         return;
       }
-      continue;
     }
     const auto started = std::chrono::steady_clock::now();
     try {

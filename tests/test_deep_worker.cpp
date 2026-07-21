@@ -47,6 +47,10 @@ rppg_qnn::DeepInput ready_input(double end_sec) {
   return input;
 }
 
+rppg_qnn::DeepInput small_ready_input(double end_sec) {
+  return valid_input(end_sec);
+}
+
 void set_green_signal(rppg_qnn::DeepInput* input,
                       const std::function<float(int)>& green_at) {
   for (int index = 0; index < 180; ++index) {
@@ -201,12 +205,27 @@ void worker_survives_idle_timeouts() {
   EXPECT_TRUE(wait_for_result(worker, 7.0));
 }
 
+void close_drains_submissions_after_short_idle_timeouts() {
+  for (int iteration = 0; iteration < 40; ++iteration) {
+    rppg_qnn::DeepWorker worker(rppg_qnn::make_fake_deep_runtime(0ms), 1ms);
+    std::this_thread::sleep_for(2ms);
+    const double end_sec = 10.0 + iteration;
+    EXPECT_TRUE(worker.submit(valid_input(end_sec)));
+    worker.close();
+    const auto result = worker.latest_result();
+    EXPECT_TRUE(result.has_value());
+    if (result.has_value()) {
+      EXPECT_EQ(result->window_end_sec, end_sec);
+    }
+  }
+}
+
 void worker_is_latest_only_nonblocking_and_closes_safely() {
   rppg_qnn::DeepWorker worker(rppg_qnn::make_fake_deep_runtime(100ms));
   std::vector<rppg_qnn::DeepInput> inputs;
   inputs.reserve(20U);
   for (int index = 0; index < 20; ++index) {
-    inputs.push_back(ready_input(6.0 + index));
+    inputs.push_back(small_ready_input(6.0 + index));
   }
   const auto start = std::chrono::steady_clock::now();
   for (rppg_qnn::DeepInput& input : inputs) {
@@ -224,6 +243,31 @@ void worker_is_latest_only_nonblocking_and_closes_safely() {
   worker.close();
   worker.close();
   EXPECT_TRUE(!worker.submit(valid_input(30.0)));
+}
+
+void real_windows_meet_release_budget_and_remain_bounded_in_debug() {
+  rppg_qnn::DeepWorker worker(rppg_qnn::make_fake_deep_runtime(100ms));
+  std::vector<rppg_qnn::DeepInput> inputs;
+  inputs.reserve(20U);
+  for (int index = 0; index < 20; ++index) {
+    inputs.push_back(ready_input(6.0 + index));
+  }
+  const auto started = std::chrono::steady_clock::now();
+  for (rppg_qnn::DeepInput& input : inputs) {
+    const auto submit_started = std::chrono::steady_clock::now();
+    EXPECT_TRUE(worker.submit(std::move(input)));
+#ifdef NDEBUG
+    EXPECT_TRUE(std::chrono::steady_clock::now() - submit_started < 5ms);
+#else
+    EXPECT_TRUE(std::chrono::steady_clock::now() - submit_started < 250ms);
+#endif
+  }
+#ifdef NDEBUG
+  EXPECT_TRUE(std::chrono::steady_clock::now() - started < 20ms);
+#else
+  EXPECT_TRUE(std::chrono::steady_clock::now() - started < 5s);
+#endif
+  EXPECT_TRUE(wait_for_result(worker, 25.0));
 }
 
 void close_drains_the_latest_pending_input() {
@@ -281,7 +325,9 @@ int main() {
   fake_runtime_estimates_sine_and_preserves_metadata();
   fake_runtime_rejects_low_confidence_signals();
   worker_survives_idle_timeouts();
+  close_drains_submissions_after_short_idle_timeouts();
   worker_is_latest_only_nonblocking_and_closes_safely();
+  real_windows_meet_release_budget_and_remain_bounded_in_debug();
   close_drains_the_latest_pending_input();
   worker_converts_runtime_exceptions_into_safe_invalid_results();
   return test_support::finish();
