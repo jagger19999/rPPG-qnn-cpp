@@ -490,6 +490,52 @@ def test_cli_failure_writes_atomic_failure_report_from_outside_repo(tmp_path):
     assert not (artifact_dir / "export_report.json.tmp").exists()
 
 
+def test_main_success_report_binds_the_exact_published_onnx(
+    tmp_path, monkeypatch
+):
+    _install_fake_export(monkeypatch)
+    artifact_dir = tmp_path / "artifacts"
+    artifact_dir.mkdir()
+    np.save(
+        artifact_dir / "frames_float32.npy",
+        _valid_frames(),
+        allow_pickle=False,
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "export_efficientphys.py",
+            "--toolbox",
+            str(tmp_path / "toolbox"),
+            "--checkpoint",
+            str(tmp_path / "checkpoint"),
+            "--artifact-dir",
+            str(artifact_dir),
+        ],
+    )
+
+    assert exporter.main() == 0
+
+    onnx_path = artifact_dir / "efficientphys_pure.onnx"
+    report = json.loads((artifact_dir / "export_report.json").read_text())
+    assert report == {
+        "schema_version": 1,
+        "passed": True,
+        "exporter_mode": exporter.EXPORTER_MODE,
+        "qnn_conversion": "not_run",
+        "qnn_risk": exporter.QNN_RISK,
+        "onnx_sha256": hashlib.sha256(onnx_path.read_bytes()).hexdigest(),
+        "onnx_size_bytes": onnx_path.stat().st_size,
+        "onnx_metrics": {
+            "constant_tensor_bytes": 0,
+            "constant_tensor_byte_limit": exporter.MAX_CONSTANT_TENSOR_BYTES,
+            "largest_constant_tensors": [],
+            "scatter_nd_nodes": 0,
+        },
+    }
+
+
 def _integration_resource(variable: str) -> Path:
     value = os.environ.get(variable)
     if value is None:

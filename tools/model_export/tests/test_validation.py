@@ -168,6 +168,80 @@ def test_publish_json_atomic_replace_failure_preserves_final_and_cleans_temp(
     assert not list(tmp_path.glob(f".{destination.name}.*.tmp"))
 
 
+def test_publish_numpy_atomic_uses_unique_same_directory_temps(tmp_path, monkeypatch):
+    destination = tmp_path / "pulse.npy"
+    sources = []
+    real_replace = os.replace
+
+    def recording_replace(source, final):
+        sources.append(Path(source))
+        return real_replace(source, final)
+
+    monkeypatch.setattr(validator.os, "replace", recording_replace)
+    arrays = [np.full(OUTPUT_SHAPE, value, dtype=np.float32) for value in (1.0, 2.0)]
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        list(
+            executor.map(
+                lambda array: validator._publish_numpy_atomic(destination, array),
+                arrays,
+            )
+        )
+
+    assert len({source.name for source in sources}) == 2
+    assert all(source.parent == destination.parent for source in sources)
+    assert all(
+        source.name.startswith(f".{destination.name}.") and source.name.endswith(".tmp")
+        for source in sources
+    )
+    assert np.array_equal(
+        np.load(destination, allow_pickle=False), arrays[0]
+    ) or np.array_equal(np.load(destination, allow_pickle=False), arrays[1])
+    assert not list(tmp_path.glob(f".{destination.name}.*.tmp"))
+
+
+def test_publish_numpy_atomic_publishes_world_readable_file(tmp_path):
+    destination = tmp_path / "pulse.npy"
+
+    validator._publish_numpy_atomic(destination, _pulse())
+
+    assert destination.stat().st_mode & 0o777 == 0o644
+
+
+def test_publish_numpy_atomic_write_failure_preserves_final_and_cleans_temp(
+    tmp_path, monkeypatch
+):
+    destination = tmp_path / "pulse.npy"
+    destination.write_bytes(b"known-good")
+
+    def failing_save(output, *_args, **_kwargs):
+        output.write(b"partial")
+        raise OSError("disk full")
+
+    monkeypatch.setattr(validator.np, "save", failing_save)
+    with pytest.raises(OSError, match="disk full"):
+        validator._publish_numpy_atomic(destination, _pulse())
+
+    assert destination.read_bytes() == b"known-good"
+    assert not list(tmp_path.glob(f".{destination.name}.*.tmp"))
+
+
+def test_publish_numpy_atomic_replace_failure_preserves_final_and_cleans_temp(
+    tmp_path, monkeypatch
+):
+    destination = tmp_path / "pulse.npy"
+    destination.write_bytes(b"known-good")
+
+    def failing_replace(_source, _destination):
+        raise OSError("replace failed")
+
+    monkeypatch.setattr(validator.os, "replace", failing_replace)
+    with pytest.raises(OSError, match="replace failed"):
+        validator._publish_numpy_atomic(destination, _pulse())
+
+    assert destination.read_bytes() == b"known-good"
+    assert not list(tmp_path.glob(f".{destination.name}.*.tmp"))
+
+
 class _Node:
     def __init__(self, name, shape, tensor_type="tensor(float)"):
         self.name = name
@@ -375,6 +449,50 @@ def test_validate_and_publish_writes_complete_portable_manifest(tmp_path, monkey
         json.loads((artifact_dir / "validation_report.json").read_text())["passed"]
         is True
     )
+
+
+def test_manifest_is_byte_reproducible_across_runtime_and_git_environment(
+    tmp_path, monkeypatch
+):
+    real_run_onnx = validator._run_onnx_with_metadata
+    toolbox, checkpoint, artifact_dir = _write_validation_fixture(tmp_path, monkeypatch)
+    manifest_path = tmp_path / "manifest.json"
+    monkeypatch.setattr(validator.ort, "InferenceSession", _Session)
+    clock = iter((10.0, 10.1, 20.0, 20.9))
+    monkeypatch.setattr(validator.time, "perf_counter", lambda: next(clock))
+    monkeypatch.setattr(validator, "_run_onnx_with_metadata", real_run_onnx)
+    git_heads = iter(("a" * 40, "b" * 40))
+    monkeypatch.setattr(
+        validator,
+        "_toolbox_git_head",
+        lambda _toolbox: next(git_heads),
+        raising=False,
+    )
+
+    validator.validate_and_publish(toolbox, checkpoint, artifact_dir, manifest_path)
+    first_manifest = manifest_path.read_bytes()
+    first_report = (artifact_dir / "validation_report.json").read_bytes()
+    validator.validate_and_publish(toolbox, checkpoint, artifact_dir, manifest_path)
+    second_manifest = manifest_path.read_bytes()
+    second_report = (artifact_dir / "validation_report.json").read_bytes()
+
+    first_payload = json.loads(first_manifest)
+    first_report_payload = json.loads(first_report)
+    second_report_payload = json.loads(second_report)
+    assert first_payload["runtime"] == {
+        "requested_provider": "CPUExecutionProvider",
+        "providers": ["CPUExecutionProvider"],
+    }
+    assert b"toolbox_git_head" not in first_manifest
+    assert next(git_heads) == "a" * 40
+    assert first_report_payload["runtime"]["inference_seconds"] == pytest.approx(0.1)
+    assert second_report_payload["runtime"]["inference_seconds"] == pytest.approx(0.9)
+    assert (
+        hashlib.sha256(first_manifest).hexdigest()
+        == hashlib.sha256(second_manifest).hexdigest()
+    )
+    assert first_manifest == second_manifest
+    assert first_report != second_report
 
 
 def test_parity_failure_writes_report_and_preserves_committed_manifest(

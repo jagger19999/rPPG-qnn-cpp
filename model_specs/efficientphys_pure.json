@@ -183,7 +183,6 @@
   "qnn_conversion": "not_run",
   "qnn_risk": "requires_qairt_validation_due_to_12_scatternd_nodes_and_approximately_215mb_constants",
   "runtime": {
-    "inference_seconds": 0.21151729201665148,
     "providers": [
       "CPUExecutionProvider"
     ],

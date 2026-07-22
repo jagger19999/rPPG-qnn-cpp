@@ -9,7 +9,6 @@ import json
 import os
 import platform
 from pathlib import Path
-import subprocess
 import sys
 import tempfile
 import time
@@ -357,29 +356,6 @@ def _load_export_report(path: Path, onnx_path: Path) -> dict[str, Any]:
     return report
 
 
-def _toolbox_git_head(toolbox: Path) -> str | None:
-    try:
-        top_level = subprocess.run(
-            ["git", "-C", str(toolbox), "rev-parse", "--show-toplevel"],
-            check=True,
-            capture_output=True,
-            text=True,
-        ).stdout.strip()
-        if Path(top_level).resolve() != toolbox.resolve():
-            return None
-        head = subprocess.run(
-            ["git", "-C", str(toolbox), "rev-parse", "HEAD"],
-            check=True,
-            capture_output=True,
-            text=True,
-        ).stdout.strip()
-    except (OSError, subprocess.CalledProcessError):
-        return None
-    if len(head) == 40 and all(character in "0123456789abcdef" for character in head):
-        return head
-    return None
-
-
 def validate_and_publish(
     toolbox: Path, checkpoint: Path, artifact_dir: Path, manifest_path: Path
 ) -> dict[str, Any]:
@@ -421,11 +397,6 @@ def validate_and_publish(
             "file": relative,
             "sha256": official_sha256,
         }
-    toolbox_head = _toolbox_git_head(toolbox)
-    if toolbox_head is not None:
-        for entry in official_sources.values():
-            entry["toolbox_git_head"] = toolbox_head
-
     onnx_output, runtime = _run_onnx_with_metadata(onnx_path, frames)
     onnx_output_path = artifact_dir / "onnx_pulse_float32.npy"
     _publish_numpy_atomic(onnx_output_path, onnx_output)
@@ -489,7 +460,10 @@ def validate_and_publish(
         "onnx_metrics": export_report["onnx_metrics"],
         "artifacts": artifacts,
         "environment": environment,
-        "runtime": runtime,
+        "runtime": {
+            "requested_provider": runtime["requested_provider"],
+            "providers": runtime["providers"],
+        },
         "validation": validation,
         "qnn_conversion": "not_run",
         "qnn_risk": QNN_RISK,
