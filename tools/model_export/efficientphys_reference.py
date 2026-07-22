@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
+from collections import OrderedDict
+from collections.abc import Mapping
 import hashlib
+import importlib.util
 from os import PathLike
+from pathlib import Path
 
 import numpy as np
+import torch
 
 
 SOURCE_SHAPE = (180, 72, 72, 3)
@@ -16,6 +21,72 @@ FRAME_DEPTH = 10
 EXPECTED_CHECKPOINT_SHA256 = (
     "e65a962e07bcac32a668e6acb9f8ed43cdb1b01cfb97262654dc5b55c0cf3a49"
 )
+
+
+def normalize_module_prefix(state: Mapping) -> OrderedDict:
+    """Remove exactly one required ``module.`` prefix from every state key."""
+    if not isinstance(state, Mapping):
+        raise TypeError("checkpoint state must be a Mapping")
+    if not state:
+        raise ValueError("checkpoint state must be non-empty")
+
+    keys = list(state.keys())
+    if any(not isinstance(key, str) for key in keys):
+        raise TypeError("every checkpoint state key must be a string")
+    if not all(key.startswith("module.") for key in keys):
+        raise ValueError("every key must have exactly one 'module.' prefix")
+    if any(key.startswith("module.module.") for key in keys):
+        raise ValueError("every key must have exactly one 'module.' prefix")
+
+    normalized = OrderedDict()
+    prefix_length = len("module.")
+    for key, value in state.items():
+        normalized_key = key[prefix_length:]
+        if not normalized_key:
+            raise ValueError("removing 'module.' must not produce an empty key")
+        if normalized_key in normalized:
+            raise ValueError(f"normalizing checkpoint keys produced a collision: {key}")
+        normalized[normalized_key] = value
+    return normalized
+
+
+def _load_model_module(toolbox: Path):
+    """Load EfficientPhys only from the requested Toolbox source tree."""
+    source = Path(toolbox) / "neural_methods" / "model" / "EfficientPhys.py"
+    if not source.is_file():
+        raise FileNotFoundError(f"official EfficientPhys source file not found: {source}")
+
+    spec = importlib.util.spec_from_file_location(
+        "_rppg_toolbox_official_efficientphys", source
+    )
+    if spec is None or spec.loader is None:
+        raise ImportError(f"could not create an import spec for: {source}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def load_official_model(toolbox: Path, checkpoint: Path):
+    """Strictly load the pinned official EfficientPhys checkpoint on CPU."""
+    checkpoint = Path(checkpoint)
+    actual_sha256 = sha256_file(checkpoint)
+    if actual_sha256 != EXPECTED_CHECKPOINT_SHA256:
+        raise ValueError(
+            "checkpoint SHA-256 mismatch: "
+            f"expected {EXPECTED_CHECKPOINT_SHA256}, got {actual_sha256}"
+        )
+
+    state = torch.load(checkpoint, map_location="cpu", weights_only=True)
+    if not isinstance(state, Mapping):
+        raise TypeError("checkpoint must contain a Mapping state dict")
+    normalized_state = normalize_module_prefix(state)
+
+    model_module = _load_model_module(Path(toolbox))
+    model = model_module.EfficientPhys(frame_depth=FRAME_DEPTH, img_size=72)
+    model.load_state_dict(normalized_state, strict=True)
+    model.cpu()
+    model.eval()
+    return model
 
 
 def prepare_model_input(source_rgb: np.ndarray) -> np.ndarray:
