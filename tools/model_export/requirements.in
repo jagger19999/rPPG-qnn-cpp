@@ -1,0 +1,6 @@
+numpy>=2.0,<3
+torch==2.12.1
+onnx>=1.17,<2
+onnxruntime>=1.20,<2
+pytest>=8,<10
+PyYAML>=6,<7

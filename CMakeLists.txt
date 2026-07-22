@@ -48,6 +48,10 @@ install(FILES config/runtime-defaults.env
 
 include(CTest)
 if(BUILD_TESTING)
+  add_test(NAME model_export_setup
+           COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_model_export_setup.sh
+                        ${CMAKE_CURRENT_SOURCE_DIR})
+
   add_executable(test_contracts tests/test_contracts.cpp)
   target_link_libraries(test_contracts PRIVATE rppg_qnn_core)
   target_include_directories(test_contracts PRIVATE tests)

@@ -7,3 +7,5 @@ outputs/
 *.dlc
 *.bin
 *.so
+/.model-export-venv/
+/artifacts/model_export/
