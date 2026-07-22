@@ -15,8 +15,9 @@ accuracy.
 
 ## Confirmed assumptions
 
-1. The source checkpoint is external to Git at
-   `/Users/wangjie/Documents/keti/rPPG/docs/code_repos/official/rPPG-Toolbox/final_model_release/PURE_EfficientPhys.pth`.
+1. The source checkpoint is external to Git and supplied through
+   `RPPG_EFFICIENTPHYS_CHECKPOINT`; the Toolbox root is supplied through
+   `RPPG_TOOLBOX_PATH`.
 2. Its SHA256 is
    `e65a962e07bcac32a668e6acb9f8ed43cdb1b01cfb97262654dc5b55c0cf3a49`.
 3. The checkpoint is an `OrderedDict` containing 21 tensors, and every key has
@@ -39,6 +40,9 @@ accuracy.
 Load the official implementation and checkpoint, build the exact 181-frame
 tensor expected by the trainer, and export a static ONNX graph. This is the
 smallest change and gives the strongest provenance for later QNN comparison.
+The implemented legacy-export path includes the explicitly authorized,
+audited lowering described below; it does not alter the model source or model
+semantics.
 
 ### B. Rewrite TSM and differencing into a QNN-friendly graph now — deferred
 
@@ -52,6 +56,24 @@ converter rejects the reference graph, and only with layer/output parity tests.
 This would combine model translation, preprocessing, QNN integration, and
 numerical debugging. It is slower to validate and makes discrepancies hard to
 localize.
+
+## Authorized legacy-export lowering
+
+The PyTorch 2.12.1 legacy opset-17 exporter initially stopped because it could
+not export the official model's `aten::diff`. After that failure was reported,
+the user explicitly authorized one narrowly scoped symbolic lowering:
+`aten::diff(n=1, dim=0, prepend=None, append=None)` becomes two standard-domain
+ONNX `Slice` operations followed by standard-domain `Sub`.
+
+This is an exporter representation rule, not a model rewrite. The official
+`EfficientPhys.py`, its `forward`, the trainer, inference configuration, and
+checkpoint are unchanged and remain hash-pinned. The symbolic rejects every
+other `n`, `dim`, `prepend`, or `append` value, is registered only around the
+legacy export call, and refuses to replace a pre-existing override. The
+resulting graph must have exactly default-domain opset 17: there is no custom
+domain, dynamic dimension, fallback exporter, or alternative network path.
+Rewriting TSM remains deferred until an actual QAIRT converter result justifies
+it and a separately reviewed parity plan is approved.
 
 ## Model and preprocessing contract
 
@@ -142,32 +164,65 @@ inputs. No file is created or changed beneath them.
   requires it.
 - Record exact package versions, Python version, platform, and exporter mode in
   every validation report.
-- Prefer the legacy fixed-shape exporter with ONNX opset 17 for the first
-  reference because QAIRT compatibility is not yet known. If it cannot export
-  the official graph, stop with an explicit failure rather than silently
-  rewriting the model or changing the interface.
+- Use the legacy fixed-shape exporter with ONNX opset 17 for the first
+  reference because QAIRT compatibility is not yet known. It did stop on the
+  unsupported `aten::diff`; after explicit user authorization, the exact
+  audited `Slice`/`Sub` lowering above was added. Any other unsupported
+  operator, model change, fallback, or interface change still stops with an
+  explicit failure.
 
 ## Commands
 
-The implemented workflow will expose these commands:
+The implemented workflow exposes these commands:
 
 ```bash
+export RPPG_TOOLBOX_PATH=/path/to/rPPG-Toolbox
+export RPPG_EFFICIENTPHYS_CHECKPOINT="$RPPG_TOOLBOX_PATH/final_model_release/PURE_EfficientPhys.pth"
+export RPPG_MODEL_ARTIFACT_DIR=artifacts/model_export/efficientphys_pure
+
+PYTHON_BIN="$(command -v python3.12)" \
 ./scripts/setup_model_export_macos.sh
 
 .model-export-venv/bin/python -m pytest tools/model_export/tests -q
 
 .model-export-venv/bin/python tools/model_export/generate_test_vector.py \
-  --artifact-dir artifacts/model_export/efficientphys_pure
+  --artifact-dir "$RPPG_MODEL_ARTIFACT_DIR"
 
 .model-export-venv/bin/python tools/model_export/export_efficientphys.py \
-  --toolbox /Users/wangjie/Documents/keti/rPPG/docs/code_repos/official/rPPG-Toolbox \
-  --checkpoint /Users/wangjie/Documents/keti/rPPG/docs/code_repos/official/rPPG-Toolbox/final_model_release/PURE_EfficientPhys.pth \
-  --artifact-dir artifacts/model_export/efficientphys_pure
+  --toolbox "$RPPG_TOOLBOX_PATH" \
+  --checkpoint "$RPPG_EFFICIENTPHYS_CHECKPOINT" \
+  --artifact-dir "$RPPG_MODEL_ARTIFACT_DIR"
 
 .model-export-venv/bin/python tools/model_export/validate_efficientphys.py \
-  --artifact-dir artifacts/model_export/efficientphys_pure \
+  --toolbox "$RPPG_TOOLBOX_PATH" \
+  --checkpoint "$RPPG_EFFICIENTPHYS_CHECKPOINT" \
+  --artifact-dir "$RPPG_MODEL_ARTIFACT_DIR" \
   --manifest model_specs/efficientphys_pure.json
 ```
+
+## Recorded reference result and QNN risk
+
+The validated ONNX is 224043138 bytes with SHA256
+`c1b321042db1335da70b0295cc84f653a2cfe90f75cff738b3045ea3c103257d`.
+Measured PyTorch/ORT parity is:
+
+- maximum absolute error `1.3530254364013672e-05`;
+- mean absolute error `1.1705689960055881e-06`;
+- Pearson correlation `0.9999999999936849`;
+- FFT BPM error `0.0 bpm`.
+
+The portable committed manifest is `model_specs/efficientphys_pure.json`, with
+SHA256 `cfa333bdcb8e88f22172bceaff452823b934476ab31c8eab48e7525f65f8ffdb`.
+Repeated ORT CPU validation on the reference Mac is approximately
+`0.18–0.24 s`, typically about `0.2 s`; the actual per-run value is available
+in the ignored validation report. Runtime timing is deliberately excluded from
+the deterministic manifest.
+
+The graph contains exactly 12 `ScatterND` nodes and 215315552 bytes of Constant
+tensor payload against a pinned 216000000-byte gate. These are known QAIRT/QNN
+conversion risks, not conversion evidence. `qnn_conversion` is `not_run`;
+QAIRT conversion, QNN context generation, Adreno execution, Linux V4L2
+behavior, and physiological accuracy remain unverified.
 
 ## Manifest and artifact requirements
 
@@ -211,7 +266,8 @@ numerical reproducibility, not accuracy evaluation.
 - Parity outside tolerance fails the command and leaves
   `qnn_conversion: not_run`.
 - No code falls back to MPS, CUDA, a different checkpoint, a dynamic graph, or
-  a rewritten network silently.
+  a rewritten network. The only authorized export adaptation is the exact
+  standard-domain `aten::diff` lowering documented above.
 
 ## Testing strategy
 
@@ -229,6 +285,8 @@ numerical reproducibility, not accuracy evaluation.
 - the real public checkpoint loads on CPU with zero missing/unexpected keys;
 - PyTorch input `[181,3,72,72]` produces finite `[180,1]` output;
 - the fixed ONNX graph passes `onnx.checker`;
+- the graph has exactly 12 `ScatterND` nodes and no more than 216000000 bytes
+  of Constant tensor payload (the reference records 215315552 bytes);
 - ONNX Runtime CPU accepts the frozen input and produces finite `[180,1]`;
 - PyTorch and ONNX output shapes and values satisfy all parity gates;
 - the C++ Release/UBSan suite and four-file staging whitelist remain unchanged.
@@ -256,7 +314,8 @@ These are implementation-equivalence gates, not heart-rate accuracy claims.
 ### Ask first
 
 - Change the 180-source/181-input/180-output contract.
-- Rewrite EfficientPhys operators or preprocessing.
+- Rewrite EfficientPhys operators or preprocessing beyond the already
+  authorized exact `aten::diff` export lowering.
 - Select a checkpoint other than `PURE_EfficientPhys.pth`.
 - Add a training, fine-tuning, calibration, or dataset-download path.
 
@@ -266,6 +325,28 @@ These are implementation-equivalence gates, not heart-rate accuracy claims.
 - Commit model weights, personal camera frames, or licensed datasets.
 - Present synthetic/fake output as a physiological measurement.
 - Mark QNN conversion or Adreno inference successful without target evidence.
+
+## Final verification record (2026-07-22)
+
+- Model-export unit selection: 95 passed, 3 deselected, no failures.
+- Integration selection with all three `RPPG_*` resources: 3 passed, 95
+  deselected, no selected test skipped.
+- Full model-export suite with those resources: 98 passed, with four legacy
+  exporter deprecation warnings and no failures.
+- Native Release build through `scripts/build_linux.sh native`: 13/13 CTests
+  passed; the staged package contains exactly the four whitelisted files.
+- Independent `RelWithDebInfo` UBSan-only build: 13/13 CTests passed with
+  `UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1` and no UB report.
+- Two consecutive real validation publications produced the same portable
+  manifest bytes and SHA256
+  `cfa333bdcb8e88f22172bceaff452823b934476ab31c8eab48e7525f65f8ffdb`;
+  the manifest has relative artifact paths and excludes runtime timing and
+  private absolute paths.
+- `git diff --check` passed and Git tracks no `.pth`, `.pt`, `.onnx`, `.npy`,
+  `.raw`, or `.dlc` model binary. The separate original rPPG repository still
+  has only its pre-existing untracked `ubfc_tscan_full_lr3e-5_Epoch10.pth`.
+- AArch64 cross-compilation and QAIRT/QNN conversion were not run because this
+  Mac does not have the confirmed Yocto SDK or target QAIRT SDK/libraries.
 
 ## Success criteria
 

@@ -8,7 +8,56 @@
 
 本仓库 `rPPG-qnn-cpp` 与 Python/Streamlit 仓库 `rPPG` 分离，拥有独立的 Git 历史、CMake 构建和发布目录。台架包不包含 Python、PyTorch、Streamlit、rPPG-Toolbox 或模型权重，也不会修改原仓库。
 
-当前已完成：V4L2/视频输入、人脸 ROI、GREEN 基线、异步深度窗口接线、结果落盘和 QNN/OpenCL 动态库预检。真实 EfficientPhys 的 QNN 模型转换、清单校验和推理适配尚未接入，因此正式运行必须使用 `--deep disabled`。`--deep fake` 只是开发期调度测试，不能当作深度学习结果。
+当前已完成：V4L2/视频输入、人脸 ROI、GREEN 基线、异步深度窗口接线、结果落盘、QNN/OpenCL 动态库预检，以及 Mac 开发机上的 EfficientPhys 静态 ONNX 参考导出和数值校验。QAIRT/QNN 模型转换、QNN context 和真实推理适配尚未接入，因此正式运行仍必须使用 `--deep disabled`。`--deep fake` 只是开发期调度测试，不能当作深度学习结果。
+
+## Mac 离线 EfficientPhys ONNX 参考（仅开发机）
+
+`tools/model_export/` 是隔离的 host-only 工具，不会安装进 CMake 发布包。它严格读取官方 `PURE_EfficientPhys.pth`（SHA256 `e65a962e07bcac32a668e6acb9f8ed43cdb1b01cfb97262654dc5b55c0cf3a49`），按官方推理约定处理 180 帧、30 FPS、RGB、72 x 72 的窗口：对整个窗口做一次全局 population mean/std standardize，转为 `float32` TCHW，再复制末帧形成 181 帧输入。
+
+静态 ONNX 接口固定为：输入 `frames`、`float32`、`[181,3,72,72]` TCHW；输出 `pulse`、`float32`、`[180,1]`；默认域 opset 17。没有动态维度、fallback 或 custom domain。
+
+在 Mac 上准备可移植的 Python 3.12 隔离环境并执行完整流程：
+
+```bash
+export RPPG_TOOLBOX_PATH=/path/to/rPPG-Toolbox
+export RPPG_EFFICIENTPHYS_CHECKPOINT="$RPPG_TOOLBOX_PATH/final_model_release/PURE_EfficientPhys.pth"
+export RPPG_MODEL_ARTIFACT_DIR=artifacts/model_export/efficientphys_pure
+
+PYTHON_BIN="$(command -v python3.12)" ./scripts/setup_model_export_macos.sh
+
+.model-export-venv/bin/python tools/model_export/generate_test_vector.py \
+  --artifact-dir "$RPPG_MODEL_ARTIFACT_DIR"
+
+.model-export-venv/bin/python tools/model_export/export_efficientphys.py \
+  --toolbox "$RPPG_TOOLBOX_PATH" \
+  --checkpoint "$RPPG_EFFICIENTPHYS_CHECKPOINT" \
+  --artifact-dir "$RPPG_MODEL_ARTIFACT_DIR"
+
+.model-export-venv/bin/python tools/model_export/validate_efficientphys.py \
+  --toolbox "$RPPG_TOOLBOX_PATH" \
+  --checkpoint "$RPPG_EFFICIENTPHYS_CHECKPOINT" \
+  --artifact-dir "$RPPG_MODEL_ARTIFACT_DIR" \
+  --manifest model_specs/efficientphys_pure.json
+
+.model-export-venv/bin/python -m pytest tools/model_export/tests -q \
+  -m 'not integration'
+
+.model-export-venv/bin/python -m pytest tools/model_export/tests -q \
+  -m integration
+```
+
+最后一条 integration 命令继承上面的三个 `RPPG_*` 环境变量；三个被选中的集成测试都必须运行，不能以 skip 代替成功。
+
+PyTorch 2.12.1 的 legacy exporter 原本不能导出官方模型中的 `aten::diff`。经用户明确授权，导出工具只把精确的 `aten::diff(n=1, dim=0, prepend=None, append=None)` 映射为 ONNX 标准域的两个 `Slice` 和一个 `Sub`。这只是已审计的算子 lowering，不是模型 rewrite：官方 EfficientPhys 模型文件、`forward`、trainer、配置和 checkpoint 均未修改；不允许其他 `n`/`dim`/`prepend`/`append` 组合，也没有动态图、fallback 或自定义算子域。TSM rewrite 仍未实施。
+
+本次参考产物的实测结果如下：
+
+- `efficientphys_pure.onnx`：224043138 bytes，SHA256 `c1b321042db1335da70b0295cc84f653a2cfe90f75cff738b3045ea3c103257d`。
+- PyTorch/ORT parity：最大绝对误差 `1.3530254364013672e-05`，平均绝对误差 `1.1705689960055881e-06`，Pearson `0.9999999999936849`，FFT BPM 差 `0.0 bpm`。
+- 可移植 manifest：`model_specs/efficientphys_pure.json`，SHA256 `cfa333bdcb8e88f22172bceaff452823b934476ab31c8eab48e7525f65f8ffdb`。
+- ORT CPU 多次本机验证约 `0.18–0.24 s`，典型约 `0.2 s`；实际单次值见 ignored 的 `validation_report.json`。运行耗时不进入可复现 manifest。
+
+该 ONNX 包含 12 个 `ScatterND` 节点和 215315552 bytes Constant tensor，受 216000000 bytes 固定门限约束，存在明确的 QNN converter 风险；manifest 的 `qnn_conversion` 仍为 `not_run`。上述结果只证明 Mac 上 PyTorch/ORT 的实现等价性，不代表 QAIRT converter、Adreno GPU、Linux V4L2 或生理精度已经通过。C++ 运行仍使用 `--deep disabled`，`--deep fake` 的输出不能当成模型或生理结果。
 
 ## Ubuntu 依赖
 
@@ -48,6 +97,52 @@ export CMAKE_PREFIX_PATH="$AARCH64_SYSROOT/usr"
 脚本使用仓库内的 `cmake/Toolchains/aarch64-linux.cmake`。交叉构建只编译测试，不在宿主机运行 AArch64 测试；测试应在台架上补跑。打包前，脚本用 `file` 强制确认交叉产物是 Linux ELF AArch64；原生模式也会确认产物格式和架构与当前主机一致。
 
 `native` 与 `aarch64` 必须使用不同的 `BUILD_DIR`。脚本会在构建目录记录模式；发现模式不符，或发现没有可信模式标记的旧 `CMakeCache.txt` 时会在配置前停止。升级自早期版本时请指定一个新的空构建目录。可通过 `BUILD_DIR` 和 `STAGE_DIR` 使用独立目录，路径中允许空格。
+
+### 已确认目标台架：Yocto/OpenEmbedded AArch64
+
+目标交叉工具链是 `aarch64-oe-linux-gcc 11.2`。必须先 source 目标 SDK 提供的 environment 文件，并保留其中的 `CFLAGS`、`CXXFLAGS`、`LDFLAGS`、`PKG_CONFIG_*` 等变量；构建脚本和 CMake 会继承这些变量。目标 sysroot 内还必须安装 AArch64 版本的 OpenCV 4，不能链接 Mac 或其他宿主架构的 OpenCV。
+
+```bash
+source /path/to/environment-setup-aarch64-oe-linux
+command -v aarch64-oe-linux-gcc
+aarch64-oe-linux-gcc --version   # 应确认11.2
+aarch64-oe-linux-g++ --version
+echo "$SDKTARGETSYSROOT"
+
+export AARCH64_TOOLCHAIN_PREFIX="$(dirname "$(command -v aarch64-oe-linux-gcc)")/aarch64-oe-linux-"
+export AARCH64_SYSROOT="$SDKTARGETSYSROOT"
+export CMAKE_PREFIX_PATH="$AARCH64_SYSROOT/usr"
+
+BUILD_DIR=build-linux-aarch64-oe \
+STAGE_DIR=stage/rppg-qnn-aarch64-oe \
+  ./scripts/build_linux.sh aarch64
+
+file build-linux-aarch64-oe/rppg_qnn_live
+readelf -h build-linux-aarch64-oe/rppg_qnn_live
+readelf -d build-linux-aarch64-oe/rppg_qnn_live
+```
+
+上述交叉编译命令是目标 SDK 到位后的操作手册，不是已通过声明；当前 Mac 没有该 Yocto SDK，因此本次没有执行 AArch64 交叉编译。
+
+开始 QAIRT 接入前，需要从目标环境采集并冻结：精确 QAIRT 版本与 SDK root（SDK 提供的 `SDK_ROOT`，并按本项目约定设为 `QAIRT_SDK_ROOT`）、`$QAIRT_SDK_ROOT/include/QNN` headers、AArch64 `libQnnGpu.so` 和 `libQnnSystem.so`，以及台架匹配的 OpenCL loader/driver。对每个 `.so` 使用 `file` 和 `readelf -h/-d` 核对其确为 AArch64、依赖可由目标 sysroot/台架满足；Mac 动态库不能用于交叉链接或作为目标运行证据。当前 Mac 也不能据此宣称 QNN 转换成功。
+
+构建成功后，把固定四文件 stage 复制到台架，再做动态库和摄像头预检：
+
+```bash
+scp -r stage/rppg-qnn-aarch64-oe bench:/tmp/rppg-qnn
+
+# 以下命令在台架执行
+export QAIRT_TARGET_LIB_DIR=/path/to/qairt/aarch64/lib
+/tmp/rppg-qnn/bin/run_rppg_qnn.sh \
+  --preflight-only \
+  --qnn-gpu-library "$QAIRT_TARGET_LIB_DIR/libQnnGpu.so" \
+  --opencl-library /path/to/libOpenCL.so \
+  --output /tmp/rppg-preflight
+
+v4l2-ctl --list-devices
+v4l2-ctl --device /dev/video0 --list-formats-ext
+ls -l /dev/video0
+```
 
 安装包布局：
 
@@ -186,4 +281,4 @@ sudo mv -Tf /opt/rppg-qnn/current.new /opt/rppg-qnn/current
 
 ## 后续工作
 
-下一阶段会冻结目标 QAIRT 版本，导出并数值校验 EfficientPhys，生成 QNN GPU 产物及模型清单，随后实现真实 `IDeepRuntime`。在该阶段通过前，任何 fake deep 的心率或波形都只属于测试数据。
+下一阶段是在目标 SDK 到位后冻结精确 QAIRT 版本，运行 QAIRT converter 验证上述 `ScatterND`/Constant 风险，生成 QNN context 和目标模型清单，再实现真实 `IDeepRuntime`。在目标转换、台架预检和端到端推理通过前，任何 fake deep 的心率或波形都只属于测试数据。
