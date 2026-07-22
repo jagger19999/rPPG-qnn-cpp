@@ -24,9 +24,25 @@ case "${mode}" in
     ;;
 esac
 
+build_verbose=${RPPG_BUILD_VERBOSE-0}
+case "${build_verbose}" in
+  0|1) ;;
+  *) die 'RPPG_BUILD_VERBOSE must be 0 or 1' ;;
+esac
+
+selected_aarch64_toolchain=
 if [[ "${mode}" == aarch64 ]]; then
-  : "${AARCH64_TOOLCHAIN_PREFIX:?AARCH64_TOOLCHAIN_PREFIX is required for aarch64 mode}"
-  : "${AARCH64_SYSROOT:?AARCH64_SYSROOT is required for aarch64 mode}"
+  if [[ ${AARCH64_CMAKE_TOOLCHAIN_FILE+x} == x ]]; then
+    [[ ${AARCH64_CMAKE_TOOLCHAIN_FILE} == /* ]] ||
+      die 'AARCH64_CMAKE_TOOLCHAIN_FILE must be an absolute path'
+    [[ -f ${AARCH64_CMAKE_TOOLCHAIN_FILE} &&
+       -r ${AARCH64_CMAKE_TOOLCHAIN_FILE} ]] ||
+      die 'AARCH64_CMAKE_TOOLCHAIN_FILE must resolve to a readable regular file'
+    selected_aarch64_toolchain=${AARCH64_CMAKE_TOOLCHAIN_FILE}
+  else
+    : "${AARCH64_TOOLCHAIN_PREFIX:?AARCH64_TOOLCHAIN_PREFIX is required for aarch64 mode}"
+    : "${AARCH64_SYSROOT:?AARCH64_SYSROOT is required for aarch64 mode}"
+  fi
 fi
 
 script_dir=$(CDPATH= cd -P -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
@@ -129,14 +145,21 @@ if [[ -n ${OpenCV_DIR:-} ]]; then
   cmake_args+=("-DOpenCV_DIR=${OpenCV_DIR}")
 fi
 if [[ "${mode}" == aarch64 ]]; then
+  if [[ -z ${selected_aarch64_toolchain} ]]; then
+    selected_aarch64_toolchain="${source_dir}/cmake/Toolchains/aarch64-linux.cmake"
+  fi
   cmake_args+=(
-    "-DCMAKE_TOOLCHAIN_FILE=${source_dir}/cmake/Toolchains/aarch64-linux.cmake"
+    "-DCMAKE_TOOLCHAIN_FILE=${selected_aarch64_toolchain}"
   )
 fi
 
 printf 'Configuring %s build in %s\n' "${mode}" "${build_dir}"
 cmake "${cmake_args[@]}"
-cmake --build "${build_dir}" --config Release --parallel
+cmake_build_args=(--build "${build_dir}" --config Release --parallel)
+if [[ ${build_verbose} == 1 ]]; then
+  cmake_build_args+=(--verbose)
+fi
+cmake "${cmake_build_args[@]}"
 
 if [[ "${mode}" == native ]]; then
   ctest --test-dir "${build_dir}" -C Release --output-on-failure

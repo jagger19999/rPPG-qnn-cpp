@@ -12,7 +12,7 @@
 
 ## Mac 离线 EfficientPhys ONNX 参考（仅开发机）
 
-`tools/model_export/` 是隔离的 host-only 工具，不会安装进 CMake 发布包。它严格读取官方 `PURE_EfficientPhys.pth`（SHA256 `e65a962e07bcac32a668e6acb9f8ed43cdb1b01cfb97262654dc5b55c0cf3a49`），按官方推理约定处理 180 帧、30 FPS、RGB、72 x 72 的窗口：对整个窗口做一次全局 population mean/std standardize，转为 `float32` TCHW，再复制末帧形成 181 帧输入。
+`tools/model_export/` 是隔离的 host-only 工具，不会安装进 CMake 发布包。下面的命令只能在源码 checkout 根目录执行；安装包携带的 README 只是边界和操作说明，四文件台架包不含 `tools/`、`scripts/setup_model_export_macos.sh` 或 Python 环境。工具严格读取官方 `PURE_EfficientPhys.pth`（SHA256 `e65a962e07bcac32a668e6acb9f8ed43cdb1b01cfb97262654dc5b55c0cf3a49`），按官方推理约定处理 180 帧、30 FPS、RGB、72 x 72 的窗口：对整个窗口做一次全局 population mean/std standardize，转为 `float32` TCHW，再复制末帧形成 181 帧输入。
 
 静态 ONNX 接口固定为：输入 `frames`、`float32`、`[181,3,72,72]` TCHW；输出 `pulse`、`float32`、`[180,1]`；默认域 opset 17。没有动态维度、fallback 或 custom domain。
 
@@ -55,7 +55,7 @@ PyTorch 2.12.1 的 legacy exporter 原本不能导出官方模型中的 `aten::d
 - `efficientphys_pure.onnx`：224043138 bytes，SHA256 `c1b321042db1335da70b0295cc84f653a2cfe90f75cff738b3045ea3c103257d`。
 - PyTorch/ORT parity：最大绝对误差 `1.3530254364013672e-05`，平均绝对误差 `1.1705689960055881e-06`，Pearson `0.9999999999936849`，FFT BPM 差 `0.0 bpm`。
 - 可移植 manifest：`model_specs/efficientphys_pure.json`，SHA256 `cfa333bdcb8e88f22172bceaff452823b934476ab31c8eab48e7525f65f8ffdb`。
-- ORT CPU 多次本机验证约 `0.18–0.24 s`，典型约 `0.2 s`；实际单次值见 ignored 的 `validation_report.json`。运行耗时不进入可复现 manifest。
+- ORT CPU 本机验证为数百毫秒级，但耗时不是门禁；当前实际值见 ignored 的 `validation_report.json`，且不进入可复现 manifest。
 
 该 ONNX 包含 12 个 `ScatterND` 节点和 215315552 bytes Constant tensor，受 216000000 bytes 固定门限约束，存在明确的 QNN converter 风险；manifest 的 `qnn_conversion` 仍为 `not_run`。上述结果只证明 Mac 上 PyTorch/ORT 的实现等价性，不代表 QAIRT converter、Adreno GPU、Linux V4L2 或生理精度已经通过。C++ 运行仍使用 `--deep disabled`，`--deep fake` 的输出不能当成模型或生理结果。
 
@@ -94,54 +94,76 @@ export CMAKE_PREFIX_PATH="$AARCH64_SYSROOT/usr"
 ./scripts/build_linux.sh aarch64
 ```
 
-脚本使用仓库内的 `cmake/Toolchains/aarch64-linux.cmake`。交叉构建只编译测试，不在宿主机运行 AArch64 测试；测试应在台架上补跑。打包前，脚本用 `file` 强制确认交叉产物是 Linux ELF AArch64；原生模式也会确认产物格式和架构与当前主机一致。
+上述通用 prefix+sysroot 模式使用仓库内的 `cmake/Toolchains/aarch64-linux.cmake`。也可以改用绝对路径 `AARCH64_CMAKE_TOOLCHAIN_FILE`；该路径必须存在、可读并最终指向 regular file，合法 symlink 可用。设置它后不再要求 `AARCH64_TOOLCHAIN_PREFIX`/`AARCH64_SYSROOT`。交叉构建只编译测试，不在宿主机运行 AArch64 测试；测试应在台架上补跑。打包前，脚本用 `file` 强制确认交叉产物是 Linux ELF AArch64；原生模式也会确认产物格式和架构与当前主机一致。
+
+`RPPG_BUILD_VERBOSE` 只接受 `0` 或 `1`，默认 `0`；设为 `1` 时构建调用增加 `cmake --build ... --verbose`，便于审计真实编译器与 flags。
 
 `native` 与 `aarch64` 必须使用不同的 `BUILD_DIR`。脚本会在构建目录记录模式；发现模式不符，或发现没有可信模式标记的旧 `CMakeCache.txt` 时会在配置前停止。升级自早期版本时请指定一个新的空构建目录。可通过 `BUILD_DIR` 和 `STAGE_DIR` 使用独立目录，路径中允许空格。
 
 ### 已确认目标台架：Yocto/OpenEmbedded AArch64
 
-目标交叉工具链是 `aarch64-oe-linux-gcc 11.2`。必须先 source 目标 SDK 提供的 environment 文件，并保留其中的 `CFLAGS`、`CXXFLAGS`、`LDFLAGS`、`PKG_CONFIG_*` 等变量；构建脚本和 CMake 会继承这些变量。目标 sysroot 内还必须安装 AArch64 版本的 OpenCV 4，不能链接 Mac 或其他宿主架构的 OpenCV。
+目标交叉工具链是 `aarch64-oe-linux-gcc 11.2`。必须先 source 目标 SDK 提供的 environment 文件，并完整保留其中的 `CC`、`CXX`、`CFLAGS`、`CXXFLAGS`、`LDFLAGS`、`SDKTARGETSYSROOT`、`PKG_CONFIG_*` 等变量；构建脚本原样传递这些环境值，不会尝试拆分可能包含编译参数的复合 `CC`/`CXX` 字符串。目标 sysroot 内还必须安装 AArch64 版本的 OpenCV 4，不能链接 Mac 或其他宿主架构的 OpenCV。可参照 [Yocto 4.2 SDK 官方手册](https://docs.yoctoproject.org/4.2/sdk-manual/working-projects.html) 核对 environment setup 的使用方式。
 
 ```bash
 source /path/to/environment-setup-aarch64-oe-linux
 command -v aarch64-oe-linux-gcc
 aarch64-oe-linux-gcc --version   # 应确认11.2
 aarch64-oe-linux-g++ --version
-echo "$SDKTARGETSYSROOT"
 
-export AARCH64_TOOLCHAIN_PREFIX="$(dirname "$(command -v aarch64-oe-linux-gcc)")/aarch64-oe-linux-"
-export AARCH64_SYSROOT="$SDKTARGETSYSROOT"
-export CMAKE_PREFIX_PATH="$AARCH64_SYSROOT/usr"
+# 打印并保存 SDK contract；%q 保留空格和复合参数的边界。
+for name in CC CXX CFLAGS CXXFLAGS LDFLAGS SDKTARGETSYSROOT; do
+  printf '%s=%q\n' "$name" "${!name-}"
+done | tee yocto-sdk-build-env.txt
 
-BUILD_DIR=build-linux-aarch64-oe \
-STAGE_DIR=stage/rppg-qnn-aarch64-oe \
-  ./scripts/build_linux.sh aarch64
+export AARCH64_CMAKE_TOOLCHAIN_FILE="$OECORE_NATIVE_SYSROOT/usr/share/cmake/OEToolchainConfig.cmake"
+test -f "$AARCH64_CMAKE_TOOLCHAIN_FILE"
+# 若 SDK 布局不同，改用供应商给出的 OEToolchainConfig.cmake 绝对路径。
 
-file build-linux-aarch64-oe/rppg_qnn_live
-readelf -h build-linux-aarch64-oe/rppg_qnn_live
-readelf -d build-linux-aarch64-oe/rppg_qnn_live
+export CMAKE_PREFIX_PATH="$SDKTARGETSYSROOT/usr"
+BUILD_ID="$(date -u +%Y%m%dT%H%M%SZ)-$$"
+BUILD_DIR="build-linux-aarch64-oe-$BUILD_ID"
+STAGE_DIR="stage/rppg-qnn-aarch64-oe-$BUILD_ID"
+test ! -e "$BUILD_DIR"   # 必须使用全新且尚不存在的目录
+set -o pipefail
+
+RPPG_BUILD_VERBOSE=1 BUILD_DIR="$BUILD_DIR" STAGE_DIR="$STAGE_DIR" \
+  ./scripts/build_linux.sh aarch64 2>&1 | tee yocto-aarch64-build.log
+
+file "$BUILD_DIR/rppg_qnn_live"
+readelf -h "$BUILD_DIR/rppg_qnn_live"
+readelf -d "$BUILD_DIR/rppg_qnn_live"
+
+# 审计 CMake 选择与 verbose 命令；逐项对照上面保存的 SDK contract。
+grep -E 'CMAKE_(C|CXX)_COMPILER|CMAKE_SYSROOT' "$BUILD_DIR/CMakeCache.txt"
+grep -E -- 'aarch64-oe-linux-(gcc|g\+\+)|--sysroot=|-mcpu=|-march=' \
+  yocto-aarch64-build.log
+grep -F -- "$SDKTARGETSYSROOT" yocto-aarch64-build.log
 ```
 
-上述交叉编译命令是目标 SDK 到位后的操作手册，不是已通过声明；当前 Mac 没有该 Yocto SDK，因此本次没有执行 AArch64 交叉编译。
+确认台架必须走供应商 SDK toolchain 文件并审计 `CMakeCache.txt` 与 verbose 编译命令确实包含 SDK compiler、必要 flags 和目标 sysroot。上面的通用 prefix+sysroot 模式仍用于简单 GNU 工具链，但不能替代含复合 `CC`/`CXX` 参数的 Yocto SDK contract。上述命令是目标 SDK 到位后的操作手册，不是已通过声明；当前 Mac 没有该 Yocto SDK，因此本次没有执行 AArch64 交叉编译。
 
 开始 QAIRT 接入前，需要从目标环境采集并冻结：精确 QAIRT 版本与 SDK root（SDK 提供的 `SDK_ROOT`，并按本项目约定设为 `QAIRT_SDK_ROOT`）、`$QAIRT_SDK_ROOT/include/QNN` headers、AArch64 `libQnnGpu.so` 和 `libQnnSystem.so`，以及台架匹配的 OpenCL loader/driver。对每个 `.so` 使用 `file` 和 `readelf -h/-d` 核对其确为 AArch64、依赖可由目标 sysroot/台架满足；Mac 动态库不能用于交叉链接或作为目标运行证据。当前 Mac 也不能据此宣称 QNN 转换成功。
 
-构建成功后，把固定四文件 stage 复制到台架，再做动态库和摄像头预检：
+构建成功后，把固定四文件 stage 复制到一个唯一版本目录，再从同一目录做动态库和摄像头预检。复制前必须确认目标不存在；不要复用固定目录，否则可能误跑旧 binary：
 
 ```bash
-scp -r stage/rppg-qnn-aarch64-oe bench:/tmp/rppg-qnn
+RPPG_RELEASE_ID="0.1.0-$(git rev-parse --short HEAD)-$BUILD_ID"
+REMOTE_RELEASE_DIR="/tmp/rppg-qnn-$RPPG_RELEASE_ID"
+ssh bench "test ! -e '$REMOTE_RELEASE_DIR'"
+ssh bench "mkdir '$REMOTE_RELEASE_DIR'"
+scp -r "$STAGE_DIR"/. "bench:$REMOTE_RELEASE_DIR/"
+ssh bench "test -x '$REMOTE_RELEASE_DIR/bin/rppg_qnn_live'"
 
-# 以下命令在台架执行
-export QAIRT_TARGET_LIB_DIR=/path/to/qairt/aarch64/lib
-/tmp/rppg-qnn/bin/run_rppg_qnn.sh \
-  --preflight-only \
-  --qnn-gpu-library "$QAIRT_TARGET_LIB_DIR/libQnnGpu.so" \
-  --opencl-library /path/to/libOpenCL.so \
-  --output /tmp/rppg-preflight
+ssh bench "QAIRT_TARGET_LIB_DIR=/path/to/qairt/aarch64/lib \
+  '$REMOTE_RELEASE_DIR/bin/run_rppg_qnn.sh' \
+    --preflight-only \
+    --qnn-gpu-library /path/to/qairt/aarch64/lib/libQnnGpu.so \
+    --opencl-library /path/to/libOpenCL.so \
+    --output '$REMOTE_RELEASE_DIR/preflight'"
 
-v4l2-ctl --list-devices
-v4l2-ctl --device /dev/video0 --list-formats-ext
-ls -l /dev/video0
+ssh bench 'v4l2-ctl --list-devices'
+ssh bench 'v4l2-ctl --device /dev/video0 --list-formats-ext'
+ssh bench 'ls -l /dev/video0'
 ```
 
 安装包布局：

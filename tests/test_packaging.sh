@@ -38,12 +38,14 @@ expect_failure "${tmp_dir}/unknown.log" "${BUILD_SCRIPT}" unsupported
 grep -q 'expected native or aarch64' "${tmp_dir}/unknown.log" ||
   fail 'unknown build mode did not explain the accepted modes'
 
-expect_failure "${tmp_dir}/prefix.log" env -u AARCH64_TOOLCHAIN_PREFIX \
+expect_failure "${tmp_dir}/prefix.log" env -u AARCH64_CMAKE_TOOLCHAIN_FILE \
+  -u AARCH64_TOOLCHAIN_PREFIX \
   AARCH64_SYSROOT=/tmp/sysroot "${BUILD_SCRIPT}" aarch64
 grep -q 'AARCH64_TOOLCHAIN_PREFIX' "${tmp_dir}/prefix.log" ||
   fail 'aarch64 build did not require AARCH64_TOOLCHAIN_PREFIX'
 
-expect_failure "${tmp_dir}/sysroot.log" env -u AARCH64_SYSROOT \
+expect_failure "${tmp_dir}/sysroot.log" env -u AARCH64_CMAKE_TOOLCHAIN_FILE \
+  -u AARCH64_SYSROOT \
   AARCH64_TOOLCHAIN_PREFIX=aarch64-linux-gnu- "${BUILD_SCRIPT}" aarch64
 grep -q 'AARCH64_SYSROOT' "${tmp_dir}/sysroot.log" ||
   fail 'aarch64 build did not require AARCH64_SYSROOT'
@@ -112,6 +114,16 @@ set -euo pipefail
 if [[ -n ${RPPG_TEST_CMAKE_CALLED:-} ]]; then
   printf 'called\n' >>"${RPPG_TEST_CMAKE_CALLED}"
 fi
+if [[ -n ${RPPG_TEST_CMAKE_ARGS_LOG:-} ]]; then
+  {
+    printf 'BEGIN\n'
+    printf '<%s>\n' "$@"
+    printf 'END\n'
+  } >>"${RPPG_TEST_CMAKE_ARGS_LOG}"
+fi
+if [[ -n ${RPPG_TEST_CMAKE_ENV_LOG:-} ]]; then
+  printf 'CC=<%s>\nCXX=<%s>\n' "${CC-}" "${CXX-}" >>"${RPPG_TEST_CMAKE_ENV_LOG}"
+fi
 if [[ ${1:-} == --build ]]; then
   mkdir -p "$2"
   printf '#!/usr/bin/env bash\nexit 0\n' >"$2/rppg_qnn_live"
@@ -155,11 +167,13 @@ esac
 
 fake_build="${tmp_dir}/fake native build"
 staged_package="${tmp_dir}/stage with spaces/rppg package"
+native_cmake_log="${tmp_dir}/native-cmake.log"
 mkdir -p "${staged_package}/models" "${staged_package}/python"
 printf 'stale' >"${staged_package}/models/stale.pth"
 printf 'stale' >"${staged_package}/python/stale.py"
 RPPG_TEST_SOURCE_DIR="${SOURCE_DIR}" \
   RPPG_TEST_FILE_OUTPUT="${native_file_output}" \
+  RPPG_TEST_CMAKE_ARGS_LOG="${native_cmake_log}" \
   PATH="${fake_tools}:${PATH}" BUILD_DIR="${fake_build}" STAGE_DIR="${staged_package}" \
   "${BUILD_SCRIPT}" native
 [[ $(<"${fake_build}/.rppg-build-mode") == native ]] ||
@@ -171,6 +185,115 @@ actual_files=$(CDPATH= cd -- "${staged_package}" && find . -type f | LC_ALL=C so
 expected_files=$'./bin/rppg_qnn_live\n./bin/run_rppg_qnn.sh\n./share/rppg-qnn/README.md\n./share/rppg-qnn/config/runtime-defaults.env'
 [[ ${actual_files} == "${expected_files}" ]] ||
   fail 'staged install did not match the release file whitelist'
+if grep -Fqx '<--verbose>' "${native_cmake_log}"; then
+  fail 'default build unexpectedly enabled verbose output'
+fi
+
+for invalid_verbose in 2 yes; do
+  expect_exit_two "${tmp_dir}/verbose-${invalid_verbose}.log" env \
+    RPPG_BUILD_VERBOSE="${invalid_verbose}" RPPG_TEST_SOURCE_DIR="${SOURCE_DIR}" \
+    RPPG_TEST_FILE_OUTPUT="${native_file_output}" PATH="${fake_tools}:${PATH}" \
+    BUILD_DIR="${tmp_dir}/verbose-${invalid_verbose}-build" \
+    STAGE_DIR="${tmp_dir}/verbose-${invalid_verbose}-stage" \
+    "${BUILD_SCRIPT}" native
+  grep -q 'RPPG_BUILD_VERBOSE.*0 or 1' "${tmp_dir}/verbose-${invalid_verbose}.log" ||
+    fail 'invalid RPPG_BUILD_VERBOSE rejection was not explicit'
+done
+
+expect_exit_two "${tmp_dir}/relative-toolchain.log" env \
+  -u AARCH64_TOOLCHAIN_PREFIX -u AARCH64_SYSROOT \
+  AARCH64_CMAKE_TOOLCHAIN_FILE=relative/OEToolchainConfig.cmake \
+  RPPG_TEST_SOURCE_DIR="${SOURCE_DIR}" \
+  RPPG_TEST_FILE_OUTPUT='ELF 64-bit LSB pie executable, ARM aarch64' \
+  PATH="${fake_tools}:${PATH}" BUILD_DIR="${tmp_dir}/relative toolchain build" \
+  STAGE_DIR="${tmp_dir}/relative toolchain stage" "${BUILD_SCRIPT}" aarch64
+grep -q 'absolute' "${tmp_dir}/relative-toolchain.log" ||
+  fail 'relative external CMake toolchain rejection was not explicit'
+
+expect_exit_two "${tmp_dir}/missing-toolchain.log" env \
+  -u AARCH64_TOOLCHAIN_PREFIX -u AARCH64_SYSROOT \
+  AARCH64_CMAKE_TOOLCHAIN_FILE="${tmp_dir}/missing/OEToolchainConfig.cmake" \
+  RPPG_TEST_SOURCE_DIR="${SOURCE_DIR}" \
+  RPPG_TEST_FILE_OUTPUT='ELF 64-bit LSB pie executable, ARM aarch64' \
+  PATH="${fake_tools}:${PATH}" BUILD_DIR="${tmp_dir}/missing toolchain build" \
+  STAGE_DIR="${tmp_dir}/missing toolchain stage" "${BUILD_SCRIPT}" aarch64
+grep -q 'readable regular file' "${tmp_dir}/missing-toolchain.log" ||
+  fail 'missing external CMake toolchain rejection was not explicit'
+
+toolchain_directory="${tmp_dir}/toolchain-is-directory"
+mkdir -p "${toolchain_directory}"
+expect_exit_two "${tmp_dir}/directory-toolchain.log" env \
+  -u AARCH64_TOOLCHAIN_PREFIX -u AARCH64_SYSROOT \
+  AARCH64_CMAKE_TOOLCHAIN_FILE="${toolchain_directory}" \
+  RPPG_TEST_SOURCE_DIR="${SOURCE_DIR}" \
+  RPPG_TEST_FILE_OUTPUT='ELF 64-bit LSB pie executable, ARM aarch64' \
+  PATH="${fake_tools}:${PATH}" BUILD_DIR="${tmp_dir}/directory toolchain build" \
+  STAGE_DIR="${tmp_dir}/directory toolchain stage" "${BUILD_SCRIPT}" aarch64
+grep -q 'readable regular file' "${tmp_dir}/directory-toolchain.log" ||
+  fail 'directory external CMake toolchain rejection was not explicit'
+
+external_toolchain_dir="${tmp_dir}/Yocto SDK with spaces"
+external_toolchain="${external_toolchain_dir}/OEToolchainConfig.cmake"
+external_toolchain_symlink="${tmp_dir}/OEToolchainConfig link.cmake"
+external_build="${tmp_dir}/external toolchain build"
+external_stage="${tmp_dir}/external toolchain stage"
+external_cmake_log="${tmp_dir}/external-toolchain-cmake.log"
+external_cmake_env_log="${tmp_dir}/external-toolchain-cmake-env.log"
+mkdir -p "${external_toolchain_dir}"
+printf 'set(CMAKE_SYSTEM_NAME Linux)\n' >"${external_toolchain}"
+ln -s "${external_toolchain}" "${external_toolchain_symlink}"
+env -u AARCH64_TOOLCHAIN_PREFIX -u AARCH64_SYSROOT \
+  AARCH64_CMAKE_TOOLCHAIN_FILE="${external_toolchain_symlink}" \
+  RPPG_BUILD_VERBOSE=1 \
+  RPPG_TEST_CMAKE_ARGS_LOG="${external_cmake_log}" \
+  RPPG_TEST_CMAKE_ENV_LOG="${external_cmake_env_log}" \
+  RPPG_TEST_SOURCE_DIR="${SOURCE_DIR}" \
+  RPPG_TEST_FILE_OUTPUT='ELF 64-bit LSB pie executable, ARM aarch64' \
+  CC='aarch64-oe-linux-gcc -mcpu=cortex-a55 --sysroot=/SDK target sysroot' \
+  CXX='aarch64-oe-linux-g++ -mcpu=cortex-a55 --sysroot=/SDK target sysroot' \
+  PATH="${fake_tools}:${PATH}" BUILD_DIR="${external_build}" \
+  STAGE_DIR="${external_stage}" "${BUILD_SCRIPT}" aarch64
+grep -Fqx "<-DCMAKE_TOOLCHAIN_FILE=${external_toolchain_symlink}>" \
+  "${external_cmake_log}" ||
+  fail 'external CMake toolchain path was not passed as one exact argument'
+awk '
+  $0 == "BEGIN" { is_build = 0; is_verbose = 0 }
+  $0 == "<--build>" { is_build = 1 }
+  $0 == "<--verbose>" { is_verbose = 1 }
+  $0 == "END" {
+    if (is_verbose && !is_build) bad = 1
+    if (is_verbose && is_build) found = 1
+  }
+  END { exit !(found && !bad) }
+' "${external_cmake_log}" ||
+  fail 'only the CMake build command should receive --verbose'
+grep -Fqx 'CC=<aarch64-oe-linux-gcc -mcpu=cortex-a55 --sysroot=/SDK target sysroot>' \
+  "${external_cmake_env_log}" ||
+  fail 'compound SDK CC environment value was changed or split'
+grep -Fqx 'CXX=<aarch64-oe-linux-g++ -mcpu=cortex-a55 --sysroot=/SDK target sysroot>' \
+  "${external_cmake_env_log}" ||
+  fail 'compound SDK CXX environment value was changed or split'
+[[ -x "${external_stage}/bin/rppg_qnn_live" ]] ||
+  fail 'external CMake toolchain mode did not publish the AArch64 package'
+
+legacy_build="${tmp_dir}/legacy prefix build"
+legacy_stage="${tmp_dir}/legacy prefix stage"
+legacy_cmake_log="${tmp_dir}/legacy-prefix-cmake.log"
+env -u AARCH64_CMAKE_TOOLCHAIN_FILE \
+  AARCH64_TOOLCHAIN_PREFIX=aarch64-linux-gnu- AARCH64_SYSROOT=/tmp/sysroot \
+  RPPG_BUILD_VERBOSE=0 RPPG_TEST_CMAKE_ARGS_LOG="${legacy_cmake_log}" \
+  RPPG_TEST_SOURCE_DIR="${SOURCE_DIR}" \
+  RPPG_TEST_FILE_OUTPUT='ELF 64-bit LSB pie executable, ARM aarch64' \
+  PATH="${fake_tools}:${PATH}" BUILD_DIR="${legacy_build}" \
+  STAGE_DIR="${legacy_stage}" "${BUILD_SCRIPT}" aarch64
+grep -Fqx "<-DCMAKE_TOOLCHAIN_FILE=${SOURCE_DIR}/cmake/Toolchains/aarch64-linux.cmake>" \
+  "${legacy_cmake_log}" ||
+  fail 'legacy prefix/sysroot mode did not use the repository toolchain file'
+if grep -Fqx '<--verbose>' "${legacy_cmake_log}"; then
+  fail 'RPPG_BUILD_VERBOSE=0 unexpectedly enabled verbose build output'
+fi
+[[ -x "${legacy_stage}/bin/rppg_qnn_live" ]] ||
+  fail 'legacy prefix/sysroot mode did not publish the AArch64 package'
 
 outside_stage="${tmp_dir}/outside stage"
 mkdir -p "${outside_stage}"
@@ -195,7 +318,7 @@ expect_failure "${tmp_dir}/whitelist.log" env \
    ! -e "${rejected_stage}/unexpected.txt" ]] ||
   fail 'a rejected temporary package changed the previous staged package'
 
-expect_failure "${tmp_dir}/mode-mismatch.log" env \
+expect_failure "${tmp_dir}/mode-mismatch.log" env -u AARCH64_CMAKE_TOOLCHAIN_FILE \
   AARCH64_TOOLCHAIN_PREFIX=aarch64-linux-gnu- AARCH64_SYSROOT=/tmp/sysroot \
   RPPG_TEST_SOURCE_DIR="${SOURCE_DIR}" \
   RPPG_TEST_FILE_OUTPUT='ELF 64-bit LSB pie executable, ARM aarch64' \
@@ -222,7 +345,7 @@ expect_failure "${tmp_dir}/wrong-native-arch.log" env \
 grep -q 'architecture' "${tmp_dir}/wrong-native-arch.log" ||
   fail 'native build accepted an executable for the wrong architecture'
 
-expect_failure "${tmp_dir}/wrong-aarch64-arch.log" env \
+expect_failure "${tmp_dir}/wrong-aarch64-arch.log" env -u AARCH64_CMAKE_TOOLCHAIN_FILE \
   AARCH64_TOOLCHAIN_PREFIX=aarch64-linux-gnu- AARCH64_SYSROOT=/tmp/sysroot \
   RPPG_TEST_SOURCE_DIR="${SOURCE_DIR}" \
   RPPG_TEST_FILE_OUTPUT='ELF 64-bit LSB executable, x86-64' \

@@ -200,6 +200,11 @@ PYTHON_BIN="$(command -v python3.12)" \
   --manifest model_specs/efficientphys_pure.json
 ```
 
+These host-only commands are executable only from a source checkout. The
+installed four-file bench package includes this README as a boundary reference
+but does not include `tools/model_export/`, the setup script, Python, or the
+model artifacts.
+
 ## Recorded reference result and QNN risk
 
 The validated ONNX is 224043138 bytes with SHA256
@@ -213,10 +218,10 @@ Measured PyTorch/ORT parity is:
 
 The portable committed manifest is `model_specs/efficientphys_pure.json`, with
 SHA256 `cfa333bdcb8e88f22172bceaff452823b934476ab31c8eab48e7525f65f8ffdb`.
-Repeated ORT CPU validation on the reference Mac is approximately
-`0.18–0.24 s`, typically about `0.2 s`; the actual per-run value is available
-in the ignored validation report. Runtime timing is deliberately excluded from
-the deterministic manifest.
+ORT CPU validation on the reference Mac is on the order of hundreds of
+milliseconds, but timing is not a gate. The current per-run value is available
+in the ignored validation report and is deliberately excluded from the
+deterministic manifest.
 
 The graph contains exactly 12 `ScatterND` nodes and 215315552 bytes of Constant
 tensor payload against a pinned 216000000-byte gate. These are known QAIRT/QNN
@@ -321,7 +326,7 @@ These are implementation-equivalence gates, not heart-rate accuracy claims.
 
 ### Never
 
-- Modify the original `/Users/wangjie/Documents/keti/rPPG` repository.
+- Modify the separate original rPPG repository.
 - Commit model weights, personal camera frames, or licensed datasets.
 - Present synthetic/fake output as a physiological measurement.
 - Mark QNN conversion or Adreno inference successful without target evidence.
