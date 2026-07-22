@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 import dataclasses
 import hashlib
 import json
@@ -13,6 +14,7 @@ import onnx
 from onnx import TensorProto, helper
 import pytest
 import torch
+from torch.onnx._internal.torchscript_exporter import registration
 
 from tools.model_export import export_efficientphys as exporter
 
@@ -109,7 +111,9 @@ def test_export_makes_noncontiguous_frames_contiguous_and_uses_fixed_onnx_contra
     assert len(calls) == 1
     _model, tensor, destination, kwargs = calls[0]
     assert tensor.is_contiguous()
-    assert destination.name == "efficientphys_pure.onnx.tmp"
+    assert destination.name == "efficientphys_pure.onnx"
+    assert destination.parent.parent == tmp_path / "nested"
+    assert destination.parent.name.startswith(".efficientphys-export-")
     assert kwargs == {
         "input_names": ["frames"],
         "output_names": ["pulse"],
@@ -157,6 +161,54 @@ def test_real_legacy_export_registers_limited_diff_lowering_and_unregisters_it(
     assert [(item.domain, item.version) for item in model.opset_import] == [("", 17)]
 
 
+def test_export_refuses_preexisting_diff_override_without_altering_it(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(exporter, "load_official_model", lambda *_: _DiffModel())
+    export_called = False
+    sentinel_called = False
+    real_export = torch.onnx.export
+
+    def unexpected_export(*_args, **_kwargs):
+        nonlocal export_called
+        export_called = True
+        raise AssertionError("export must not run when aten::diff is already overridden")
+
+    def sentinel(graph, inputs, _n, _dim, _prepend, _append):
+        nonlocal sentinel_called
+        sentinel_called = True
+        return graph.op("Sub", inputs, inputs)
+
+    torch.onnx.register_custom_op_symbolic("aten::diff", sentinel, 17)
+    monkeypatch.setattr(torch.onnx, "export", unexpected_export)
+    try:
+        with pytest.raises(RuntimeError, match="pre-existing.*aten::diff"):
+            exporter.export_reference(
+                tmp_path, tmp_path / "checkpoint", _valid_frames(), tmp_path
+            )
+
+        group = registration.registry.get_function_group("aten::diff")
+        assert group is not None
+        assert group.get(17) is sentinel
+        assert not export_called
+
+        tiny_path = tmp_path / "sentinel.onnx"
+        real_export(
+            _DiffModel(),
+            torch.from_numpy(_valid_frames()),
+            tiny_path,
+            opset_version=17,
+            dynamo=False,
+        )
+        assert sentinel_called
+        onnx.checker.check_model(onnx.load(tiny_path))
+    finally:
+        torch.onnx.unregister_custom_op_symbolic("aten::diff", 17)
+
+    group = registration.registry.get_function_group("aten::diff")
+    assert group is None or group.get(17) is None
+
+
 @pytest.mark.parametrize(
     ("n", "dim", "prepend", "append", "message"),
     [
@@ -189,7 +241,7 @@ def test_pytorch_output_write_failure_leaves_no_partial_final_or_temp(
         exporter.export_reference(tmp_path, tmp_path / "checkpoint", _valid_frames(), tmp_path)
 
     assert not (tmp_path / "pytorch_pulse_float32.npy").exists()
-    assert not (tmp_path / "pytorch_pulse_float32.npy.tmp").exists()
+    assert not list(tmp_path.glob(".efficientphys-export-*"))
 
 
 def test_onnx_export_failure_cleans_temp_and_preserves_existing_final(
@@ -227,8 +279,7 @@ def test_onnx_export_failure_cleans_temp_and_preserves_existing_final(
     ]
     assert final_onnx.read_bytes() == b"known-good-onnx"
     assert final_output.read_bytes() == b"known-good-output"
-    assert not (tmp_path / "efficientphys_pure.onnx.tmp").exists()
-    assert not (tmp_path / "pytorch_pulse_float32.npy.tmp").exists()
+    assert not list(tmp_path.glob(".efficientphys-export-*"))
 
 
 def test_invalid_exported_onnx_cleans_temp_and_preserves_existing_final(
@@ -256,7 +307,7 @@ def test_invalid_exported_onnx_cleans_temp_and_preserves_existing_final(
         exporter.export_reference(tmp_path, tmp_path / "checkpoint", _valid_frames(), tmp_path)
 
     assert final.read_bytes() == b"known-good"
-    assert not (tmp_path / "efficientphys_pure.onnx.tmp").exists()
+    assert not list(tmp_path.glob(".efficientphys-export-*"))
 
 
 def test_export_rejects_custom_domain_nodes_and_opset_imports(tmp_path, monkeypatch):
@@ -285,8 +336,119 @@ def test_export_rejects_custom_domain_nodes_and_opset_imports(tmp_path, monkeypa
     with pytest.raises(ValueError, match="custom domain"):
         exporter.export_reference(tmp_path, tmp_path / "checkpoint", _valid_frames(), tmp_path)
 
-    assert not (tmp_path / "efficientphys_pure.onnx.tmp").exists()
-    assert not (tmp_path / "pytorch_pulse_float32.npy.tmp").exists()
+    assert not list(tmp_path.glob(".efficientphys-export-*"))
+
+
+@pytest.mark.parametrize("existing_finals", [False, True])
+def test_second_publication_replace_failure_rolls_back_both_finals(
+    tmp_path, monkeypatch, existing_finals
+):
+    _install_fake_export(monkeypatch)
+    final_onnx = tmp_path / "efficientphys_pure.onnx"
+    final_output = tmp_path / "pytorch_pulse_float32.npy"
+    if existing_finals:
+        final_onnx.write_bytes(b"old-onnx")
+        final_output.write_bytes(b"old-output")
+
+    real_replace = exporter.os.replace
+    publication_replaces = 0
+    failure_injected = False
+
+    def fail_second_publication(source, destination):
+        nonlocal publication_replaces, failure_injected
+        destination = Path(destination)
+        source = Path(source)
+        if (
+            destination in (final_onnx, final_output)
+            and source.parent.name.startswith(".efficientphys-export-")
+            and not source.name.startswith("backup-")
+        ):
+            publication_replaces += 1
+            if publication_replaces == 2 and not failure_injected:
+                failure_injected = True
+                raise OSError("injected second publication failure")
+        return real_replace(source, destination)
+
+    monkeypatch.setattr(exporter.os, "replace", fail_second_publication)
+
+    with pytest.raises(OSError, match="second publication failure"):
+        exporter.export_reference(
+            tmp_path, tmp_path / "checkpoint", _valid_frames(), tmp_path
+        )
+
+    if existing_finals:
+        assert final_onnx.read_bytes() == b"old-onnx"
+        assert final_output.read_bytes() == b"old-output"
+    else:
+        assert not final_onnx.exists()
+        assert not final_output.exists()
+    assert not list(tmp_path.glob(".efficientphys-export-*"))
+
+
+def test_concurrent_exports_use_unique_same_directory_staging_and_clean_it(
+    tmp_path, monkeypatch
+):
+    destinations = []
+    monkeypatch.setattr(exporter, "load_official_model", lambda *_: _FakeModel())
+
+    def fake_export(_model, _frames, destination, **_kwargs):
+        destinations.append(Path(destination))
+        _write_valid_onnx(Path(destination))
+
+    monkeypatch.setattr(torch.onnx, "export", fake_export)
+
+    def run_export():
+        return exporter.export_reference(
+            tmp_path, tmp_path / "checkpoint", _valid_frames(), tmp_path
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(executor.map(lambda _index: run_export(), range(2)))
+
+    assert len(set(destinations)) == 2
+    assert all(path.parent.parent == tmp_path for path in destinations)
+    assert all(path.parent.name.startswith(".efficientphys-export-")
+               for path in destinations)
+    assert all(result.onnx.is_file() and result.pytorch_output.is_file()
+               for result in results)
+    assert not list(tmp_path.glob(".efficientphys-export-*"))
+
+
+def test_export_rejects_onnx_above_constant_tensor_byte_limit(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(exporter, "load_official_model", lambda *_: _FakeModel())
+    monkeypatch.setattr(exporter, "MAX_CONSTANT_TENSOR_BYTES", 719)
+
+    def oversized_constant(_model, _frames, destination, **_kwargs):
+        tensor = helper.make_tensor(
+            "oversized",
+            TensorProto.FLOAT,
+            OUTPUT_SHAPE,
+            np.zeros(OUTPUT_SHAPE, dtype=np.float32).tobytes(),
+            raw=True,
+        )
+        graph = helper.make_graph(
+            [helper.make_node("Constant", [], ["pulse"], value=tensor)],
+            "oversized-constant",
+            [helper.make_tensor_value_info("frames", TensorProto.FLOAT, INPUT_SHAPE)],
+            [helper.make_tensor_value_info("pulse", TensorProto.FLOAT, OUTPUT_SHAPE)],
+        )
+        onnx.save(
+            helper.make_model(graph, opset_imports=[helper.make_opsetid("", 17)]),
+            destination,
+        )
+
+    monkeypatch.setattr(torch.onnx, "export", oversized_constant)
+
+    with pytest.raises(ValueError, match="constant tensor bytes.*720.*719"):
+        exporter.export_reference(
+            tmp_path, tmp_path / "checkpoint", _valid_frames(), tmp_path
+        )
+
+    assert not (tmp_path / "efficientphys_pure.onnx").exists()
+    assert not (tmp_path / "pytorch_pulse_float32.npy").exists()
+    assert not list(tmp_path.glob(".efficientphys-export-*"))
 
 
 def test_cli_failure_writes_atomic_failure_report_from_outside_repo(tmp_path):
@@ -379,6 +541,46 @@ def test_cli_exports_fixed_official_model_from_outside_repo(tmp_path):
         "exporter_mode": (
             "legacy_dynamo_false_with_explicit_aten_diff_slice_sub_lowering"
         ),
+        "qnn_conversion": "not_run",
+        "qnn_risk": (
+            "requires_qairt_validation_due_to_12_scatternd_nodes_and_"
+            "approximately_215mb_constants"
+        ),
+        "onnx_metrics": {
+            "constant_tensor_bytes": 215315552,
+            "constant_tensor_byte_limit": exporter.MAX_CONSTANT_TENSOR_BYTES,
+            "largest_constant_tensors": [
+                {
+                    "bytes": 119439360,
+                    "data_type": "FLOAT",
+                    "node_name": "/TSM_2/Constant_1",
+                    "shape": [18, 10, 32, 72, 72],
+                    "tensor_name": "",
+                },
+                {
+                    "bytes": 56448000,
+                    "data_type": "FLOAT",
+                    "node_name": "/TSM_4/Constant_1",
+                    "shape": [18, 10, 64, 35, 35],
+                    "tensor_name": "",
+                },
+                {
+                    "bytes": 28224000,
+                    "data_type": "FLOAT",
+                    "node_name": "/TSM_3/Constant_1",
+                    "shape": [18, 10, 32, 35, 35],
+                    "tensor_name": "",
+                },
+                {
+                    "bytes": 11197440,
+                    "data_type": "FLOAT",
+                    "node_name": "/TSM_1/Constant_1",
+                    "shape": [18, 10, 3, 72, 72],
+                    "tensor_name": "",
+                },
+            ],
+            "scatter_nd_nodes": 12,
+        },
     }
 
     model = onnx.load(onnx_path)
@@ -397,4 +599,6 @@ def test_cli_exports_fixed_official_model_from_outside_repo(tmp_path):
     assert output.shape == OUTPUT_SHAPE
     assert output.dtype == np.float32
     assert np.isfinite(output).all()
-    assert hashlib.sha256(output.tobytes()).hexdigest()
+    assert hashlib.sha256(output.tobytes()).hexdigest() == (
+        "5c7d6202e56f02d4727571afbae3048368566e6d8b549c5d55544408282f5a56"
+    )

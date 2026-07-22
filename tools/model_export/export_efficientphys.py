@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import sys
+import tempfile
 import threading
 from typing import Any
 
@@ -15,6 +16,7 @@ import numpy as np
 import onnx
 from onnx import TensorProto
 import torch
+from torch.onnx._internal.torchscript_exporter import registration
 from torch.onnx import symbolic_helper
 
 
@@ -31,6 +33,11 @@ PYTORCH_OUTPUT_FILENAME = "pytorch_pulse_float32.npy"
 REPORT_FILENAME = "export_report.json"
 EXPORTER_MODE = (
     "legacy_dynamo_false_with_explicit_aten_diff_slice_sub_lowering"
+)
+MAX_CONSTANT_TENSOR_BYTES = 216_000_000
+QNN_RISK = (
+    "requires_qairt_validation_due_to_12_scatternd_nodes_and_"
+    "approximately_215mb_constants"
 )
 _EXPORT_LOCK = threading.Lock()
 
@@ -64,13 +71,9 @@ def _validate_frames(frames: np.ndarray) -> np.ndarray:
     return contiguous
 
 
-def _save_numpy_temporary(temporary: Path, array: np.ndarray) -> None:
-    try:
-        with temporary.open("wb") as output:
-            np.save(output, array, allow_pickle=False)
-    except BaseException:
-        temporary.unlink(missing_ok=True)
-        raise
+def _save_numpy(temporary: Path, array: np.ndarray) -> None:
+    with temporary.open("wb") as output:
+        np.save(output, array, allow_pickle=False)
 
 
 @symbolic_helper.parse_args("v", "i", "i", "v", "v")
@@ -122,7 +125,50 @@ def _static_shape(value_info: onnx.ValueInfoProto) -> list[int]:
     return [dimension.dim_value for dimension in dimensions]
 
 
-def _validate_onnx(path: Path) -> None:
+def _tensor_payload_bytes(tensor: onnx.TensorProto) -> int:
+    return (
+        len(tensor.raw_data)
+        + 4 * len(tensor.float_data)
+        + 4 * len(tensor.int32_data)
+        + sum(len(value) for value in tensor.string_data)
+        + 8 * len(tensor.int64_data)
+        + 8 * len(tensor.double_data)
+        + 8 * len(tensor.uint64_data)
+    )
+
+
+def _collect_onnx_metrics(model: onnx.ModelProto) -> dict[str, Any]:
+    constants = []
+    for node in model.graph.node:
+        if node.op_type != "Constant":
+            continue
+        for attribute in node.attribute:
+            if attribute.type != onnx.AttributeProto.TENSOR:
+                continue
+            tensor = attribute.t
+            constants.append(
+                {
+                    "bytes": _tensor_payload_bytes(tensor),
+                    "data_type": TensorProto.DataType.Name(tensor.data_type),
+                    "node_name": node.name,
+                    "shape": list(tensor.dims),
+                    "tensor_name": tensor.name,
+                }
+            )
+    constants.sort(
+        key=lambda item: (-item["bytes"], item["node_name"], item["tensor_name"])
+    )
+    return {
+        "constant_tensor_bytes": sum(item["bytes"] for item in constants),
+        "constant_tensor_byte_limit": MAX_CONSTANT_TENSOR_BYTES,
+        "largest_constant_tensors": constants[:4],
+        "scatter_nd_nodes": sum(
+            node.op_type == "ScatterND" for node in model.graph.node
+        ),
+    }
+
+
+def _validate_onnx(path: Path) -> dict[str, Any]:
     model = onnx.load(path)
     onnx.checker.check_model(model)
 
@@ -168,6 +214,60 @@ def _validate_onnx(path: Path) -> None:
     if [(item.domain, item.version) for item in model.opset_import] != [("", 17)]:
         raise ValueError("ONNX graph must use exactly the default-domain opset 17")
 
+    metrics = _collect_onnx_metrics(model)
+    if metrics["constant_tensor_bytes"] > MAX_CONSTANT_TENSOR_BYTES:
+        raise ValueError(
+            "ONNX constant tensor bytes "
+            f"{metrics['constant_tensor_bytes']} exceed pinned limit "
+            f"{MAX_CONSTANT_TENSOR_BYTES}"
+        )
+    return metrics
+
+
+def _has_custom_diff_override() -> bool:
+    group = registration.registry.get_function_group("aten::diff")
+    if group is None:
+        return False
+    functions = group._functions
+    return functions.overridden(17)
+
+
+def _publish_pair(
+    staged_output: Path,
+    output_path: Path,
+    staged_onnx: Path,
+    onnx_path: Path,
+) -> None:
+    publications = (
+        (staged_output, output_path, staged_output.parent / "backup-pytorch-output"),
+        (staged_onnx, onnx_path, staged_output.parent / "backup-onnx"),
+    )
+    previous = []
+    for _staged, final, backup in publications:
+        existed = final.exists()
+        if existed:
+            os.link(final, backup)
+        previous.append((final, backup, existed))
+
+    try:
+        for staged, final, _backup in publications:
+            os.replace(staged, final)
+    except BaseException as publication_error:
+        rollback_errors = []
+        for final, backup, existed in previous:
+            try:
+                if existed:
+                    os.replace(backup, final)
+                else:
+                    final.unlink(missing_ok=True)
+            except BaseException as rollback_error:
+                rollback_errors.append(rollback_error)
+        if rollback_errors:
+            raise RuntimeError(
+                "failed to roll back paired EfficientPhys artifact publication"
+            ) from publication_error
+        raise
+
 
 def export_reference(
     toolbox: Path,
@@ -198,11 +298,20 @@ def export_reference(
 
     pytorch_output_path = artifact_dir / PYTORCH_OUTPUT_FILENAME
     onnx_path = artifact_dir / ONNX_FILENAME
-    temporary_output_path = artifact_dir / f"{PYTORCH_OUTPUT_FILENAME}.tmp"
-    temporary_onnx_path = artifact_dir / f"{ONNX_FILENAME}.tmp"
-    try:
-        _save_numpy_temporary(temporary_output_path, output)
-        with _EXPORT_LOCK:
+    with _EXPORT_LOCK:
+        if _has_custom_diff_override():
+            raise RuntimeError(
+                "refusing to replace a pre-existing custom aten::diff opset 17 "
+                "symbolic override"
+            )
+        with tempfile.TemporaryDirectory(
+            prefix=".efficientphys-export-",
+            dir=artifact_dir,
+        ) as staging_directory:
+            staging_directory_path = Path(staging_directory)
+            staged_output_path = staging_directory_path / PYTORCH_OUTPUT_FILENAME
+            staged_onnx_path = staging_directory_path / ONNX_FILENAME
+            _save_numpy(staged_output_path, output)
             registered = False
             try:
                 torch.onnx.register_custom_op_symbolic(
@@ -214,7 +323,7 @@ def export_reference(
                 torch.onnx.export(
                     model,
                     input_tensor,
-                    temporary_onnx_path,
+                    staged_onnx_path,
                     input_names=["frames"],
                     output_names=["pulse"],
                     opset_version=17,
@@ -224,13 +333,13 @@ def export_reference(
             finally:
                 if registered:
                     torch.onnx.unregister_custom_op_symbolic("aten::diff", 17)
-        _validate_onnx(temporary_onnx_path)
-        os.replace(temporary_output_path, pytorch_output_path)
-        os.replace(temporary_onnx_path, onnx_path)
-    except BaseException:
-        temporary_output_path.unlink(missing_ok=True)
-        temporary_onnx_path.unlink(missing_ok=True)
-        raise
+            _validate_onnx(staged_onnx_path)
+            _publish_pair(
+                staged_output_path,
+                pytorch_output_path,
+                staged_onnx_path,
+                onnx_path,
+            )
 
     return ExportPaths(onnx=onnx_path, pytorch_output=pytorch_output_path)
 
@@ -275,16 +384,22 @@ def main() -> int:
                 "passed": False,
                 "error": f"{type(error).__name__}: {error}",
                 "exporter_mode": EXPORTER_MODE,
+                "qnn_conversion": "not_run",
+                "qnn_risk": QNN_RISK,
             },
         )
         raise
 
+    onnx_metrics = _validate_onnx(paths.onnx)
     _atomic_write_report(
         report_path,
         {
             "schema_version": 1,
             "passed": True,
             "exporter_mode": EXPORTER_MODE,
+            "qnn_conversion": "not_run",
+            "qnn_risk": QNN_RISK,
+            "onnx_metrics": onnx_metrics,
         },
     )
     print(paths.onnx)
