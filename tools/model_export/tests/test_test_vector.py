@@ -21,6 +21,13 @@ def raw_sha256(array: np.ndarray) -> str:
     return hashlib.sha256(array.tobytes(order="C")).hexdigest()
 
 
+def snapshot_tree(root: Path) -> dict[Path, bytes | None]:
+    return {
+        path.relative_to(root): path.read_bytes() if path.is_file() else None
+        for path in root.rglob("*")
+    }
+
+
 def test_synthetic_source_and_tensor_are_bit_reproducible():
     generator = importlib.import_module("tools.model_export.generate_test_vector")
 
@@ -48,16 +55,33 @@ def test_cli_runs_outside_repo_and_writes_only_below_artifact_dir(tmp_path):
     outside_cwd.mkdir()
     artifact_dir = tmp_path / "nested" / "artifacts"
 
-    outside_source = tmp_path / "source_rgb_uint8.npy"
-    outside_frames = tmp_path / "frames_float32.npy"
-    outside_source.write_bytes(b"keep source")
-    outside_frames.write_bytes(b"keep frames")
+    cwd_source = outside_cwd / "source_rgb_uint8.npy"
+    cwd_frames = outside_cwd / "frames_float32.npy"
+    cwd_source.write_bytes(b"keep cwd source")
+    cwd_frames.write_bytes(b"keep cwd frames")
+    existing_dir = tmp_path / "existing"
+    existing_dir.mkdir()
+    (existing_dir / "unrelated.txt").write_bytes(b"keep unrelated file")
+    before = snapshot_tree(tmp_path)
 
     subprocess.run(
         [sys.executable, str(script), "--artifact-dir", str(artifact_dir)],
         cwd=outside_cwd,
         check=True,
     )
+
+    after = snapshot_tree(tmp_path)
+    assert set(before) <= set(after)
+    for path, contents in before.items():
+        assert after[path] == contents, f"existing path changed: {path}"
+    assert cwd_source.read_bytes() == b"keep cwd source"
+    assert cwd_frames.read_bytes() == b"keep cwd frames"
+    assert set(after) - set(before) == {
+        Path("nested"),
+        Path("nested/artifacts"),
+        Path("nested/artifacts/source_rgb_uint8.npy"),
+        Path("nested/artifacts/frames_float32.npy"),
+    }
 
     source = np.load(artifact_dir / "source_rgb_uint8.npy", allow_pickle=False)
     frames = np.load(artifact_dir / "frames_float32.npy", allow_pickle=False)
@@ -69,5 +93,3 @@ def test_cli_runs_outside_repo_and_writes_only_below_artifact_dir(tmp_path):
     assert frames.dtype == np.float32
     assert frames.flags.c_contiguous
     assert raw_sha256(frames) == EXPECTED_FRAMES_SHA256
-    assert outside_source.read_bytes() == b"keep source"
-    assert outside_frames.read_bytes() == b"keep frames"
