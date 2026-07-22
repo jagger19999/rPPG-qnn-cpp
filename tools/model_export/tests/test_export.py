@@ -546,6 +546,8 @@ def test_cli_exports_fixed_official_model_from_outside_repo(tmp_path):
             "requires_qairt_validation_due_to_12_scatternd_nodes_and_"
             "approximately_215mb_constants"
         ),
+        "onnx_sha256": hashlib.sha256(onnx_path.read_bytes()).hexdigest(),
+        "onnx_size_bytes": onnx_path.stat().st_size,
         "onnx_metrics": {
             "constant_tensor_bytes": 215315552,
             "constant_tensor_byte_limit": exporter.MAX_CONSTANT_TENSOR_BYTES,

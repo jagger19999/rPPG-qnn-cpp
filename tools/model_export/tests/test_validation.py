@@ -285,7 +285,8 @@ def _write_validation_fixture(tmp_path, monkeypatch, candidate=None):
     }
     for name, array in arrays.items():
         np.save(artifact_dir / name, array, allow_pickle=False)
-    (artifact_dir / "efficientphys_pure.onnx").write_bytes(b"onnx")
+    onnx_path = artifact_dir / "efficientphys_pure.onnx"
+    onnx_path.write_bytes(b"onnx")
     (artifact_dir / "export_report.json").write_text(
         json.dumps(
             {
@@ -294,6 +295,8 @@ def _write_validation_fixture(tmp_path, monkeypatch, candidate=None):
                 "exporter_mode": validator.EXPORTER_MODE,
                 "qnn_conversion": "not_run",
                 "qnn_risk": validator.QNN_RISK,
+                "onnx_sha256": validator.sha256_file(onnx_path),
+                "onnx_size_bytes": onnx_path.stat().st_size,
                 "onnx_metrics": {
                     "constant_tensor_byte_limit": 216000000,
                     "constant_tensor_bytes": 215315552,
@@ -310,6 +313,15 @@ def _write_validation_fixture(tmp_path, monkeypatch, candidate=None):
         validator,
         "EXPECTED_RAW_SHA256",
         {key: _raw_sha256(array) for key, array in arrays.items()},
+    )
+    monkeypatch.setattr(
+        validator,
+        "EXPECTED_OFFICIAL_SOURCE_SHA256",
+        {
+            key: validator.sha256_file(toolbox / relative)
+            for key, relative in official.items()
+        },
+        raising=False,
     )
     monkeypatch.setattr(
         validator,
@@ -401,6 +413,53 @@ def test_validate_rejects_raw_hash_mismatch_before_ort(tmp_path, monkeypatch):
         validator.validate_and_publish(
             toolbox, checkpoint, artifact_dir, tmp_path / "manifest"
         )
+
+
+def test_validate_rejects_modified_official_source_before_ort_and_preserves_manifest(
+    tmp_path, monkeypatch
+):
+    toolbox, checkpoint, artifact_dir = _write_validation_fixture(tmp_path, monkeypatch)
+    (toolbox / validator.OFFICIAL_SOURCE_FILES["model"]).write_text("modified")
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text("known-good")
+    monkeypatch.setattr(
+        validator,
+        "_run_onnx_with_metadata",
+        lambda *_args: pytest.fail("ORT must run after official source validation"),
+    )
+
+    with pytest.raises(ValueError, match="official model source SHA-256 mismatch"):
+        validator.validate_and_publish(toolbox, checkpoint, artifact_dir, manifest_path)
+
+    assert manifest_path.read_text() == "known-good"
+
+
+@pytest.mark.parametrize("tamper_report", [True, False])
+def test_validate_rejects_export_report_not_bound_to_current_onnx_before_ort(
+    tmp_path, monkeypatch, tamper_report
+):
+    toolbox, checkpoint, artifact_dir = _write_validation_fixture(tmp_path, monkeypatch)
+    if tamper_report:
+        report_path = artifact_dir / "export_report.json"
+        report = json.loads(report_path.read_text())
+        report["onnx_sha256"] = "0" * 64
+        report_path.write_text(json.dumps(report))
+        message = "export report ONNX SHA-256 mismatch"
+    else:
+        (artifact_dir / "efficientphys_pure.onnx").write_bytes(b"tampered-onnx")
+        message = "export report ONNX"
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text("known-good")
+    monkeypatch.setattr(
+        validator,
+        "_run_onnx_with_metadata",
+        lambda *_args: pytest.fail("ORT must run after report binding validation"),
+    )
+
+    with pytest.raises(ValueError, match=message):
+        validator.validate_and_publish(toolbox, checkpoint, artifact_dir, manifest_path)
+
+    assert manifest_path.read_text() == "known-good"
 
 
 def test_cli_failure_from_outside_repo_writes_report_without_changing_manifest(

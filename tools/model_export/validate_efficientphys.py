@@ -57,6 +57,11 @@ OFFICIAL_SOURCE_FILES = {
     "trainer": "neural_methods/trainer/EfficientPhysTrainer.py",
     "config": "configs/infer_configs/PURE_UBFC-rPPG_EFFICIENTPHYS.yaml",
 }
+EXPECTED_OFFICIAL_SOURCE_SHA256 = {
+    "model": "384b01b5c99d6d280b5ddb9e2358631f89747e40e3181b6a174e26d6e74798c9",
+    "trainer": "21336fa95a36524eb754710ae7837ba3fdc37e9b370c3be67456db3024e3c5e8",
+    "config": "579105d1799307b8e11b56d68b53f401f1f32ff59c65be6fd5f1fcafc6ece370",
+}
 THRESHOLDS = {
     "max_abs_error": 1e-4,
     "mean_abs_error": 1e-5,
@@ -303,7 +308,7 @@ def _artifact_entry(path: Path, array: np.ndarray) -> dict[str, Any]:
     }
 
 
-def _load_export_report(path: Path) -> dict[str, Any]:
+def _load_export_report(path: Path, onnx_path: Path) -> dict[str, Any]:
     with path.open(encoding="utf-8") as source:
         report = json.load(source)
     if report.get("schema_version") != 1 or report.get("passed") is not True:
@@ -312,6 +317,20 @@ def _load_export_report(path: Path) -> dict[str, Any]:
         raise ValueError("export report exporter_mode mismatch")
     if report.get("qnn_conversion") != "not_run" or report.get("qnn_risk") != QNN_RISK:
         raise ValueError("export report QNN status mismatch")
+    actual_onnx_sha256 = sha256_file(onnx_path)
+    if report.get("onnx_sha256") != actual_onnx_sha256:
+        raise ValueError(
+            "export report ONNX SHA-256 mismatch: "
+            f"expected current file {actual_onnx_sha256}, "
+            f"got {report.get('onnx_sha256')!r}"
+        )
+    actual_onnx_size = onnx_path.stat().st_size
+    if report.get("onnx_size_bytes") != actual_onnx_size:
+        raise ValueError(
+            "export report ONNX size mismatch: "
+            f"expected current file {actual_onnx_size}, "
+            f"got {report.get('onnx_size_bytes')!r}"
+        )
     metrics = report.get("onnx_metrics")
     if not isinstance(metrics, dict):
         raise ValueError("export report must contain onnx_metrics")
@@ -386,14 +405,21 @@ def validate_and_publish(
         )
     if not onnx_path.is_file():
         raise FileNotFoundError(f"ONNX file not found: {onnx_path.name}")
-    export_report = _load_export_report(export_report_path)
+    export_report = _load_export_report(export_report_path, onnx_path)
 
     official_sources = {}
     for name, relative in OFFICIAL_SOURCE_FILES.items():
         official_path = toolbox / relative
+        official_sha256 = sha256_file(official_path)
+        expected_sha256 = EXPECTED_OFFICIAL_SOURCE_SHA256[name]
+        if official_sha256 != expected_sha256:
+            raise ValueError(
+                f"official {name} source SHA-256 mismatch: "
+                f"expected {expected_sha256}, got {official_sha256}"
+            )
         official_sources[name] = {
             "file": relative,
-            "sha256": sha256_file(official_path),
+            "sha256": official_sha256,
         }
     toolbox_head = _toolbox_git_head(toolbox)
     if toolbox_head is not None:

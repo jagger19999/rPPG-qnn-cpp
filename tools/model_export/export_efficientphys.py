@@ -23,7 +23,7 @@ from torch.onnx import symbolic_helper
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from tools.model_export.efficientphys_reference import load_official_model
+from tools.model_export.efficientphys_reference import load_official_model, sha256_file
 
 
 MODEL_INPUT_SHAPE = (181, 3, 72, 72)
@@ -399,6 +399,8 @@ def main() -> int:
             "exporter_mode": EXPORTER_MODE,
             "qnn_conversion": "not_run",
             "qnn_risk": QNN_RISK,
+            "onnx_sha256": sha256_file(paths.onnx),
+            "onnx_size_bytes": paths.onnx.stat().st_size,
             "onnx_metrics": onnx_metrics,
         },
     )
