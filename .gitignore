@@ -9,3 +9,5 @@ outputs/
 *.so
 /.model-export-venv/
 /artifacts/model_export/
+__pycache__/
+*.py[cod]
