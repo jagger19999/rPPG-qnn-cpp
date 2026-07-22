@@ -18,33 +18,49 @@ EXPECTED_CHECKPOINT_SHA256 = (
 )
 
 
-def preprocess_frames(frames: np.ndarray) -> np.ndarray:
-    """Standardize an RGB frame window and append its final frame."""
-    if not isinstance(frames, np.ndarray):
+def prepare_model_input(source_rgb: np.ndarray) -> np.ndarray:
+    """Reproduce Toolbox preprocessing for one RGB source window."""
+    if not isinstance(source_rgb, np.ndarray):
         raise TypeError(
-            "frames must be a NumPy array with dtype uint8; "
-            f"got {type(frames).__name__}"
+            "source_rgb must be a NumPy array with dtype uint8; "
+            f"got {type(source_rgb).__name__}"
         )
-    if frames.dtype != np.uint8:
-        raise TypeError(f"frames dtype must be uint8; got {frames.dtype}")
-    if frames.shape != SOURCE_SHAPE:
+    if source_rgb.dtype != np.uint8:
+        raise TypeError(
+            f"source_rgb dtype must be uint8; got {source_rgb.dtype}"
+        )
+    if source_rgb.shape != SOURCE_SHAPE:
         raise ValueError(
-            f"frames shape must be {SOURCE_SHAPE}; got {frames.shape}"
+            f"source_rgb shape must be {SOURCE_SHAPE}; got {source_rgb.shape}"
         )
 
-    float_frames = frames.astype(np.float32)
-    standard_deviation = float_frames.std(ddof=0)
-    if standard_deviation == 0.0:
-        standardized = np.zeros_like(float_frames)
+    source_float64 = source_rgb.astype(np.float64)
+    mean = source_float64.mean()
+    standard_deviation = source_float64.std(ddof=0)
+    if (
+        standard_deviation == 0.0
+        or not np.isfinite(mean)
+        or not np.isfinite(standard_deviation)
+    ):
+        standardized = np.zeros_like(source_float64)
     else:
-        standardized = (
-            float_frames - float_frames.mean()
-        ) / standard_deviation
+        standardized = (source_float64 - mean) / standard_deviation
+        standardized[~np.isfinite(standardized)] = 0.0
 
-    output = np.empty(MODEL_INPUT_SHAPE, dtype=np.float32)
-    output[: SOURCE_SHAPE[0]] = np.transpose(standardized, (0, 3, 1, 2))
-    output[SOURCE_SHAPE[0]] = output[SOURCE_SHAPE[0] - 1]
-    return output
+    source_tchw = np.transpose(
+        standardized.astype(np.float32), (0, 3, 1, 2)
+    )
+    model_input = np.concatenate((source_tchw, source_tchw[-1:]), axis=0)
+    model_input = np.ascontiguousarray(model_input)
+
+    if model_input.shape != MODEL_INPUT_SHAPE:
+        raise RuntimeError(
+            "prepared model input shape must be "
+            f"{MODEL_INPUT_SHAPE}; got {model_input.shape}"
+        )
+    if not np.isfinite(model_input).all():
+        raise RuntimeError("prepared model input must contain only finite values")
+    return model_input
 
 
 def sha256_file(path: str | PathLike[str]) -> str:

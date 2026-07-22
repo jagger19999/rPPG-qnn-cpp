@@ -1,7 +1,16 @@
-import importlib
-
 import numpy as np
 import pytest
+
+from tools.model_export.efficientphys_reference import (
+    EXPECTED_CHECKPOINT_SHA256 as ACTUAL_CHECKPOINT_SHA256,
+    FRAME_DEPTH,
+    FRAME_RATE,
+    MODEL_INPUT_SHAPE,
+    MODEL_OUTPUT_SHAPE,
+    SOURCE_SHAPE,
+    prepare_model_input,
+    sha256_file,
+)
 
 
 EXPECTED_SOURCE_SHAPE = (180, 72, 72, 3)
@@ -12,47 +21,63 @@ EXPECTED_CHECKPOINT_SHA256 = (
 )
 
 
-def _reference_module():
-    return importlib.import_module("tools.model_export.efficientphys_reference")
+def _toolbox_expected_first_180(source_rgb):
+    source_float64 = source_rgb.astype(np.float64)
+    standard_deviation = source_float64.std(ddof=0)
+    if standard_deviation == 0.0 or not np.isfinite(standard_deviation):
+        standardized = np.zeros_like(source_float64)
+    else:
+        standardized = (
+            source_float64 - source_float64.mean()
+        ) / standard_deviation
+        standardized[~np.isfinite(standardized)] = 0.0
+    return np.transpose(standardized.astype(np.float32), (0, 3, 1, 2))
 
 
 def test_export_contract_constants():
-    reference = _reference_module()
-
-    assert reference.SOURCE_SHAPE == EXPECTED_SOURCE_SHAPE
-    assert reference.MODEL_INPUT_SHAPE == EXPECTED_MODEL_INPUT_SHAPE
-    assert reference.MODEL_OUTPUT_SHAPE == EXPECTED_MODEL_OUTPUT_SHAPE
-    assert reference.FRAME_RATE == 30.0
-    assert reference.FRAME_DEPTH == 10
-    assert reference.EXPECTED_CHECKPOINT_SHA256 == EXPECTED_CHECKPOINT_SHA256
+    assert SOURCE_SHAPE == EXPECTED_SOURCE_SHAPE
+    assert MODEL_INPUT_SHAPE == EXPECTED_MODEL_INPUT_SHAPE
+    assert MODEL_OUTPUT_SHAPE == EXPECTED_MODEL_OUTPUT_SHAPE
+    assert FRAME_RATE == 30.0
+    assert FRAME_DEPTH == 10
+    assert ACTUAL_CHECKPOINT_SHA256 == EXPECTED_CHECKPOINT_SHA256
 
 
-def test_preprocess_frames_standardizes_globally_transposes_and_duplicates_last_frame():
-    reference = _reference_module()
+def test_prepare_model_input_standardizes_globally_transposes_and_duplicates_last_frame():
     values = np.arange(np.prod(EXPECTED_SOURCE_SHAPE), dtype=np.uint32)
     frames = (values % 256).astype(np.uint8).reshape(EXPECTED_SOURCE_SHAPE)
 
-    float_frames = frames.astype(np.float32)
-    expected_thwc = (float_frames - float_frames.mean()) / float_frames.std(ddof=0)
-    expected_first_180 = np.transpose(expected_thwc, (0, 3, 1, 2))
+    expected_first_180 = _toolbox_expected_first_180(frames)
 
-    actual = reference.preprocess_frames(frames)
+    actual = prepare_model_input(frames)
 
     assert actual.shape == EXPECTED_MODEL_INPUT_SHAPE
     assert actual.dtype == np.float32
     assert actual.flags.c_contiguous
     assert np.isfinite(actual).all()
-    np.testing.assert_allclose(actual[:180], expected_first_180, rtol=1e-6, atol=1e-6)
+    np.testing.assert_allclose(actual[:180], expected_first_180, rtol=0, atol=1e-6)
     np.testing.assert_array_equal(actual[180], actual[179])
     assert float(actual[:180].mean()) == pytest.approx(0.0, abs=1e-6)
     assert float(actual[:180].std(ddof=0)) == pytest.approx(1.0, abs=1e-6)
 
 
-def test_preprocess_frames_returns_finite_zeros_for_zero_variance_input():
-    reference = _reference_module()
+def test_prepare_model_input_matches_float64_toolbox_oracle_for_pathological_distribution():
+    frames = np.zeros(EXPECTED_SOURCE_SHAPE, dtype=np.uint8)
+    frames.reshape(-1)[:3] = 255
+    expected_first_180 = _toolbox_expected_first_180(frames)
+
+    actual = prepare_model_input(frames)
+
+    maximum_absolute_error = float(
+        np.max(np.abs(actual[:180] - expected_first_180))
+    )
+    assert maximum_absolute_error <= 1e-6
+
+
+def test_prepare_model_input_returns_finite_zeros_for_zero_variance_input():
     frames = np.full(EXPECTED_SOURCE_SHAPE, 37, dtype=np.uint8)
 
-    actual = reference.preprocess_frames(frames)
+    actual = prepare_model_input(frames)
 
     assert actual.shape == EXPECTED_MODEL_INPUT_SHAPE
     assert actual.dtype == np.float32
@@ -69,12 +94,11 @@ def test_preprocess_frames_returns_finite_zeros_for_zero_variance_input():
         (180, 72, 72, 1),
     ],
 )
-def test_preprocess_frames_rejects_incorrect_shape(actual_shape):
-    reference = _reference_module()
+def test_prepare_model_input_rejects_incorrect_shape(actual_shape):
     frames = np.zeros(actual_shape, dtype=np.uint8)
 
     with pytest.raises(ValueError) as error:
-        reference.preprocess_frames(frames)
+        prepare_model_input(frames)
 
     message = str(error.value)
     assert "shape" in message.lower()
@@ -82,12 +106,11 @@ def test_preprocess_frames_rejects_incorrect_shape(actual_shape):
     assert str(EXPECTED_SOURCE_SHAPE) in message
 
 
-def test_preprocess_frames_rejects_non_uint8_dtype():
-    reference = _reference_module()
+def test_prepare_model_input_rejects_non_uint8_dtype():
     frames = np.zeros(EXPECTED_SOURCE_SHAPE, dtype=np.float32)
 
     with pytest.raises(TypeError) as error:
-        reference.preprocess_frames(frames)
+        prepare_model_input(frames)
 
     message = str(error.value)
     assert "dtype" in message.lower()
@@ -96,11 +119,10 @@ def test_preprocess_frames_rejects_non_uint8_dtype():
 
 
 def test_sha256_file_returns_lowercase_hex_digest_for_small_file(tmp_path):
-    reference = _reference_module()
     source = tmp_path / "small.bin"
     source.write_bytes(b"abc")
 
-    digest = reference.sha256_file(source)
+    digest = sha256_file(source)
 
     assert digest == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
     assert digest == digest.lower()
