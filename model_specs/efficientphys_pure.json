@@ -1,0 +1,211 @@
+{
+  "artifacts": {
+    "frames": {
+      "dtype": "float32",
+      "file": "frames_float32.npy",
+      "raw_sha256": "b685ed04d5b6a96bbdd2f97fed6cc04a8a2eb35c38b7ebc820eb1a37af2d2f40",
+      "sha256": "e8dae1a86fbbd4f2a581b3b13db802bf398bbc15edac8b08a8ac6848ef717088",
+      "shape": [
+        181,
+        3,
+        72,
+        72
+      ],
+      "size_bytes": 11259776
+    },
+    "onnx_output": {
+      "dtype": "float32",
+      "file": "onnx_pulse_float32.npy",
+      "raw_sha256": "dbfd1fd7d0c8b3f8de8c5ee8aca566ea3ccd7a3a8ca03e946cf0a50491feffd7",
+      "sha256": "6af553a4eef77265557cb83783a2ceadc84a648a52de1fb25efc7456403f8235",
+      "shape": [
+        180,
+        1
+      ],
+      "size_bytes": 848
+    },
+    "pytorch_output": {
+      "dtype": "float32",
+      "file": "pytorch_pulse_float32.npy",
+      "raw_sha256": "5c7d6202e56f02d4727571afbae3048368566e6d8b549c5d55544408282f5a56",
+      "sha256": "130284d5771daba2136541a890f94ea7f9c6eb6c02e52fc96d666ca4ebe863f3",
+      "shape": [
+        180,
+        1
+      ],
+      "size_bytes": 848
+    },
+    "source": {
+      "dtype": "uint8",
+      "file": "source_rgb_uint8.npy",
+      "raw_sha256": "dca274b1e509762f17a2dff152fa0fc3fa87c0c6f2726db284792d3494350b46",
+      "sha256": "73810dc9b7c163e1e5bcef7914ab6b49a420a7203c291108c33c41ac7229622b",
+      "shape": [
+        180,
+        72,
+        72,
+        3
+      ],
+      "size_bytes": 2799488
+    }
+  },
+  "checkpoint": {
+    "filename": "PURE_EfficientPhys.pth",
+    "sha256": "e65a962e07bcac32a668e6acb9f8ed43cdb1b01cfb97262654dc5b55c0cf3a49"
+  },
+  "environment": {
+    "packages": {
+      "numpy": "2.5.1",
+      "onnx": "1.22.0",
+      "onnxruntime": "1.27.0",
+      "torch": "2.12.1"
+    },
+    "platform": "macOS-26.5.2-arm64-arm-64bit",
+    "python": "3.12.13"
+  },
+  "exporter_mode": "legacy_dynamo_false_with_explicit_aten_diff_slice_sub_lowering",
+  "interface": {
+    "frame_depth": 10,
+    "input": {
+      "dtype": "float32",
+      "layout": "TCHW",
+      "name": "frames",
+      "shape": [
+        181,
+        3,
+        72,
+        72
+      ]
+    },
+    "output": {
+      "dtype": "float32",
+      "name": "pulse",
+      "shape": [
+        180,
+        1
+      ]
+    }
+  },
+  "model_name": "EfficientPhys",
+  "official_sources": {
+    "config": {
+      "file": "configs/infer_configs/PURE_UBFC-rPPG_EFFICIENTPHYS.yaml",
+      "sha256": "579105d1799307b8e11b56d68b53f401f1f32ff59c65be6fd5f1fcafc6ece370"
+    },
+    "model": {
+      "file": "neural_methods/model/EfficientPhys.py",
+      "sha256": "384b01b5c99d6d280b5ddb9e2358631f89747e40e3181b6a174e26d6e74798c9"
+    },
+    "trainer": {
+      "file": "neural_methods/trainer/EfficientPhysTrainer.py",
+      "sha256": "21336fa95a36524eb754710ae7837ba3fdc37e9b370c3be67456db3024e3c5e8"
+    }
+  },
+  "onnx": {
+    "file": "efficientphys_pure.onnx",
+    "opset": 17,
+    "sha256": "c1b321042db1335da70b0295cc84f653a2cfe90f75cff738b3045ea3c103257d",
+    "size_bytes": 224043138
+  },
+  "onnx_metrics": {
+    "constant_tensor_byte_limit": 216000000,
+    "constant_tensor_bytes": 215315552,
+    "largest_constant_tensors": [
+      {
+        "bytes": 119439360,
+        "data_type": "FLOAT",
+        "node_name": "/TSM_2/Constant_1",
+        "shape": [
+          18,
+          10,
+          32,
+          72,
+          72
+        ],
+        "tensor_name": ""
+      },
+      {
+        "bytes": 56448000,
+        "data_type": "FLOAT",
+        "node_name": "/TSM_4/Constant_1",
+        "shape": [
+          18,
+          10,
+          64,
+          35,
+          35
+        ],
+        "tensor_name": ""
+      },
+      {
+        "bytes": 28224000,
+        "data_type": "FLOAT",
+        "node_name": "/TSM_3/Constant_1",
+        "shape": [
+          18,
+          10,
+          32,
+          35,
+          35
+        ],
+        "tensor_name": ""
+      },
+      {
+        "bytes": 11197440,
+        "data_type": "FLOAT",
+        "node_name": "/TSM_1/Constant_1",
+        "shape": [
+          18,
+          10,
+          3,
+          72,
+          72
+        ],
+        "tensor_name": ""
+      }
+    ],
+    "scatter_nd_nodes": 12
+  },
+  "preprocessing": {
+    "append_last_frame": true,
+    "color_order": "RGB",
+    "frame_rate": 30.0,
+    "source_dtype": "uint8",
+    "source_layout": "THWC",
+    "source_shape": [
+      180,
+      72,
+      72,
+      3
+    ],
+    "standardization": "one population mean/std over complete source window"
+  },
+  "qnn_conversion": "not_run",
+  "qnn_risk": "requires_qairt_validation_due_to_12_scatternd_nodes_and_approximately_215mb_constants",
+  "runtime": {
+    "inference_seconds": 0.23742829100228846,
+    "providers": [
+      "CPUExecutionProvider"
+    ],
+    "requested_provider": "CPUExecutionProvider"
+  },
+  "schema_version": 1,
+  "seed": 20260722,
+  "test_vector": {
+    "algorithm_version": 1,
+    "seed": 20260722
+  },
+  "validation": {
+    "bpm_error": 0.0,
+    "max_abs_error": 1.3530254364013672e-05,
+    "mean_abs_error": 1.1705689960055881e-06,
+    "passed": true,
+    "pearson": 0.9999999999936849,
+    "thresholds": {
+      "bpm_error": 0.1,
+      "max_abs_error": 0.0001,
+      "mean_abs_error": 1e-05,
+      "pearson": 0.99999
+    }
+  }
+}
