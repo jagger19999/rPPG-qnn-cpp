@@ -18,7 +18,13 @@ if ! java_version=$("$JAVA_HOME/bin/java" -version 2>&1); then
   die 'JAVA_HOME must point to JDK 17'
 fi
 java_version=${java_version%%$'\n'*}
-if [[ "$java_version" != *'version "17.'* ]]; then
+if [[ "$java_version" =~ version[[:space:]]+\"([^\"]+)\" ]]; then
+  java_version=${BASH_REMATCH[1]}
+else
+  die 'JAVA_HOME must point to JDK 17'
+fi
+java_major=${java_version%%.*}
+if [[ "$java_major" != 17 ]]; then
   die 'JAVA_HOME must point to JDK 17'
 fi
 
