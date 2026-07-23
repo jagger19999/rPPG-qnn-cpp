@@ -28,11 +28,22 @@ git status --short --branch
 
 ```bash
 cd android
-gradle wrapper --gradle-version 9.1.0 --distribution-type bin
+gradle wrapper --gradle-version 9.1.0 --distribution-type bin \
+  --gradle-distribution-sha256-sum a17ddd85a26b6a7f5ddb71ff8b05fc5104c0202c6e64782429790c933686c806
 cd ..
+
+grep -Fx \
+  'distributionSha256Sum=a17ddd85a26b6a7f5ddb71ff8b05fc5104c0202c6e64782429790c933686c806' \
+  android/gradle/wrapper/gradle-wrapper.properties >/dev/null
+
+WRAPPER_JAR_SHA256="$(shasum -a 256 android/gradle/wrapper/gradle-wrapper.jar | awk '{print $1}')"
+test "$WRAPPER_JAR_SHA256" = \
+  '76805e32c009c0cf0dd5d206bddc9fb22ea42e84db904b764f3047de095493f3'
 ```
 
-先审阅 `gradlew`、`gradlew.bat` 和 `gradle/wrapper/` 内容、distribution URL 及 checksum 策略，再单独提交 wrapper；不要未审即提交。`scripts/build_android.sh` 当前按 JDK 17 → SDK root → 精确 NDK → wrapper 的顺序 fail-fast，因此前三个门禁通过后，会在缺少 `android/gradlew` 处停止。
+Gradle 9.1.0 的 `-bin` ZIP SHA256 必须是 `a17ddd85a26b6a7f5ddb71ff8b05fc5104c0202c6e64782429790c933686c806`，wrapper JAR SHA256 必须是 `76805e32c009c0cf0dd5d206bddc9fb22ea42e84db904b764f3047de095493f3`；两者均来自 [Gradle 官方 checksum 参考](https://gradle.org/release-checksums/)。官方 Gradle Wrapper 文档分别定义了[下载 distribution 的 SHA256 验证](https://docs.gradle.org/current/userguide/gradle_wrapper.html#verification-of-downloaded-gradle-distributions)和[wrapper JAR 完整性校验](https://docs.gradle.org/current/userguide/gradle_wrapper.html#verifying-the-integrity-of-the-gradle-wrapper-jar)方式。
+
+在任何 `./gradlew` 或 `scripts/build_android.sh` 执行前，上述 `grep -Fx` 必须确认 properties 中存在完全一致的 `distributionSha256Sum=...`，`test` 必须确认 wrapper JAR hash 完全一致。任一校验失败就停止，不执行 wrapper。然后审阅 `gradlew`、`gradlew.bat`、`gradle/wrapper/` 和 distribution URL，再单独提交 wrapper；不要未审即提交。`scripts/build_android.sh` 当前按 JDK 17 → SDK root → 精确 NDK → wrapper 的顺序 fail-fast，因此前三个门禁通过后，会在缺少 `android/gradlew` 处停止。
 
 ## 3. 台架证据采集
 
@@ -46,7 +57,30 @@ adb shell getprop ro.hardware
 adb shell pm list features | grep -i camera
 adb shell dumpsys media.camera > media-camera.txt
 adb shell ls -l /vendor/lib64/libQnnGpu.so /vendor/lib64/libQnnSystem.so
-adb shell readelf -h /vendor/lib64/libQnnGpu.so
+
+mkdir -p qnn-device-evidence
+collect_qnn_device_evidence() {
+  if ! adb pull /vendor/lib64/libQnnGpu.so qnn-device-evidence/libQnnGpu.so \
+    > qnn-device-evidence/libQnnGpu.pull.stdout.txt \
+    2> qnn-device-evidence/libQnnGpu.pull.stderr.txt; then
+    printf '%s\n' 'adb pull failed for /vendor/lib64/libQnnGpu.so' \
+      | tee -a qnn-device-evidence/libQnnGpu.pull.stderr.txt >&2
+    return 1
+  fi
+
+  local llvm_readelf
+  llvm_readelf="$(find "$ANDROID_SDK_ROOT/ndk/28.2.13676358/toolchains/llvm/prebuilt" \
+    -type f -path '*/bin/llvm-readelf' -print -quit)"
+  if test -z "$llvm_readelf" || ! test -x "$llvm_readelf"; then
+    printf '%s\n' 'executable llvm-readelf not found in Android NDK 28.2.13676358' >&2
+    return 1
+  fi
+
+  "$llvm_readelf" -h -d qnn-device-evidence/libQnnGpu.so \
+    > qnn-device-evidence/libQnnGpu.readelf.txt
+}
+collect_qnn_device_evidence
+unset -f collect_qnn_device_evidence
 ```
 
 同时收集并写入台架记录：
@@ -57,7 +91,7 @@ adb shell readelf -h /vendor/lib64/libQnnGpu.so
 - 部署身份是普通 APK、privileged APK、system APK 还是 vendor 组件；
 - 目标摄像头是否能通过 Camera2 枚举。
 
-`/vendor/lib64` 只是常见示例，供应商路径可能不同。该路径缺少时，应从台架映像、供应商 QAIRT 包和对应 Android sample 定位真实库；绝不把 Yocto/Linux QNN `.so` 复制进 APK。还要核对库的 AArch64 ELF 身份、依赖、许可和 Android linker namespace 可见性。
+`/vendor/lib64` 只是常见示例，供应商路径可能不同。如果路径不存在或 `adb pull` 被拒绝，保留 `ls`/拉取失败记录，然后在供应商镜像或对应 QAIRT 包中定位可审计的库副本。绝不把未验证的 vendor 库，或 Yocto/Linux QNN `.so`，复制进 APK。还要核对库的 AArch64 ELF 身份、依赖、许可和 Android linker namespace 可见性。
 
 ## 4. 配置后构建、安装与 JNI 身份冒烟
 
@@ -83,7 +117,9 @@ platform=android;abi=arm64-v8a;camera=not_compiled;deep=disabled;qnn_ready=false
 adb logcat -c
 adb shell am force-stop com.jagger.rppgbench
 adb shell am start -n com.jagger.rppgbench/.MainActivity
-adb logcat -d > rppg-android-foundation-logcat.txt
+APP_PID="$(adb shell pidof -s com.jagger.rppgbench | tr -d '\r')"
+test -n "$APP_PID"
+adb logcat -d --pid="$APP_PID" > rppg-android-foundation-logcat.txt
 ```
 
 这个屏幕只证明 Activity 可进入且 JNI 返回了预期 build identity，不证明 camera、rPPG、QNN 或 Adreno。构建脚本成功时会打印上面的精确 debug APK 路径；路径中没有该文件就不得执行成功声明。
