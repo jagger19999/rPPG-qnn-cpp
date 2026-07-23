@@ -1,8 +1,32 @@
-# rPPG QAIRT/QNN C++ 台架运行工程
+# rPPG QAIRT/QNN C++ 工程（Android APK/NDK 为主线）
 
-这是面向 Linux AArch64、Qualcomm Adreno GPU 和 QAIRT/QNN 的独立 C++17 工程。它从 V4L2 摄像头或视频文件采集画面，运行传统 GREEN、POS 或 CHROM rPPG，并把终端状态、JSONL 事件和 CSV 心率窗口保存到本地。
+这是面向 Qualcomm Android 台架、Adreno GPU 和 QAIRT/QNN 的独立 C++17 工程。当前主要目标方向是 Android APK/NDK；现有 Linux/V4L2 CLI 仍受支持、可构建，并作为已验证的参考路径保留。Linux CLI 从 V4L2 摄像头或视频文件采集画面，运行传统 GREEN、POS 或 CHROM rPPG，并把终端状态、JSONL 事件和 CSV 心率窗口保存到本地。
 
 本项目只用于研究和工程验证，不是医疗器械，输出不得用于诊断、治疗、车辆安全闭环或其他高风险决策。
+
+## Android 主线的当前基础
+
+仓库当前只完成 Android 基础交接面：Gradle 源码脚手架、单一 `arm64-v8a` ABI、AGP 9.0.1、NDK 28.2.13676358、最小 Java Activity 与 JNI build identity、pipeline 协作式停止接缝，以及构建环境 fail-fast 预检。
+
+这个基础**尚未**请求或打开摄像头，未把完整 rPPG pipeline 链接进 APK，未包含 OpenCV Android，未在 APK 内运行 POS/CHROM，未转换或加载 QNN 模型，也未证明 Adreno 执行。`--deep fake` 始终只是 host 调度测试，绝不是 Android 结果。
+
+设计边界、基础实施计划和公司机后续交接分别见：
+
+- [Android NDK rPPG Runtime Design](docs/superpowers/specs/2026-07-23-android-ndk-rppg-runtime-design.md)
+- [Android NDK Foundation Plan](docs/superpowers/plans/2026-07-23-android-ndk-foundation.md)
+- [Android Company-machine Next Steps](ANDROID_NEXT_STEPS.md)
+
+当前 Mac 上的 host Release 构建、全部测试与 Linux 四文件 stage 可用唯一目录执行：
+
+```bash
+BUILD_ID="$(date -u +%Y%m%dT%H%M%SZ)-$$"
+CMAKE_PREFIX_PATH=/opt/homebrew/opt/opencv@4 \
+  BUILD_DIR="build-linux-native-$BUILD_ID" \
+  STAGE_DIR="stage/rppg-qnn-native-$BUILD_ID" \
+  ./scripts/build_linux.sh native
+```
+
+Android 入口是 `./scripts/build_android.sh`。它依次检查 JDK 17、Android SDK、精确 NDK 28.2.13676358 和可执行 Gradle wrapper，任一前置不满足即停止；当前 Mac 会首先停在 `JAVA_HOME must point to JDK 17`，因此不能声称已构建 APK。公司机完整操作和未解决门禁见 `ANDROID_NEXT_STEPS.md`。
 
 准备进入 Yocto/OpenEmbedded AArch64 高通台架时，请按源码 checkout 根目录中的
 `BENCH_NEXT_STEPS.md` 阶段门禁执行。该文档从 SDK/动态库冻结、交叉编译和 V4L2
@@ -14,7 +38,7 @@ commit 的源码取得它。
 
 本仓库 `rPPG-qnn-cpp` 与 Python/Streamlit 仓库 `rPPG` 分离，拥有独立的 Git 历史、CMake 构建和发布目录。台架包不包含 Python、PyTorch、Streamlit、rPPG-Toolbox 或模型权重，也不会修改原仓库。
 
-当前已完成：V4L2/视频输入、人脸 ROI、GREEN/POS/CHROM 三种可选传统算法、异步深度窗口接线、结果落盘、QNN/OpenCL 动态库预检，以及 Mac 开发机上的 EfficientPhys 静态 ONNX 参考导出和数值校验。POS/CHROM 的 30 FPS C++ BVP 已用固定 RGB 输入与 Python `traditional.py` 参考值对齐。QAIRT/QNN 模型转换、QNN context 和真实推理适配尚未接入，因此正式运行仍必须使用 `--deep disabled`。`--deep fake` 只是开发期调度测试，不能当作深度学习结果。
+现有 Linux 参考路径已完成：V4L2/视频输入、人脸 ROI、GREEN/POS/CHROM 三种可选传统算法、异步深度窗口接线、结果落盘、QNN/OpenCL 动态库预检，以及 Mac 开发机上的 EfficientPhys 静态 ONNX 参考导出和数值校验。POS/CHROM 的 30 FPS C++ BVP 已用固定 RGB 输入与 Python `traditional.py` 参考值对齐。QAIRT/QNN 模型转换、QNN context 和真实推理适配尚未接入，因此正式运行仍必须使用 `--deep disabled`。`--deep fake` 只是开发期调度测试，不能当作深度学习结果。
 
 ## Mac 离线 EfficientPhys ONNX 参考（仅开发机）
 
@@ -322,6 +346,6 @@ sudo mv -Tf /opt/rppg-qnn/current.new /opt/rppg-qnn/current
 
 服务或人工命令始终调用 `/opt/rppg-qnn/current/bin/run_rppg_qnn.sh`。回滚时，把 `current.new` 指向上一个已验收目录并重复最后两步。部署步骤可以由受控运维账户执行；运行脚本本身不需要 root，也不会修改系统目录。
 
-## 后续工作
+## Linux/Yocto 参考路径的历史后续工作
 
 下一阶段是在目标 SDK 到位后冻结精确 QAIRT 版本，运行 QAIRT converter 验证上述 `ScatterND`/Constant 风险，生成 QNN context 和目标模型清单，再实现真实 `IDeepRuntime`。在目标转换、台架预检和端到端推理通过前，任何 fake deep 的心率或波形都只属于测试数据。
