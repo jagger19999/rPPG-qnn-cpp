@@ -4,6 +4,12 @@
 
 本项目只用于研究和工程验证，不是医疗器械，输出不得用于诊断、治疗、车辆安全闭环或其他高风险决策。
 
+准备进入 Yocto/OpenEmbedded AArch64 高通台架时，请按源码 checkout 根目录中的
+`BENCH_NEXT_STEPS.md` 阶段门禁执行。该文档从 SDK/动态库冻结、交叉编译和 V4L2
+基线开始，直到 QAIRT converter、真实 QNN Runtime 与 Adreno 验收。为保持固定的
+四文件发布包边界，这份开发交接手册不安装到 stage；安装包使用者应从相同 Git
+commit 的源码取得它。
+
 ## 当前能力与边界
 
 本仓库 `rPPG-qnn-cpp` 与 Python/Streamlit 仓库 `rPPG` 分离，拥有独立的 Git 历史、CMake 构建和发布目录。台架包不包含 Python、PyTorch、Streamlit、rPPG-Toolbox 或模型权重，也不会修改原仓库。
