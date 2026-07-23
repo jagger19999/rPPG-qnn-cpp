@@ -7,7 +7,7 @@ Adreno GPU 的台架环境。
 当前目标不是立即宣称 EfficientPhys 已在台架运行，而是按顺序取得可追溯证据：
 
 1. 冻结台架 SDK 和动态库版本。
-2. 交叉编译并运行传统 GREEN rPPG。
+2. 交叉编译并运行传统 GREEN、POS 和 CHROM rPPG。
 3. 验证 V4L2 摄像头、ROI 和结果落盘。
 4. 验证 EfficientPhys ONNX 能否被当前 QAIRT converter 接受。
 5. converter 通过后，再开发并验证真实 QNN C++ Runtime。
@@ -19,7 +19,7 @@ Adreno GPU 的台架环境。
 Mac 端已经完成并验证：
 
 - 独立 C++17 工程，不修改 Python/Streamlit `rPPG` 仓库。
-- V4L2/视频输入接口、人脸 ROI、传统 GREEN rPPG、异步深度 worker 接线。
+- V4L2/视频输入接口、人脸 ROI、传统 GREEN/POS/CHROM rPPG、异步深度 worker 接线。
 - 终端状态、`events.jsonl`、`heart_rate.csv` 和 `session_summary.json`。
 - 官方 `PURE_EfficientPhys.pth` 的严格加载和来源哈希校验。
 - EfficientPhys 静态 ONNX：输入 `frames float32 [181,3,72,72]`，输出
@@ -282,12 +282,17 @@ test -r "$RPPG_HAAR_CASCADE"
 优先准备一段已知可读、有人脸、约 30 FPS 的短视频：
 
 ```bash
-"$RELEASE_DIR/bin/run_rppg_qnn.sh" \
-  --video /data/face-test.avi \
-  --traditional green \
-  --deep disabled \
-  --output "$RELEASE_DIR/outputs/video-baseline"
+for method in green pos chrom; do
+  "$RELEASE_DIR/bin/run_rppg_qnn.sh" \
+    --video /data/face-test.avi \
+    --traditional "$method" \
+    --deep disabled \
+    --output "$RELEASE_DIR/outputs/video-$method"
+done
 ```
+
+三次回放必须使用同一视频。每个进程只运行一种算法，输出方法必须分别为 `GREEN`、
+`POS`、`CHROM`；不允许 POS/CHROM 静默产生 GREEN 记录。
 
 ### 8.3 再跑实时摄像头
 
@@ -312,11 +317,14 @@ tail -n 20 "$RELEASE_DIR/outputs/live-green-001/events.jsonl"
 当前程序没有固定采集时长参数。实时进程被外部信号终止时，不应只依赖最终
 `session_summary.json`；同时保留已实时 flush 的 JSONL/CSV 和终端日志。
 
+实时摄像头示例保留 `green`。验收 POS/CHROM 时应分别重新启动命令，替换
+`--traditional` 和输出目录；每次切换都会重新积累十秒窗口。
+
 传统链路通过标准：
 
 - 实际采集 FPS 稳定，没有持续 `LOW_CAPTURE_FPS`。
 - 正常正脸条件下 ROI 连续，没有持续 `FACE_NOT_FOUND`。
-- `heart_rate.csv` 中 GREEN 结果为有限数值，方法和 backend 字段正确。
+- `heart_rate.csv` 中所选 GREEN/POS/CHROM 结果为有限数值，方法和 backend 字段正确。
 - 输出目录、Git commit、摄像头格式和运行参数已记录。
 
 ## 9. EfficientPhys 的 QAIRT/QNN 转换门禁
@@ -429,7 +437,7 @@ latest-only worker，新增实现应保持摄像头、传统算法和深度推�
 ### 11.3 生理实验边界
 
 工程数值对齐通过后，再做静坐受控实验：固定光照、正脸、稳定距离，并记录手表心率
-及接收时间戳。先确认采样 FPS、同步和 ROI，再比较 GREEN 与 EfficientPhys；不要用
+及接收时间戳。先确认采样 FPS、同步和 ROI，再比较 GREEN/POS/CHROM 与 EfficientPhys；不要用
 少量在线 BPM 直接重新训练模型，也不要把手表广播值当作医学真值。
 
 ## 12. 故障停止条件
@@ -461,7 +469,7 @@ latest-only worker，新增实现应保持摄像头、传统算法和深度推�
         ↓
 台架 preflight
         ↓
-V4L2 + GREEN + CSV/JSON 验收
+V4L2 + GREEN/POS/CHROM + CSV/JSON 验收
         ↓
 QAIRT converter 可行性门禁
         ↓

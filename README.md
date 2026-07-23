@@ -1,6 +1,6 @@
 # rPPG QAIRT/QNN C++ 台架运行工程
 
-这是面向 Linux AArch64、Qualcomm Adreno GPU 和 QAIRT/QNN 的独立 C++17 工程。它从 V4L2 摄像头或视频文件采集画面，运行传统 GREEN rPPG 基线，并把终端状态、JSONL 事件和 CSV 心率窗口保存到本地。
+这是面向 Linux AArch64、Qualcomm Adreno GPU 和 QAIRT/QNN 的独立 C++17 工程。它从 V4L2 摄像头或视频文件采集画面，运行传统 GREEN、POS 或 CHROM rPPG，并把终端状态、JSONL 事件和 CSV 心率窗口保存到本地。
 
 本项目只用于研究和工程验证，不是医疗器械，输出不得用于诊断、治疗、车辆安全闭环或其他高风险决策。
 
@@ -14,7 +14,7 @@ commit 的源码取得它。
 
 本仓库 `rPPG-qnn-cpp` 与 Python/Streamlit 仓库 `rPPG` 分离，拥有独立的 Git 历史、CMake 构建和发布目录。台架包不包含 Python、PyTorch、Streamlit、rPPG-Toolbox 或模型权重，也不会修改原仓库。
 
-当前已完成：V4L2/视频输入、人脸 ROI、GREEN 基线、异步深度窗口接线、结果落盘、QNN/OpenCL 动态库预检，以及 Mac 开发机上的 EfficientPhys 静态 ONNX 参考导出和数值校验。QAIRT/QNN 模型转换、QNN context 和真实推理适配尚未接入，因此正式运行仍必须使用 `--deep disabled`。`--deep fake` 只是开发期调度测试，不能当作深度学习结果。
+当前已完成：V4L2/视频输入、人脸 ROI、GREEN/POS/CHROM 三种可选传统算法、异步深度窗口接线、结果落盘、QNN/OpenCL 动态库预检，以及 Mac 开发机上的 EfficientPhys 静态 ONNX 参考导出和数值校验。POS/CHROM 的 30 FPS C++ BVP 已用固定 RGB 输入与 Python `traditional.py` 参考值对齐。QAIRT/QNN 模型转换、QNN context 和真实推理适配尚未接入，因此正式运行仍必须使用 `--deep disabled`。`--deep fake` 只是开发期调度测试，不能当作深度学习结果。
 
 ## Mac 离线 EfficientPhys ONNX 参考（仅开发机）
 
@@ -237,6 +237,8 @@ export RPPG_HAAR_CASCADE=/usr/share/opencv4/haarcascades/haarcascade_frontalface
 
 ## 运行
 
+`--traditional` 接受 `green`、`pos` 或 `chrom`，默认是 `green`。一次进程只运行一种传统算法；切换方法需要重新启动进程并重新积累十秒窗口，不会在同一采集线程中并行计算三种算法。输出中的方法名分别为 `GREEN`、`POS` 和 `CHROM`，不支持的方法会以 `CONFIG_INVALID` 停止，禁止静默回退。
+
 先用合成视频集成测试验证整条 C++ 接线，不需要摄像头：
 
 ```bash
@@ -260,6 +262,19 @@ stage/rppg-qnn/bin/run_rppg_qnn.sh \
   --qnn-gpu-library "$QAIRT_TARGET_LIB_DIR/libQnnGpu.so" \
   --opencl-library /usr/lib/aarch64-linux-gnu/libOpenCL.so.1 \
   --output outputs/live-001
+```
+
+若要运行 POS 或 CHROM，只替换方法和输出目录，例如：
+
+```bash
+stage/rppg-qnn/bin/run_rppg_qnn.sh \
+  --camera /dev/video0 \
+  --width 1280 --height 720 --fps 30 \
+  --traditional pos \
+  --deep disabled \
+  --qnn-gpu-library "$QAIRT_TARGET_LIB_DIR/libQnnGpu.so" \
+  --opencl-library /usr/lib/aarch64-linux-gnu/libOpenCL.so.1 \
+  --output outputs/live-pos-001
 ```
 
 也可以用 `--video /data/input.avi` 替代 `--camera`；二者不能同时设置。
