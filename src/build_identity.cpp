@@ -16,9 +16,10 @@ constexpr const char* platform_name() {
 }
 
 constexpr const char* abi_name() {
-#if defined(__ANDROID__) && (defined(__aarch64__) || defined(_M_ARM64))
+#if defined(__ANDROID__) && \
+    (defined(__aarch64__) || defined(__arm64__) || defined(_M_ARM64))
   return "arm64-v8a";
-#elif defined(__aarch64__) || defined(_M_ARM64)
+#elif defined(__aarch64__) || defined(__arm64__) || defined(_M_ARM64)
   return "aarch64";
 #elif defined(__x86_64__) || defined(_M_X64)
   return "x86_64";
@@ -38,7 +39,8 @@ std::string build_identity_text() {
   const BuildIdentity identity = build_identity();
   return "platform=" + identity.platform + ";abi=" + identity.abi +
          ";camera=" + identity.camera_backend + ";deep=" +
-         identity.deep_backend + ";qnn_ready=false";
+         identity.deep_backend + ";qnn_ready=" +
+         (identity.qnn_ready ? "true" : "false");
 }
 
 }  // namespace rppg_qnn
