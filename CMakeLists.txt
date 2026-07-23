@@ -171,4 +171,8 @@ if(BUILD_TESTING)
   add_test(NAME android_packaging
            COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_android_packaging.sh
                         ${CMAKE_CURRENT_SOURCE_DIR})
+
+  add_test(NAME android_build_script
+           COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_android_build_script.sh
+                        ${CMAKE_CURRENT_SOURCE_DIR})
 endif()
