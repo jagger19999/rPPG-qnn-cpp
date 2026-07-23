@@ -72,14 +72,19 @@ double positive_double(const std::string& value, const std::string& flag) {
 void require_one_of(const std::string& value,
                     const std::string& flag,
                     const std::string& first,
-                    const std::string& second = "") {
-  if (value == first || (!second.empty() && value == second)) {
+                    const std::string& second = "",
+                    const std::string& third = "") {
+  if (value == first || (!second.empty() && value == second) ||
+      (!third.empty() && value == third)) {
     return;
   }
 
   std::string message = "Invalid value for " + flag + ": expected " + first;
   if (!second.empty()) {
     message += " or " + second;
+  }
+  if (!third.empty()) {
+    message += " or " + third;
   }
   config_invalid(message);
 }
@@ -124,7 +129,7 @@ AppConfig parse_config(const std::vector<std::string>& args) {
     } else if (flag == "--traditional") {
       mark_seen(seen, flag);
       config.traditional = next_value(args, index, flag);
-      require_one_of(config.traditional, flag, "green");
+      require_one_of(config.traditional, flag, "green", "pos", "chrom");
     } else if (flag == "--deep") {
       mark_seen(seen, flag);
       config.deep = next_value(args, index, flag);

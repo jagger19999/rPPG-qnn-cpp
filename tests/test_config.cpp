@@ -104,6 +104,11 @@ int main() {
   EXPECT_EQ(video.video, "sample.mp4");
   EXPECT_EQ(video.output, std::filesystem::path("outputs/a"));
 
+  const auto pos = parse_config(args({"--traditional", "pos"}));
+  EXPECT_EQ(pos.traditional, "pos");
+  const auto chrom = parse_config(args({"--traditional", "chrom"}));
+  EXPECT_EQ(chrom.traditional, "chrom");
+
   const auto all_options = parse_config(args({
       "--camera", "/dev/video3", "--width", "1920", "--height", "1080",
       "--fps", "59.94", "--traditional", "green", "--deep", "fake",
@@ -146,7 +151,7 @@ int main() {
   EXPECT_APP_ERROR(parse_config(args({"--width", "12px"})), ErrorCode::ConfigInvalid);
   EXPECT_APP_ERROR(parse_config(args({"--fps", "30.0fps"})), ErrorCode::ConfigInvalid);
   EXPECT_APP_ERROR(parse_config(args({"--fps", " 30"})), ErrorCode::ConfigInvalid);
-  EXPECT_APP_ERROR(parse_config(args({"--traditional", "pos"})),
+  EXPECT_APP_ERROR(parse_config(args({"--traditional", "lgi"})),
                    ErrorCode::ConfigInvalid);
   EXPECT_APP_ERROR(parse_config(args({"--deep", "qnn"})), ErrorCode::ConfigInvalid);
   EXPECT_APP_ERROR(parse_config(args({"--backend", "cuda"})), ErrorCode::ConfigInvalid);
