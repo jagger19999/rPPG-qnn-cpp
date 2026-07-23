@@ -26,7 +26,7 @@ CMAKE_PREFIX_PATH=/opt/homebrew/opt/opencv@4 \
   ./scripts/build_linux.sh native
 ```
 
-Android 入口是 `./scripts/build_android.sh`。它依次检查 JDK 17、Android SDK、精确 NDK 28.2.13676358 和可执行 Gradle wrapper，任一前置不满足即停止；当前 Mac 会首先停在 `JAVA_HOME must point to JDK 17`，因此不能声称已构建 APK。公司机完整操作和未解决门禁见 `ANDROID_NEXT_STEPS.md`。
+本次 Android foundation 验证记录：fresh native Release 的 17/17 测试通过；Linux stage 恰好包含 4 个白名单文件；Git 已跟踪的 `.pth`/`.pt`/`.onnx`/`.dlc`/`.bin`/`.apk`/`.aab` 禁止产物计数为 0；当前 Mac 运行 `./scripts/build_android.sh` 停在 `JAVA_HOME must point to JDK 17`。Android 入口会依次检查 JDK 17、Android SDK、精确 NDK 28.2.13676358 和可执行 Gradle wrapper，任一前置不满足即停止；该结果不能用于声称已构建 APK。公司机完整操作和未解决门禁见 `ANDROID_NEXT_STEPS.md`。
 
 准备进入 Yocto/OpenEmbedded AArch64 高通台架时，请按源码 checkout 根目录中的
 `BENCH_NEXT_STEPS.md` 阶段门禁执行。该文档从 SDK/动态库冻结、交叉编译和 V4L2
