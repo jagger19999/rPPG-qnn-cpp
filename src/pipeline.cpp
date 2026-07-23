@@ -3,8 +3,8 @@
 #include "rppg_qnn/deep_window_builder.hpp"
 #include "rppg_qnn/deep_worker.hpp"
 #include "rppg_qnn/error.hpp"
-#include "rppg_qnn/green_predictor.hpp"
 #include "rppg_qnn/qnn_preflight.hpp"
+#include "rppg_qnn/traditional_predictor.hpp"
 
 #include <chrono>
 #include <cmath>
@@ -281,9 +281,10 @@ int Pipeline::run() {
       throw AppError(ErrorCode::ConfigInvalid, "Unsupported deep runtime: " + config_.deep);
     }
 
-    GreenPredictor green;
+    TraditionalPredictor traditional(
+        traditional_method_from_string(config_.traditional));
     std::deque<double> timestamps;
-    std::size_t published_green_evaluations = 0;
+    std::size_t published_traditional_evaluations = 0;
     std::optional<double> published_deep_end;
     std::optional<double> last_deep_build_sec;
     std::size_t empty_reads = 0;
@@ -310,10 +311,10 @@ int Pipeline::run() {
       health.status = health.face_found ? "ok" : "face_not_found";
 
       if (health.face_found) {
-        green.add_sample(roi.timestamp_sec, cv::mean(roi.roi_bgr));
-        if (green.evaluation_count() != published_green_evaluations) {
-          published_green_evaluations = green.evaluation_count();
-          const std::optional<HeartRateResult> result = green.latest_result();
+        traditional.add_sample(roi.timestamp_sec, cv::mean(roi.roi_bgr));
+        if (traditional.evaluation_count() != published_traditional_evaluations) {
+          published_traditional_evaluations = traditional.evaluation_count();
+          const std::optional<HeartRateResult> result = traditional.latest_result();
           if (result.has_value()) {
             require_output(output->submit(*result));
           }

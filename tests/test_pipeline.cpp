@@ -261,6 +261,34 @@ class DeepScheduleSource final : public rppg_qnn::FrameSource {
   bool eof_{false};
 };
 
+class TraditionalPulseSource final : public rppg_qnn::FrameSource {
+ public:
+  std::optional<rppg_qnn::FramePacket> read() override {
+    if (index_ == 480) {
+      eof_ = true;
+      return std::nullopt;
+    }
+    const double time = static_cast<double>(index_) / 30.0;
+    const double pulse = std::sin(2.0 * 3.14159265358979323846 * 1.2 * time);
+    const double motion = std::sin(2.0 * 3.14159265358979323846 * 0.2 * time);
+    const double red = 120.0 * (1.0 + 0.04 * motion + 0.002 * pulse);
+    const double green = 90.0 * (1.0 + 0.04 * motion + 0.010 * pulse);
+    const double blue = 70.0 * (1.0 + 0.04 * motion - 0.003 * pulse);
+    cv::Mat frame(96, 96, CV_8UC3, cv::Scalar(25, 25, 25));
+    frame(cv::Rect(16, 20, 64, 64))
+        .setTo(cv::Scalar(std::round(blue), std::round(green), std::round(red)));
+    return rppg_qnn::FramePacket{static_cast<std::uint64_t>(index_),
+                                  static_cast<double>(index_++) / 30.0,
+                                  std::move(frame)};
+  }
+  bool eof() const override { return eof_; }
+  double nominal_fps() const override { return 30.0; }
+
+ private:
+  int index_{0};
+  bool eof_{false};
+};
+
 class InvalidRoiAtSevenSeconds final : public rppg_qnn::IRoiProcessor {
  public:
   rppg_qnn::RoiPacket process(const rppg_qnn::FramePacket& frame) override {
@@ -358,6 +386,38 @@ void synthetic_video_runs_green_and_fake_deep_to_completion() {
   EXPECT_TRUE(fake_deep);
   EXPECT_TRUE(valid_green);
   EXPECT_TRUE(summary.find("\"exit_code\":0") != std::string::npos);
+}
+
+void configured_pos_and_chrom_are_emitted_without_green_fallback() {
+  ScopedDirectory directory;
+  for (const std::string& method : {std::string("pos"), std::string("chrom")}) {
+    rppg_qnn::AppConfig config;
+    config.video = "synthetic.avi";
+    config.traditional = method;
+    config.deep = "disabled";
+    config.output = directory.path() / method;
+    rppg_qnn::Pipeline pipeline(
+        config,
+        {[] { return std::make_unique<TraditionalPulseSource>(); },
+         [] { return std::make_unique<FixedRoi>(); }, {}, {}});
+
+    EXPECT_EQ(pipeline.run(), 0);
+    const std::string events = read_file(config.output / "events.jsonl");
+    const std::string expected_method = method == "pos" ? "POS" : "CHROM";
+    EXPECT_TRUE(events.find("\"method\":\"" + expected_method + "\"") !=
+                std::string::npos);
+    EXPECT_TRUE(events.find("\"method\":\"GREEN\"") == std::string::npos);
+    bool valid_72_bpm = false;
+    for (const std::string& event : json_events(events)) {
+      if (event.find("\"method\":\"" + expected_method + "\"") !=
+              std::string::npos &&
+          event.find("\"is_valid\":true") != std::string::npos) {
+        const std::optional<double> bpm = json_number(event, "bpm");
+        valid_72_bpm = bpm.has_value() && std::abs(*bpm - 72.0) <= 0.01;
+      }
+    }
+    EXPECT_TRUE(valid_72_bpm);
+  }
 }
 
 void disabled_deep_never_constructs_runtime_or_loses_frames() {
@@ -602,6 +662,7 @@ void cli_preflight_only_reports_unavailable_qnn_without_a_camera_or_cascade() {
 
 int main() {
   synthetic_video_runs_green_and_fake_deep_to_completion();
+  configured_pos_and_chrom_are_emitted_without_green_fallback();
   disabled_deep_never_constructs_runtime_or_loses_frames();
   preflight_does_not_construct_capture_or_roi();
   runtime_failures_are_reported_and_closed();
