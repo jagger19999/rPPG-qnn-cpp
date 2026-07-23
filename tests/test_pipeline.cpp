@@ -142,6 +142,23 @@ class CountingSource final : public rppg_qnn::FrameSource {
   int* reads_;
 };
 
+class InfiniteCountingSource final : public rppg_qnn::FrameSource {
+ public:
+  explicit InfiniteCountingSource(int* reads) : reads_(reads) {}
+  std::optional<rppg_qnn::FramePacket> read() override {
+    const int current_read = *reads_;
+    ++*reads_;
+    return rppg_qnn::FramePacket{
+        static_cast<std::uint64_t>(current_read),
+        static_cast<double>(current_read) / 30.0,
+        cv::Mat(96, 96, CV_8UC3, cv::Scalar())};
+  }
+  bool eof() const override { return false; }
+  double nominal_fps() const override { return 30.0; }
+ private:
+  int* reads_;
+};
+
 class SingleFrameSource final : public rppg_qnn::FrameSource {
  public:
   std::optional<rppg_qnn::FramePacket> read() override {
@@ -348,6 +365,7 @@ rppg_qnn::PipelineDependencies video_dependencies(const std::filesystem::path& v
         *deep_factory_called = true;
         return rppg_qnn::make_fake_deep_runtime(std::chrono::milliseconds(0));
       },
+      {},
       {}};
 }
 
@@ -399,7 +417,7 @@ void configured_pos_and_chrom_are_emitted_without_green_fallback() {
     rppg_qnn::Pipeline pipeline(
         config,
         {[] { return std::make_unique<TraditionalPulseSource>(); },
-         [] { return std::make_unique<FixedRoi>(); }, {}, {}});
+         [] { return std::make_unique<FixedRoi>(); }, {}, {}, {}});
 
     EXPECT_EQ(pipeline.run(), 0);
     const std::string events = read_file(config.output / "events.jsonl");
@@ -436,6 +454,7 @@ void disabled_deep_never_constructs_runtime_or_loses_frames() {
       },
       [] { return std::make_unique<FixedRoi>(); },
       {},
+      {},
       {}};
   EXPECT_TRUE(!dependencies.make_deep_runtime);
   rppg_qnn::Pipeline pipeline(config, std::move(dependencies));
@@ -444,6 +463,25 @@ void disabled_deep_never_constructs_runtime_or_loses_frames() {
   EXPECT_TRUE(!deep_factory_called);
   EXPECT_EQ(reads, 480);
   EXPECT_TRUE(read_file(config.output / "events.jsonl").find("FAKE_DEEP") == std::string::npos);
+}
+
+void pipeline_honors_cooperative_stop_at_frame_boundary() {
+  ScopedDirectory directory;
+  int reads = 0;
+  rppg_qnn::AppConfig config;
+  config.video = "unused.avi";
+  config.deep = "disabled";
+  config.output = directory.path() / "cooperative-stop";
+  rppg_qnn::Pipeline pipeline(
+      config,
+      {[&reads] { return std::make_unique<InfiniteCountingSource>(&reads); },
+       [] { return std::make_unique<FixedRoi>(); }, {}, {},
+       [&reads] { return reads >= 5; }});
+
+  EXPECT_EQ(pipeline.run(), 0);
+  EXPECT_EQ(reads, 5);
+  const std::string summary = read_file(config.output / "session_summary.json");
+  EXPECT_TRUE(summary.find("\"exit_code\":0") != std::string::npos);
 }
 
 void preflight_does_not_construct_capture_or_roi() {
@@ -480,6 +518,7 @@ void runtime_failures_are_reported_and_closed() {
       },
       [] { return std::make_unique<ThrowingRoi>(); },
       [] { return rppg_qnn::make_fake_deep_runtime(std::chrono::milliseconds(0)); },
+      {},
       {}};
   rppg_qnn::Pipeline pipeline(config, std::move(dependencies));
 
@@ -505,7 +544,7 @@ void transient_empty_reads_recover_but_permanent_empty_reads_fail() {
   rppg_qnn::Pipeline recovered(
       recovered_config,
       {[] { return std::make_unique<RecoveringSource>(); },
-       [] { return std::make_unique<FixedRoi>(); }, {}, {}});
+       [] { return std::make_unique<FixedRoi>(); }, {}, {}, {}});
   EXPECT_EQ(recovered.run(), 0);
 
   rppg_qnn::AppConfig failed_config;
@@ -514,7 +553,7 @@ void transient_empty_reads_recover_but_permanent_empty_reads_fail() {
   rppg_qnn::Pipeline failed(
       failed_config,
       {[] { return std::make_unique<PermanentEmptySource>(); },
-       [] { return std::make_unique<FixedRoi>(); }, {}, {}});
+       [] { return std::make_unique<FixedRoi>(); }, {}, {}, {}});
   ScopedCerrCapture stderr_capture;
   EXPECT_EQ(failed.run(), 3);
   EXPECT_TRUE(read_file(failed_config.output / "events.jsonl").find("runtime_error") !=
@@ -533,7 +572,7 @@ void slow_output_does_not_hold_up_capture() {
       config,
       {[&final_read] { return std::make_unique<FastSource>(&final_read); },
        [] { return std::make_unique<FixedRoi>(); }, {},
-       [](const std::filesystem::path&) { return std::make_unique<SlowSink>(); }});
+       [](const std::filesystem::path&) { return std::make_unique<SlowSink>(); }, {}});
   EXPECT_EQ(pipeline.run(), 0);
   EXPECT_TRUE(std::chrono::steady_clock::now() - final_read >= std::chrono::milliseconds(80));
 }
@@ -547,7 +586,7 @@ void empty_output_exception_never_becomes_a_successful_session() {
       config,
       {[] { return std::make_unique<SingleFrameSource>(); },
        [] { return std::make_unique<FixedRoi>(); }, {},
-       [](const std::filesystem::path&) { return std::make_unique<EmptyThrowSink>(); }});
+       [](const std::filesystem::path&) { return std::make_unique<EmptyThrowSink>(); }, {}});
   ScopedCerrCapture stderr_capture;
   EXPECT_EQ(pipeline.run(), 13);
   EXPECT_TRUE(stderr_capture.str().find("OUTPUT_WRITE_FAILED:") == 0U);
@@ -562,7 +601,8 @@ void a_full_heart_rate_queue_reserves_one_runtime_error_slot() {
       config,
       {[] { return std::make_unique<HeartRateFloodSource>(); },
        [] { return std::make_unique<FixedRoi>(); }, {},
-       [](const std::filesystem::path& path) { return std::make_unique<SlowResultSink>(path); }});
+       [](const std::filesystem::path& path) { return std::make_unique<SlowResultSink>(path); },
+       {}});
   ScopedCerrCapture stderr_capture;
   EXPECT_EQ(pipeline.run(), 13);
   const std::string summary = read_file(config.output / "session_summary.json");
@@ -581,7 +621,7 @@ void rejected_roi_does_not_schedule_a_stale_deep_window() {
       config,
       {[] { return std::make_unique<DeepScheduleSource>(); },
        [] { return std::make_unique<InvalidRoiAtSevenSeconds>(); },
-       [&input_ends] { return std::make_unique<RecordingDeepRuntime>(&input_ends); }, {}});
+       [&input_ends] { return std::make_unique<RecordingDeepRuntime>(&input_ends); }, {}, {}});
 
   EXPECT_EQ(pipeline.run(), 0);
   EXPECT_EQ(input_ends.size(), static_cast<std::size_t>(1));
@@ -606,6 +646,7 @@ void slow_fake_runtime_keeps_every_capture_frame() {
        },
        [] { return std::make_unique<FixedRoi>(); },
        [] { return rppg_qnn::make_fake_deep_runtime(std::chrono::milliseconds(100)); },
+       {},
        {}});
   const auto started = std::chrono::steady_clock::now();
   EXPECT_EQ(pipeline.run(), 0);
@@ -625,6 +666,7 @@ void roi_runtime_failures_are_reported_and_closed() {
       [] { return std::make_unique<SingleFrameSource>(); },
       [] { return std::make_unique<ThrowingRoi>(); },
       [] { return rppg_qnn::make_fake_deep_runtime(std::chrono::milliseconds(0)); },
+      {},
       {}};
   rppg_qnn::Pipeline pipeline(config, std::move(dependencies));
 
@@ -664,6 +706,7 @@ int main() {
   synthetic_video_runs_green_and_fake_deep_to_completion();
   configured_pos_and_chrom_are_emitted_without_green_fallback();
   disabled_deep_never_constructs_runtime_or_loses_frames();
+  pipeline_honors_cooperative_stop_at_frame_boundary();
   preflight_does_not_construct_capture_or_roi();
   runtime_failures_are_reported_and_closed();
   transient_empty_reads_recover_but_permanent_empty_reads_fail();

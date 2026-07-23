@@ -16,6 +16,7 @@ struct PipelineDependencies {
   std::function<std::unique_ptr<IRoiProcessor>()> make_roi;
   std::function<std::unique_ptr<IDeepRuntime>()> make_deep_runtime;
   std::function<std::unique_ptr<IResultSink>(const std::filesystem::path&)> make_sink;
+  std::function<bool()> should_stop;
 };
 
 class Pipeline {
