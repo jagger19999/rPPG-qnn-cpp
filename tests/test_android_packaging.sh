@@ -11,13 +11,24 @@ root=$1
 manifest="$root/android/app/src/main/AndroidManifest.xml"
 app_gradle="$root/android/app/build.gradle"
 native_bridge="$root/android/app/src/main/cpp/native_bridge.cpp"
+gitignore="$root/.gitignore"
 
-for required_file in "$manifest" "$app_gradle" "$native_bridge"; do
+for required_file in "$manifest" "$app_gradle" "$native_bridge" "$gitignore"; do
   if [[ ! -f "$required_file" ]]; then
     echo "android packaging check: required file is missing: $required_file" >&2
     exit 1
   fi
 done
+
+if ! grep -Fxq "android/**/.cxx/" "$gitignore"; then
+  echo "android packaging check: $gitignore must contain exact rule android/**/.cxx/" >&2
+  exit 1
+fi
+
+if ! grep -Fxq "android/**/.externalNativeBuild/" "$gitignore"; then
+  echo "android packaging check: $gitignore must contain exact rule android/**/.externalNativeBuild/" >&2
+  exit 1
+fi
 
 if ! grep -Fq "arm64-v8a" "$app_gradle"; then
   echo "android packaging check: $app_gradle must restrict ABI packaging to arm64-v8a" >&2
