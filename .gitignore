@@ -11,3 +11,9 @@ outputs/
 /artifacts/model_export/
 __pycache__/
 *.py[cod]
+android/.gradle/
+android/local.properties
+android/**/build/
+android/.idea/
+*.apk
+*.aab
