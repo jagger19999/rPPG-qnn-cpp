@@ -3,9 +3,15 @@
 set -euo pipefail
 
 root=${1:?repository root is required}
-build_script="$root/scripts/build_android.sh"
+source_build_script="$root/scripts/build_android.sh"
 workspace=$(mktemp -d "${TMPDIR:-/tmp}/rppg-android-build-test.XXXXXX")
 trap 'rm -rf "$workspace"' EXIT
+
+isolated_repo="$workspace/isolated repo"
+mkdir -p "$isolated_repo/scripts" "$isolated_repo/android"
+isolated_repo=$(CDPATH= cd -- "$isolated_repo" && pwd -P)
+cp "$source_build_script" "$isolated_repo/scripts/build_android.sh"
+build_script="$isolated_repo/scripts/build_android.sh"
 
 expect_failure() {
   local expected=$1
@@ -38,6 +44,18 @@ make_fake_java_home() {
     >"$java_home/bin/java"
   chmod +x "$java_home/bin/java"
   printf '%s\n' "$java_home"
+}
+
+assert_file_equals() {
+  local expected=$1
+  local file=$2
+  local actual
+  actual=$(<"$file")
+  if [[ "$actual" != "$expected" ]]; then
+    printf 'unexpected file contents for %s:\nexpected:\n%s\nactual:\n%s\n' \
+      "$file" "$expected" "$actual" >&2
+    exit 1
+  fi
 }
 
 expect_failure \
@@ -79,3 +97,40 @@ expect_failure \
   'build_android.sh: android/gradlew is missing or not executable' \
   env -i PATH=/usr/bin:/bin JAVA_HOME="$java_17_patch_home" \
     ANDROID_SDK_ROOT="$fake_sdk" "$build_script"
+
+gradle_args="$workspace/gradle-args"
+cat >"$isolated_repo/android/gradlew" <<'GRADLEW'
+#!/bin/sh
+printf '%s\n' "$@" >"$STUB_GRADLE_ARGS"
+if [ "${STUB_CREATE_APK:-0}" = 1 ]; then
+  mkdir -p "$(dirname "$STUB_APK")"
+  : >"$STUB_APK"
+fi
+GRADLEW
+chmod +x "$isolated_repo/android/gradlew"
+
+isolated_apk="$isolated_repo/android/app/build/outputs/apk/debug/app-debug.apk"
+expected_gradle_args=$(printf '%s\n' \
+  '--no-daemon' \
+  '--project-dir' \
+  "$isolated_repo/android" \
+  ':app:assembleDebug')
+
+expect_failure \
+  'build_android.sh: Android debug APK was not produced' \
+  env -i PATH=/usr/bin:/bin JAVA_HOME="$java_17_patch_home" \
+    ANDROID_SDK_ROOT="$fake_sdk" STUB_GRADLE_ARGS="$gradle_args" \
+    STUB_APK="$isolated_apk" "$isolated_repo/scripts/build_android.sh"
+assert_file_equals "$expected_gradle_args" "$gradle_args"
+
+success_output="$workspace/success-output"
+env -i PATH=/usr/bin:/bin JAVA_HOME="$java_17_patch_home" \
+  ANDROID_SDK_ROOT="$fake_sdk" STUB_GRADLE_ARGS="$gradle_args" \
+  STUB_CREATE_APK=1 STUB_APK="$isolated_apk" \
+  "$isolated_repo/scripts/build_android.sh" >"$success_output"
+assert_file_equals "$expected_gradle_args" "$gradle_args"
+assert_file_equals "$isolated_apk" "$success_output"
+[[ "$isolated_apk" == /* ]] || {
+  echo "build script success must print an absolute APK path" >&2
+  exit 1
+}
