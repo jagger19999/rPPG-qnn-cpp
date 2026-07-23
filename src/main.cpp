@@ -55,6 +55,7 @@ int main(int argc, char* argv[]) {
         },
         [] { return std::make_unique<rppg_qnn::RoiProcessor>(cascade_path()); },
         [] { return rppg_qnn::make_fake_deep_runtime(std::chrono::milliseconds(0)); },
+        {},
         {}};
     rppg_qnn::Pipeline pipeline(std::move(config), std::move(dependencies));
     return pipeline.run();

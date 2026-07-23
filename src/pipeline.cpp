@@ -289,6 +289,9 @@ int Pipeline::run() {
     std::optional<double> last_deep_build_sec;
     std::size_t empty_reads = 0;
     while (true) {
+      if (dependencies_.should_stop && dependencies_.should_stop()) {
+        break;
+      }
       std::optional<FramePacket> frame = source->read();
       if (!frame.has_value()) {
         if (source->eof()) {
