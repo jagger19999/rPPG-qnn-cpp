@@ -10,7 +10,7 @@
 
 这个基础**尚未**请求或打开摄像头，未把完整 rPPG pipeline 链接进 APK，未包含 OpenCV Android，未在 APK 内运行 POS/CHROM，未转换或加载 QNN 模型，也未证明 Adreno 执行。`--deep fake` 始终只是 host 调度测试，绝不是 Android 结果。
 
-设计边界、基础实施计划和公司机后续交接分别见：
+以下相对链接只在源码 checkout 中可用；已安装的 Linux 四文件包不包含 `docs/` 或 `ANDROID_NEXT_STEPS.md`，也不应为此改动四文件 stage 白名单。源码 checkout 内的设计边界、基础实施计划和公司机后续交接分别见：
 
 - [Android NDK rPPG Runtime Design](docs/superpowers/specs/2026-07-23-android-ndk-rppg-runtime-design.md)
 - [Android NDK Foundation Plan](docs/superpowers/plans/2026-07-23-android-ndk-foundation.md)
