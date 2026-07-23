@@ -26,28 +26,49 @@ expect_failure() {
   fi
 }
 
+make_fake_java_home() {
+  local name=$1
+  local version_line=$2
+  local java_home="$workspace/$name"
+
+  mkdir -p "$java_home/bin"
+  printf '%s\n' \
+    '#!/bin/sh' \
+    "printf '%s\\n' '$version_line'" \
+    >"$java_home/bin/java"
+  chmod +x "$java_home/bin/java"
+  printf '%s\n' "$java_home"
+}
+
 expect_failure \
   'build_android.sh: JAVA_HOME must point to JDK 17' \
   env -i PATH=/usr/bin:/bin "$build_script"
 
-fake_java_home="$workspace/jdk-17"
-mkdir -p "$fake_java_home/bin"
-printf '%s\n' \
-  '#!/bin/sh' \
-  'printf '\''openjdk version "17.0.12"\n'\''' \
-  >"$fake_java_home/bin/java"
-chmod +x "$fake_java_home/bin/java"
+java_17_ga_home=$(make_fake_java_home \
+  jdk-17-ga 'openjdk version "17" 2021-09-14')
+java_17_patch_home=$(make_fake_java_home \
+  jdk-17-patch 'openjdk version "17.0.12" 2024-07-16')
+java_21_home=$(make_fake_java_home \
+  jdk-21 'openjdk version "21.0.2" 2024-01-16')
 
 expect_failure \
   'build_android.sh: ANDROID_SDK_ROOT must point to an Android SDK' \
-  env -i PATH=/usr/bin:/bin JAVA_HOME="$fake_java_home" "$build_script"
+  env -i PATH=/usr/bin:/bin JAVA_HOME="$java_17_ga_home" "$build_script"
+
+expect_failure \
+  'build_android.sh: ANDROID_SDK_ROOT must point to an Android SDK' \
+  env -i PATH=/usr/bin:/bin JAVA_HOME="$java_17_patch_home" "$build_script"
+
+expect_failure \
+  'build_android.sh: JAVA_HOME must point to JDK 17' \
+  env -i PATH=/usr/bin:/bin JAVA_HOME="$java_21_home" "$build_script"
 
 fake_sdk="$workspace/android-sdk"
 mkdir -p "$fake_sdk"
 
 expect_failure \
   'build_android.sh: Android NDK 28.2.13676358 is required' \
-  env -i PATH=/usr/bin:/bin JAVA_HOME="$fake_java_home" \
+  env -i PATH=/usr/bin:/bin JAVA_HOME="$java_17_patch_home" \
     ANDROID_SDK_ROOT="$fake_sdk" "$build_script"
 
 toolchain="$fake_sdk/ndk/28.2.13676358/build/cmake/android.toolchain.cmake"
@@ -56,5 +77,5 @@ mkdir -p "$(dirname "$toolchain")"
 
 expect_failure \
   'build_android.sh: android/gradlew is missing or not executable' \
-  env -i PATH=/usr/bin:/bin JAVA_HOME="$fake_java_home" \
+  env -i PATH=/usr/bin:/bin JAVA_HOME="$java_17_patch_home" \
     ANDROID_SDK_ROOT="$fake_sdk" "$build_script"
