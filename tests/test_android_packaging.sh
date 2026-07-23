@@ -10,10 +10,9 @@ fi
 root=$1
 manifest="$root/android/app/src/main/AndroidManifest.xml"
 app_gradle="$root/android/app/build.gradle"
-native_bridge="$root/android/app/src/main/cpp/native_bridge.cpp"
 gitignore="$root/.gitignore"
 
-for required_file in "$manifest" "$app_gradle" "$native_bridge" "$gitignore"; do
+for required_file in "$manifest" "$app_gradle" "$gitignore"; do
   if [[ ! -f "$required_file" ]]; then
     echo "android packaging check: required file is missing: $required_file" >&2
     exit 1
@@ -30,8 +29,10 @@ if ! grep -Fxq "android/**/.externalNativeBuild/" "$gitignore"; then
   exit 1
 fi
 
-if ! grep -Fq "arm64-v8a" "$app_gradle"; then
-  echo "android packaging check: $app_gradle must restrict ABI packaging to arm64-v8a" >&2
+abi_filter_count=$(grep -Ec '^[[:space:]]*abiFilters([[:space:]]|$)' "$app_gradle" || true)
+if [[ "$abi_filter_count" -ne 1 ]] ||
+   ! grep -Eq "^[[:space:]]*abiFilters[[:space:]]+['\"]arm64-v8a['\"][[:space:]]*$" "$app_gradle"; then
+  echo "android packaging check: ABI set must be exactly arm64-v8a" >&2
   exit 1
 fi
 
@@ -40,13 +41,64 @@ if ! grep -Fq "28.2.13676358" "$app_gradle"; then
   exit 1
 fi
 
-if grep -Fq "android.permission.CAMERA" "$manifest"; then
-  echo "android packaging check: foundation manifest must not request android.permission.CAMERA" >&2
+if grep -Eiq '<[[:space:]]*(uses-permission|uses-feature|uses-native-library)([[:space:]>]|/)' "$manifest"; then
+  echo "android packaging check: foundation manifest must not declare uses-permission, uses-feature, or uses-native-library" >&2
   exit 1
 fi
 
-if grep -Eqi "fake_deep" "$native_bridge"; then
-  echo "android packaging check: $native_bridge must not contain fake_deep placeholders" >&2
+expected_sources=$(cat <<'EOF'
+android/app/src/main/cpp/CMakeLists.txt
+android/app/src/main/cpp/native_bridge.cpp
+android/app/src/main/java/com/jagger/rppgbench/MainActivity.java
+android/app/src/main/java/com/jagger/rppgbench/NativeBridge.java
+EOF
+)
+actual_sources=$(find "$root/android" \
+  \( -name .cxx -o -name .externalNativeBuild -o -name .gradle -o -name build \) \
+  -prune -o -type f \( \
+  -name 'CMakeLists.txt' -o \
+  -name '*.cmake' -o \
+  -name '*.c' -o \
+  -name '*.cc' -o \
+  -name '*.cpp' -o \
+  -name '*.cxx' -o \
+  -name '*.h' -o \
+  -name '*.hh' -o \
+  -name '*.hpp' -o \
+  -name '*.java' -o \
+  -name '*.kt' \
+  \) -print | sed "s#^$root/##" | LC_ALL=C sort)
+if [[ "$actual_sources" != "$expected_sources" ]]; then
+  echo "android packaging check: Android source whitelist mismatch" >&2
+  printf 'expected:\n%s\nactual:\n%s\n' "$expected_sources" "$actual_sources" >&2
+  exit 1
+fi
+
+for source_file in $actual_sources; do
+  if grep -Eq '(ACamera|AImageReader|CameraManager|CameraDevice|android\.permission\.CAMERA|libQnn|QnnGpu|Qnn[A-Z]|QNN[A-Z_]|[Ff]ake[_ -]?[Dd]eep|--deep[ =]fake|\.(pth|pt|onnx|dlc|bin)([^[:alnum:]_]|$)|loadModel|model[_A-Z]?[Pp]ath)' "$root/$source_file"; then
+    echo "android packaging check: foundation source contains Camera, QNN, fake, or model integration: $source_file" >&2
+    exit 1
+  fi
+done
+
+expected_tracked=$(cat <<'EOF'
+android/app/build.gradle
+android/app/proguard-rules.pro
+android/app/src/main/AndroidManifest.xml
+android/app/src/main/cpp/CMakeLists.txt
+android/app/src/main/cpp/native_bridge.cpp
+android/app/src/main/java/com/jagger/rppgbench/MainActivity.java
+android/app/src/main/java/com/jagger/rppgbench/NativeBridge.java
+android/app/src/main/res/values/strings.xml
+android/build.gradle
+android/gradle.properties
+android/settings.gradle
+EOF
+)
+actual_tracked=$(git -C "$root" ls-files -- android | LC_ALL=C sort)
+if [[ "$actual_tracked" != "$expected_tracked" ]]; then
+  echo "android packaging check: tracked Android artifact whitelist mismatch" >&2
+  printf 'expected:\n%s\nactual:\n%s\n' "$expected_tracked" "$actual_tracked" >&2
   exit 1
 fi
 
