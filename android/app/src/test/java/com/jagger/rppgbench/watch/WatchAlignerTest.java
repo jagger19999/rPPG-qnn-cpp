@@ -76,7 +76,7 @@ public final class WatchAlignerTest {
         assertEquals(71.0, result.watchReferenceBpm, 1e-9);
         assertEquals(3.0, result.signedErrorBpm, 1e-9);
         assertEquals(3.0, result.absoluteErrorBpm, 1e-9);
-        assertEquals(4, result.watchSampleCount);
+        assertEquals(6, result.watchSampleCount);
     }
 
     @Test
@@ -101,9 +101,11 @@ public final class WatchAlignerTest {
                 WatchContracts.WatchConnectionStatus.STREAMING,
                 Arrays.asList(
                         new WatchContracts.WatchHeartRateSample(100.5, 70, new double[0], "a", "w"),
-                        new WatchContracts.WatchHeartRateSample(103.0, 71, new double[0], "a", "w"),
-                        new WatchContracts.WatchHeartRateSample(106.0, 72, new double[0], "a", "w"),
-                        new WatchContracts.WatchHeartRateSample(109.0, 71, new double[0], "a", "w")),
+                        new WatchContracts.WatchHeartRateSample(102.0, 71, new double[0], "a", "w"),
+                        new WatchContracts.WatchHeartRateSample(104.0, 72, new double[0], "a", "w"),
+                        new WatchContracts.WatchHeartRateSample(106.0, 71, new double[0], "a", "w"),
+                        new WatchContracts.WatchHeartRateSample(108.0, 71, new double[0], "a", "w"),
+                        new WatchContracts.WatchHeartRateSample(109.5, 72, new double[0], "a", "w")),
                 Collections.emptyList(),
                 null,
                 0,
