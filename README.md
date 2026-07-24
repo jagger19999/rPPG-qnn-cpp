@@ -6,14 +6,16 @@
 
 ## Android 主线的当前 Camera2 切片
 
-仓库已完成可交叉构建的 Android Camera2/NDK 运行时切片：Gradle 源码脚手架、单一 `arm64-v8a` ABI、AGP 9.0.1、NDK 28.2.13676358、Java 运行时相机权限、Camera2 NDK 枚举与 `AImageReader`、`YUV_420_888` stride 校验和 BGR 转换、JNI opaque handle 生命周期、OpenCV Android 4.13.0 静态链接、Haar ROI、GREEN/POS/CHROM worker、ONNX Runtime Android 1.27.0 CPU EfficientPhys 后端、latest-only 深度 worker、应用私有目录会话输出和低频状态 UI。EfficientPhys 模型保持外部，必须按固定 SHA-256 导入应用私有目录。
+仓库已完成可交叉构建的 Android Camera2/NDK 运行时切片：Gradle 源码脚手架、单一 `arm64-v8a` ABI、AGP 9.0.1、NDK 28.2.13676358、Java 运行时相机与蓝牙权限、Camera2 NDK 枚举与 `AImageReader`、`YUV_420_888` stride 校验和 BGR 转换、JNI opaque handle 生命周期、OpenCV Android 4.13.0 静态链接、Haar ROI、GREEN/POS/CHROM worker、ONNX Runtime Android 1.27.0 CPU EfficientPhys 后端、latest-only 深度 worker、HUAWEI GT 5 Pro 心率广播 BLE 参考对齐与会话 CSV、应用私有目录会话输出和低频状态 UI。EfficientPhys 模型保持外部，必须按固定 SHA-256 导入应用私有目录。
 
-当前 Mac 已实际生成传统算法 + ONNX Runtime CPU debug APK，但本机没有真实 EfficientPhys ONNX，也没有连接获授权的 Android 真机，因此**尚未证明**模型冻结向量、目标摄像头、现场心率、推理时延/温升或生命周期。第一版手机演示不依赖 QNN/Adreno；`--deep fake` 始终只是 host 调度测试，Android 请求 CPU 后不会回退到 fake 或 QNN。
+当前 Mac 已实际生成传统算法 + ONNX Runtime CPU + 手表 BLE debug APK，但本机没有连接获授权的 Android 真机与手表广播验收，因此**尚未证明**模型冻结向量、目标摄像头、现场心率、手表对齐或生命周期。第一版手机演示不依赖 QNN/Adreno；`--deep fake` 始终只是 host 调度测试，Android 请求 CPU 后不会回退到 fake 或 QNN。
 
 以下相对链接只在源码 checkout 中可用；已安装的 Linux 四文件包不包含 `docs/` 或 `ANDROID_NEXT_STEPS.md`，也不应为此改动四文件 stage 白名单。源码 checkout 内的设计边界、基础实施计划和公司机后续交接分别见：
 
 - [Android NDK rPPG Runtime Design](docs/superpowers/specs/2026-07-23-android-ndk-rppg-runtime-design.md)
+- [Android ORT CPU + Watch BLE Design](docs/superpowers/specs/2026-07-24-android-onnx-cpu-watch-ble-design.md)
 - [Android NDK Foundation Plan](docs/superpowers/plans/2026-07-23-android-ndk-foundation.md)
+- [Android ORT CPU + Watch BLE Plan](docs/superpowers/plans/2026-07-24-android-onnx-cpu-watch-ble.md)
 - [Android Company-machine Next Steps](ANDROID_NEXT_STEPS.md)
 
 当前 Mac 上的 host Release 构建、全部测试与 Linux 四文件 stage 可用唯一目录执行：
@@ -26,7 +28,7 @@ CMAKE_PREFIX_PATH=/opt/homebrew/opt/opencv@4 \
   ./scripts/build_linux.sh native
 ```
 
-本次 Android 主机验证记录：fresh Release 的 18/18 CTest 通过；Gradle `assembleDebug` 成功；APK 只包含 `arm64-v8a/librppg_qnn_android.so`（OpenCV 静态链接）和固定 Haar asset，Manifest 只请求 `android.permission.CAMERA`。以上是主机交叉构建和模拟输入证据，不是设备摄像头或生理准确性声明。公司机完整操作和未解决门禁见 `ANDROID_NEXT_STEPS.md`。
+本次 Android 主机验证记录：fresh Release 的 18/18 CTest 通过；Gradle `:app:testDebugUnitTest` 通过；`assembleDebug` 成功；APK 含 `arm64-v8a/librppg_qnn_android.so` 与 `libonnxruntime.so`，不含 `.onnx`/`.pth`；Manifest 请求 CAMERA 与 BLE scan/connect。以上是主机交叉构建和模拟输入证据，不是设备摄像头、手表广播或生理准确性声明。公司机完整操作和未解决门禁见 `ANDROID_NEXT_STEPS.md`。
 
 准备进入 Yocto/OpenEmbedded AArch64 高通台架时，请按源码 checkout 根目录中的
 `BENCH_NEXT_STEPS.md` 阶段门禁执行。该文档从 SDK/动态库冻结、交叉编译和 V4L2

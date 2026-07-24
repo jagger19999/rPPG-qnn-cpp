@@ -91,15 +91,22 @@ unset -f collect_qnn_device_evidence
 
 ## 4. 配置后构建、安装与 JNI 身份冒烟
 
+本机当前推荐环境变量（按实际路径调整）：
+
 ```bash
-export JAVA_HOME=/absolute/path/to/jdk-17
-export ANDROID_SDK_ROOT=/absolute/path/to/android-sdk
-export RPPG_OPENCV_ANDROID_SDK=/absolute/path/to/OpenCV-android-sdk
-export RPPG_ONNXRUNTIME_ANDROID=/absolute/path/to/onnxruntime-android-1.27.0
+export JAVA_HOME=/Users/wangjie/.local/jdks/zulu17.68.17-ca-jdk17.0.20-macosx_aarch64/Contents/Home
+export ANDROID_SDK_ROOT=/opt/homebrew/share/android-commandlinetools
+export RPPG_OPENCV_ANDROID_SDK=/Users/wangjie/.local/android-deps/OpenCV-android-sdk
+export RPPG_ONNXRUNTIME_ANDROID=/Users/wangjie/.local/android-deps/onnxruntime-android-1.27.0
 
 ./scripts/build_android.sh
 
 adb install -r android/app/build/outputs/apk/debug/app-debug.apk
+
+# import model (external ONNX; never commit)
+./scripts/import_efficientphys_model.sh \
+  /Users/wangjie/.config/superpowers/worktrees/rPPG-qnn-cpp/efficientphys-qnn-export/artifacts/model_export/efficientphys_pure/efficientphys_pure.onnx
+
 adb shell am start -n com.jagger.rppgbench/.MainActivity
 ```
 
@@ -125,13 +132,45 @@ MODEL=/absolute/path/to/efficientphys_pure.onnx
 `deep_backend=ONNX_RUNTIME_CPU`、deep BPM/quality、`deep_inference_ms` 或具体错误；
 请求 CPU 后不得回退到 fake 或 QNN。
 
+### 手表 BLE 参考心率（GT 5 Pro 心率广播）
+
+APK 额外请求 `BLUETOOTH_SCAN`（`neverForLocation`）与 `BLUETOOTH_CONNECT`。真机前请关闭 HyperRate 等占用手表连接的应用，并在手表上开启「心率广播」。
+
+UI：`扫描心率设备` → 选择设备 → `连接手表`；`断开手表` 取消自动重连。相机 `Stop`/`onStop` **不断开**手表；只有显式断开或 Activity `onDestroy` 关闭 worker。
+
+状态行应出现 `watch_status` / `watch_bpm`，合格窗口出现 `watch_alignment`、`watch_reference_bpm`、`watch_abs_error_bpm`、`watch_coverage`。会话目录在相机 stop 时追加：
+
+- `watch_heart_rate_samples.csv`
+- `watch_rppg_alignments.csv`
+- `watch_export_notes.txt`（实验参考声明；接收时间为手机侧）
+
+```bash
+adb shell run-as com.jagger.rppgbench ls files/sessions
+# 再按实际 session-* 目录拉取 CSV
+```
+
+设计与实现计划：
+
+- [Android ORT CPU + Watch BLE Design](docs/superpowers/specs/2026-07-24-android-onnx-cpu-watch-ble-design.md)
+- [Android ORT CPU + Watch BLE Plan](docs/superpowers/plans/2026-07-24-android-onnx-cpu-watch-ble.md)
+
+### 仍待真机门禁（不可用主机测试代替）
+
+1. 安装 debug APK；导入并校验 ONNX SHA-256。
+2. 传统相机路径：人脸 ROI + GREEN/POS/CHROM BPM。
+3. 勾选 EfficientPhys 后 deep 字段更新，采集 FPS 不明显塌陷。
+4. GT 5 Pro 开心率广播 → ≤15s 扫到 → 连接后数秒内显示广播 BPM。
+5. 合格窗口出现对齐误差/覆盖率；关闭广播后 ≤2s 进入 `STALE`。
+6. 意外断线最多重连 3 次；用户断开后保持断开。
+7. 会话目录写出手表样本与对齐 CSV。
+
 启动后页面先显示：
 
 ```text
 platform=android;abi=arm64-v8a;camera=camera2;deep=onnxruntime_cpu;qnn_ready=false
 ```
 
-点击 “List cameras” 时验证允许和拒绝权限两条路径；允许后页面必须显示 Camera2 NDK 返回的 ID。选择 GREEN/POS/CHROM 后点击 “Start camera”，状态 JSON 应持续增加 `accepted_frames`，`last_timestamp_sec` 严格递增，显示 measured FPS、`face_found` 和传统心率状态。切到后台后确认 `onStop()` 释放相机并生成 `events.jsonl`、`heart_rate.csv` 和 `session_summary.json`，再回到前台重复启动。按现场需要保留启动失败或 native loader 证据，例如：
+点击 “List cameras” 时验证允许和拒绝权限两条路径；允许后页面必须显示 Camera2 NDK 返回的 ID。选择 GREEN/POS/CHROM 后点击 “Start camera”，状态 JSON 应持续增加 `accepted_frames`，`last_timestamp_sec` 严格递增，显示 measured FPS、`face_found` 和传统心率状态（含 `window_start_sec` / `window_end_sec`）。切到后台后确认 `onStop()` 释放相机并生成会话产物，手表连接应仍保持，再回到前台可重复启动相机。按现场需要保留启动失败或 native loader 证据，例如：
 
 ```bash
 adb logcat -c
@@ -142,7 +181,7 @@ test -n "$APP_PID"
 adb logcat -d --pid="$APP_PID" > rppg-android-foundation-logcat.txt
 ```
 
-主机 APK 证明 Camera2/OpenCV/传统 pipeline 可交叉编译，主机测试证明 GREEN/POS/CHROM 和会话输出对模拟输入满足契约；只有上述真机操作和 logcat/ADB 记录才能证明目标 camera、ROI 和现场 rPPG。它仍不证明 QNN 或 Adreno。构建脚本成功时会打印上面的精确 debug APK 路径；路径中没有该文件就不得执行成功声明。
+主机 APK 证明 Camera2/OpenCV/传统/ORT CPU/手表 Java BLE 可交叉编译；只有上述真机操作和 logcat/ADB 记录才能证明目标 camera、手表广播与现场对齐。它仍不证明 QNN 或 Adreno。构建脚本成功时会打印上面的精确 debug APK 路径；路径中没有该文件就不得执行成功声明。
 
 ## 5. 部署身份决策门禁
 
@@ -157,8 +196,9 @@ adb logcat -d --pid="$APP_PID" > rppg-android-foundation-logcat.txt
 1. Camera2/Camera NDK + `AImageReader`：完成 permission、camera 枚举、`YUV_420_888` row/pixel stride 转换测试、timestamp/FPS 和生命周期释放。
 2. OpenCV Android ROI + traditional：仅导入 ABI 匹配的 Android `core`/`imgproc`/`objdetect`，加载 ROI 资源，然后在 APK 验证 GREEN/POS/CHROM 和结果落盘。
 3. ONNX Runtime CPU：导入 hash 匹配的外部 EfficientPhys ONNX，验证固定 `[181,3,72,72]` → `[180,1]` 契约和冻结向量。
-4. 并发验收：同时运行 camera、ROI/traditional、latest-only deep worker、结果输出和 UI，验证 FPS、丢帧、时延、stop/destroy、会话隔离及无旧结果窜入。
-5. QNN/Adreno 仅作为后续可选优化；第一版手机演示不依赖 QAIRT。
+4. 手表 BLE 参考心率：GT 5 Pro 心率广播扫描/连接/对齐/CSV（见 §4；真机门禁未完成前不得宣称设备成功）。
+5. 并发验收：同时运行 camera、ROI/traditional、latest-only deep worker、手表参考与 UI，验证 FPS、丢帧、时延、stop/destroy、会话隔离及无旧结果窜入。
+6. QNN/Adreno 仅作为后续可选优化；第一版手机演示不依赖 QAIRT。
 
 ## 7. 官方 Android 参考
 
@@ -169,4 +209,4 @@ adb logcat -d --pid="$APP_PID" > rppg-android-foundation-logcat.txt
 - [Android linker namespaces](https://source.android.com/docs/core/architecture/vndk/linker-namespace)
 - [Android SELinux](https://source.android.com/docs/security/features/selinux)
 
-完整架构理由见 [Android NDK rPPG Runtime Design](docs/superpowers/specs/2026-07-23-android-ndk-rppg-runtime-design.md)，当前 foundation 步骤见 [Android NDK Foundation Plan](docs/superpowers/plans/2026-07-23-android-ndk-foundation.md)。
+完整架构理由见 [Android NDK rPPG Runtime Design](docs/superpowers/specs/2026-07-23-android-ndk-rppg-runtime-design.md)，当前 foundation 步骤见 [Android NDK Foundation Plan](docs/superpowers/plans/2026-07-23-android-ndk-foundation.md)，ORT CPU + 手表 BLE 见 [2026-07-24 design](docs/superpowers/specs/2026-07-24-android-onnx-cpu-watch-ble-design.md)。
