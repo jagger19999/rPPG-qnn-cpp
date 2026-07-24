@@ -19,3 +19,5 @@ android/**/.externalNativeBuild/
 android/.idea/
 *.apk
 *.aab
+
+.superpowers/
