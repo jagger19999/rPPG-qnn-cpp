@@ -292,24 +292,14 @@ if [[ "$actual_tracked" != "$expected_tracked" ]]; then
   exit 1
 fi
 
-model_artifact=$(find "$root/android" -type f \( \
+model_artifact=$(find "$root/android" \
+  \( -name build -o -name .gradle -o -name .cxx \) -prune -o \
+  -type f \( \
   -iname '*.pth' -o \
   -iname '*.pt' -o \
   -iname '*.onnx' -o \
   -iname '*.dlc' -o \
   -iname '*.bin' \
-\) ! \( \
-  -name 'compile_commands.json.bin' -o \
-  -path '*/.cxx/*/CMakeFiles/*/CMakeDetermineCompilerABI_CXX.bin' -o \
-  -path '*/.cxx/*/configure_fingerprint.bin' -o \
-  -path '*/.gradle/*/checksums/*-checksums.bin' -o \
-  -path '*/.gradle/*/executionHistory/executionHistory.bin' -o \
-  -path '*/.gradle/*/fileChanges/last-build.bin' -o \
-  -path '*/.gradle/*/fileHashes/fileHashes.bin' -o \
-  -path '*/.gradle/*/fileHashes/resourceHashesCache.bin' -o \
-  -path '*/.gradle/buildOutputCleanup/outputFiles.bin' -o \
-  -path '*/build/intermediates/desugar_graph/*/graph.bin' -o \
-  -path '*/build/tmp/compile*JavaWithJavac/previous-compilation-data.bin' \
 \) -print -quit)
 if [[ -n "$model_artifact" ]]; then
   echo "android packaging check: model artifact is forbidden under android/: $model_artifact" >&2
