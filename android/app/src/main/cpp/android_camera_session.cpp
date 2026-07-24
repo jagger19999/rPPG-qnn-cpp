@@ -295,6 +295,8 @@ struct AndroidCameraSession::Impl {
               snapshot.confidence = result.confidence;
               snapshot.heart_rate_valid = result.is_valid;
               snapshot.heart_rate_invalid_reason = result.invalid_reason;
+              snapshot.window_start_sec = result.window_start_sec;
+              snapshot.window_end_sec = result.window_end_sec;
             }
           },
           [this](const std::string& code, const std::string& message) {
@@ -364,6 +366,8 @@ struct AndroidCameraSession::Impl {
       snapshot.confidence = 0.0;
       snapshot.heart_rate_valid = false;
       snapshot.heart_rate_invalid_reason.clear();
+      snapshot.window_start_sec = 0.0;
+      snapshot.window_end_sec = 0.0;
       snapshot.processing_exit_code = 0;
       snapshot.deep_result_available = false;
       snapshot.deep_bpm = 0.0;

@@ -40,6 +40,8 @@ struct CameraSessionStatus {
   double confidence{0.0};
   bool heart_rate_valid{false};
   std::string heart_rate_invalid_reason;
+  double window_start_sec{0.0};
+  double window_end_sec{0.0};
   int processing_exit_code{0};
   std::string output_directory;
   bool deep_enabled{false};

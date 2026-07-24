@@ -96,7 +96,9 @@ std::string status_json(const CameraSessionStatus& status) {
          << (status.heart_rate_valid ? "true" : "false")
          << ",\"heart_rate_invalid_reason\":\""
          << json_escape(status.heart_rate_invalid_reason)
-         << "\",\"processing_exit_code\":" << status.processing_exit_code
+         << "\",\"window_start_sec\":" << status.window_start_sec
+         << ",\"window_end_sec\":" << status.window_end_sec
+         << ",\"processing_exit_code\":" << status.processing_exit_code
          << ",\"output_directory\":\""
          << json_escape(status.output_directory)
          << "\",\"deep_enabled\":"
