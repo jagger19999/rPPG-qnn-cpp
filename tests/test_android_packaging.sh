@@ -127,7 +127,7 @@ android/app/src/main/java/com/jagger/rppgbench/watch/WatchSampleStore.java
 EOF
 )
 actual_sources=$(CDPATH= cd -- "$root" && find android \
-  \( -name .cxx -o -name .externalNativeBuild -o -name .gradle -o -name build \) \
+  \( -name .cxx -o -name .externalNativeBuild -o -name .gradle -o -name build -o -path '*/src/test/*' \) \
   -prune -o -type f \( \
     -name 'CMakeLists.txt' -o \
     -name '*.cmake' -o \
@@ -271,6 +271,8 @@ android/app/src/main/java/com/jagger/rppgbench/watch/HeartRateParser.java
 android/app/src/main/java/com/jagger/rppgbench/watch/WatchContracts.java
 android/app/src/main/java/com/jagger/rppgbench/watch/WatchSampleStore.java
 android/app/src/main/res/values/strings.xml
+android/app/src/test/java/com/jagger/rppgbench/watch/HeartRateParserTest.java
+android/app/src/test/java/com/jagger/rppgbench/watch/WatchSampleStoreTest.java
 android/build.gradle
 android/gradle.properties
 android/gradle/wrapper/gradle-wrapper.jar

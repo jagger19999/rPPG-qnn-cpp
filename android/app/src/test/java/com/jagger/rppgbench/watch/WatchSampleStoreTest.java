@@ -30,8 +30,9 @@ public final class WatchSampleStoreTest {
         store.acceptMeasurement(200.0, 62, new double[0], "aa", "watch");
 
         WatchContracts.WatchHeartRateSnapshot snapshot = store.snapshot(200.0);
-        assertEquals(1, snapshot.samples.size());
+        assertEquals(2, snapshot.samples.size());
         assertEquals(62, snapshot.latestSample.bpm);
+        assertEquals(50.0, snapshot.samples.get(0).receivedMonotonicSec, 1e-9);
     }
 
     @Test
