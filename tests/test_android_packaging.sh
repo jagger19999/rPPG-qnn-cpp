@@ -98,14 +98,20 @@ if grep -Eiq '<[[:space:]]*uses-native-library([[:space:]/>])' "$manifest"; then
   exit 1
 fi
 if [[ $(grep -Fc '<uses-permission android:name="android.permission.CAMERA" />' "$manifest" || true) -ne 1 ]] ||
-   [[ $(grep -Ec '<[[:space:]]*uses-permission([[:space:]/>]|-)' "$manifest" || true) -ne 1 ]]; then
-  echo "android packaging check: CAMERA must be the only requested permission" >&2
+   [[ $(grep -Fc 'android.permission.BLUETOOTH_SCAN' "$manifest" || true) -ne 1 ]] ||
+   [[ $(grep -Fc 'android.permission.BLUETOOTH_CONNECT' "$manifest" || true) -ne 1 ]] ||
+   [[ $(grep -Fc 'android:usesPermissionFlags="neverForLocation"' "$manifest" || true) -ne 1 ]] ||
+   [[ $(grep -Fc 'android.permission.BLUETOOTH"' "$manifest" || true) -ne 1 ]] ||
+   [[ $(grep -Fc 'android.permission.BLUETOOTH_ADMIN"' "$manifest" || true) -ne 1 ]] ||
+   [[ $(grep -Ec '<[[:space:]]*uses-permission([[:space:]/>]|-)' "$manifest" || true) -ne 5 ]]; then
+  echo "android packaging check: CAMERA + BLE scan/connect (+ legacy BT) permissions required" >&2
   exit 1
 fi
 if [[ $(grep -Fc 'android:name="android.hardware.camera.any"' "$manifest" || true) -ne 1 ]] ||
-   [[ $(grep -Fc 'android:required="false"' "$manifest" || true) -ne 1 ]] ||
-   [[ $(grep -Ec '<[[:space:]]*uses-feature([[:space:]/>]|$)' "$manifest" || true) -ne 1 ]]; then
-  echo "android packaging check: camera.any must be the only optional feature" >&2
+   [[ $(grep -Fc 'android:name="android.hardware.bluetooth_le"' "$manifest" || true) -ne 1 ]] ||
+   [[ $(grep -Fc 'android:required="false"' "$manifest" || true) -ne 2 ]] ||
+   [[ $(grep -Ec '<[[:space:]]*uses-feature([[:space:]/>]|$)' "$manifest" || true) -ne 2 ]]; then
+  echo "android packaging check: camera.any and bluetooth_le must be the only optional features" >&2
   exit 1
 fi
 
@@ -121,6 +127,7 @@ android/app/src/main/cpp/android_qnn_preflight_stub.cpp
 android/app/src/main/cpp/native_bridge.cpp
 android/app/src/main/java/com/jagger/rppgbench/MainActivity.java
 android/app/src/main/java/com/jagger/rppgbench/NativeBridge.java
+android/app/src/main/java/com/jagger/rppgbench/watch/AndroidBleBackend.java
 android/app/src/main/java/com/jagger/rppgbench/watch/HeartRateParser.java
 android/app/src/main/java/com/jagger/rppgbench/watch/WatchAligner.java
 android/app/src/main/java/com/jagger/rppgbench/watch/WatchBleBackend.java
@@ -270,6 +277,7 @@ android/app/src/main/cpp/android_qnn_preflight_stub.cpp
 android/app/src/main/cpp/native_bridge.cpp
 android/app/src/main/java/com/jagger/rppgbench/MainActivity.java
 android/app/src/main/java/com/jagger/rppgbench/NativeBridge.java
+android/app/src/main/java/com/jagger/rppgbench/watch/AndroidBleBackend.java
 android/app/src/main/java/com/jagger/rppgbench/watch/HeartRateParser.java
 android/app/src/main/java/com/jagger/rppgbench/watch/WatchAligner.java
 android/app/src/main/java/com/jagger/rppgbench/watch/WatchBleBackend.java
