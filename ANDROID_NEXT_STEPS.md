@@ -107,15 +107,18 @@ EfficientPhys 模型不进入 Git 或 APK。拿到外部模型后先在 Mac 校�
 
 ```bash
 MODEL=/absolute/path/to/efficientphys_pure.onnx
-test "$(shasum -a 256 "$MODEL" | awk '{print $1}')" = \
-  c1b321042db1335da70b0295cc84f653a2cfe90f75cff738b3045ea3c103257d
-adb push "$MODEL" /data/local/tmp/efficientphys_pure.onnx
-adb shell run-as com.jagger.rppgbench mkdir -p files/models
-adb shell run-as com.jagger.rppgbench cp \
-  /data/local/tmp/efficientphys_pure.onnx files/models/efficientphys_pure.onnx
-adb shell run-as com.jagger.rppgbench sha256sum \
-  files/models/efficientphys_pure.onnx
-adb shell rm /data/local/tmp/efficientphys_pure.onnx
+# Preferred helper (verifies SHA-256 then adb run-as import):
+./scripts/import_efficientphys_model.sh "$MODEL"
+# Manual equivalent:
+# test "$(shasum -a 256 "$MODEL" | awk '{print $1}')" = \
+#   c1b321042db1335da70b0295cc84f653a2cfe90f75cff738b3045ea3c103257d
+# adb push "$MODEL" /data/local/tmp/efficientphys_pure.onnx
+# adb shell run-as com.jagger.rppgbench mkdir -p files/models
+# adb shell run-as com.jagger.rppgbench cp \
+#   /data/local/tmp/efficientphys_pure.onnx files/models/efficientphys_pure.onnx
+# adb shell run-as com.jagger.rppgbench sha256sum \
+#   files/models/efficientphys_pure.onnx
+# adb shell rm /data/local/tmp/efficientphys_pure.onnx
 ```
 
 勾选 “Run EfficientPhys with ONNX Runtime CPU” 后，状态必须明确显示

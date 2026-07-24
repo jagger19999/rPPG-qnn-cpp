@@ -190,6 +190,12 @@ if ! grep -Fq 'onnxruntime-android-1.27.0' "$app_gradle" ||
   echo "android packaging check: ONNX Runtime Android CPU dependency must be pinned" >&2
   exit 1
 fi
+import_script="$root/scripts/import_efficientphys_model.sh"
+if [[ ! -x "$import_script" ]] ||
+   ! grep -Fq 'c1b321042db1335da70b0295cc84f653a2cfe90f75cff738b3045ea3c103257d' "$import_script"; then
+  echo "android packaging check: EfficientPhys import helper/hash missing" >&2
+  exit 1
+fi
 if rg --files "$root/android" -g '*.onnx' -g '*.pth' -g '*.bin' |
    grep -q .; then
   echo "android packaging check: model artifacts must remain external" >&2
