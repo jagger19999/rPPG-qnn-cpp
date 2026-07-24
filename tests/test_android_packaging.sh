@@ -123,6 +123,8 @@ android/app/src/main/java/com/jagger/rppgbench/MainActivity.java
 android/app/src/main/java/com/jagger/rppgbench/NativeBridge.java
 android/app/src/main/java/com/jagger/rppgbench/watch/HeartRateParser.java
 android/app/src/main/java/com/jagger/rppgbench/watch/WatchAligner.java
+android/app/src/main/java/com/jagger/rppgbench/watch/WatchBleBackend.java
+android/app/src/main/java/com/jagger/rppgbench/watch/WatchBleWorker.java
 android/app/src/main/java/com/jagger/rppgbench/watch/WatchContracts.java
 android/app/src/main/java/com/jagger/rppgbench/watch/WatchSampleStore.java
 EOF
@@ -270,11 +272,14 @@ android/app/src/main/java/com/jagger/rppgbench/MainActivity.java
 android/app/src/main/java/com/jagger/rppgbench/NativeBridge.java
 android/app/src/main/java/com/jagger/rppgbench/watch/HeartRateParser.java
 android/app/src/main/java/com/jagger/rppgbench/watch/WatchAligner.java
+android/app/src/main/java/com/jagger/rppgbench/watch/WatchBleBackend.java
+android/app/src/main/java/com/jagger/rppgbench/watch/WatchBleWorker.java
 android/app/src/main/java/com/jagger/rppgbench/watch/WatchContracts.java
 android/app/src/main/java/com/jagger/rppgbench/watch/WatchSampleStore.java
 android/app/src/main/res/values/strings.xml
 android/app/src/test/java/com/jagger/rppgbench/watch/HeartRateParserTest.java
 android/app/src/test/java/com/jagger/rppgbench/watch/WatchAlignerTest.java
+android/app/src/test/java/com/jagger/rppgbench/watch/WatchBleWorkerTest.java
 android/app/src/test/java/com/jagger/rppgbench/watch/WatchSampleStoreTest.java
 android/build.gradle
 android/gradle.properties

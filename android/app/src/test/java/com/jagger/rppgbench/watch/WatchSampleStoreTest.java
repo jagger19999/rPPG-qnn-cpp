@@ -67,6 +67,15 @@ public final class WatchSampleStoreTest {
     }
 
     @Test
+    public void emptyStreamingDoesNotBecomeStale() {
+        WatchSampleStore store = new WatchSampleStore();
+        store.setStatus(WatchContracts.WatchConnectionStatus.STREAMING);
+
+        WatchContracts.WatchHeartRateSnapshot snapshot = store.snapshot(100.0);
+        assertEquals(WatchContracts.WatchConnectionStatus.STREAMING, snapshot.status);
+    }
+
+    @Test
     public void setDevicesCopiesIntoSnapshot() {
         WatchSampleStore store = new WatchSampleStore();
         store.setDevices(Collections.singletonList(new WatchContracts.WatchDevice("1", "Huawei")));

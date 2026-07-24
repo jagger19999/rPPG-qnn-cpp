@@ -78,9 +78,9 @@ public final class WatchSampleStore {
             pruneLocked(nowMonotonicSec);
             WatchContracts.WatchConnectionStatus effective = status;
             if (effective == WatchContracts.WatchConnectionStatus.STREAMING
-                    && (samples.isEmpty()
-                            || nowMonotonicSec - samples.get(samples.size() - 1).receivedMonotonicSec
-                                    > STALE_AFTER_SEC)) {
+                    && !samples.isEmpty()
+                    && nowMonotonicSec - samples.get(samples.size() - 1).receivedMonotonicSec
+                            > STALE_AFTER_SEC) {
                 effective = WatchContracts.WatchConnectionStatus.STALE;
             }
             return new WatchContracts.WatchHeartRateSnapshot(
