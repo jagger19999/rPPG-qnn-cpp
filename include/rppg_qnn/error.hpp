@@ -19,6 +19,10 @@ enum class ErrorCode {
   ModelLoadFailed,
   InferenceFailed,
   OutputWriteFailed,
+  CameraPermissionDenied,
+  CameraIdUnavailable,
+  CameraImageInvalid,
+  NativeStateInvalid,
 };
 
 class AppError : public std::runtime_error {

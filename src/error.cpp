@@ -36,6 +36,14 @@ std::string_view to_string(ErrorCode code) noexcept {
       return "INFERENCE_FAILED";
     case ErrorCode::OutputWriteFailed:
       return "OUTPUT_WRITE_FAILED";
+    case ErrorCode::CameraPermissionDenied:
+      return "CAMERA_PERMISSION_DENIED";
+    case ErrorCode::CameraIdUnavailable:
+      return "CAMERA_ID_UNAVAILABLE";
+    case ErrorCode::CameraImageInvalid:
+      return "CAMERA_IMAGE_INVALID";
+    case ErrorCode::NativeStateInvalid:
+      return "NATIVE_STATE_INVALID";
   }
 
   return "UNKNOWN_ERROR";
@@ -55,6 +63,10 @@ int exit_code_for(ErrorCode code) noexcept {
     case ErrorCode::ModelLoadFailed: return 11;
     case ErrorCode::InferenceFailed: return 12;
     case ErrorCode::OutputWriteFailed: return 13;
+    case ErrorCode::CameraPermissionDenied: return 14;
+    case ErrorCode::CameraIdUnavailable: return 15;
+    case ErrorCode::CameraImageInvalid: return 16;
+    case ErrorCode::NativeStateInvalid: return 17;
   }
   return 1;
 }

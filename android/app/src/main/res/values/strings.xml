@@ -1,6 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">rPPG Bench</string>
-    <string name="app_title">rPPG Android NDK Foundation</string>
-    <string name="refresh_native_status">Refresh native status</string>
+    <string name="app_title">rPPG Android NDK Traditional Runtime</string>
+    <string name="camera_smoke_boundary">Camera2 + GREEN/POS/CHROM + optional EfficientPhys ONNX Runtime CPU. QNN/Adreno is not used.</string>
+    <string name="list_cameras">List cameras</string>
+    <string name="start_camera">Start camera</string>
+    <string name="stop_camera">Stop camera</string>
 </resources>

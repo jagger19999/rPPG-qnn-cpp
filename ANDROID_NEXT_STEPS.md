@@ -11,7 +11,7 @@ git rev-parse HEAD
 git status --short --branch
 ```
 
-当前冻结边界仅包括：Gradle 源码脚手架、AGP 9.0.1、`arm64-v8a`、NDK 28.2.13676358、最小 Java Activity + JNI build identity、pipeline 协作式停止接缝和 Android 环境预检。它尚未请求/打开摄像头，未链接完整 rPPG pipeline，未导入 OpenCV Android，未在 APK 运行 POS/CHROM，未转换/加载 QNN 模型，未证明 Adreno。
+当前冻结边界包括：Gradle/`arm64-v8a`/NDK 构建、Java 相机权限、Camera2 NDK 枚举和采集、`AImageReader_acquireLatestImage`、`YUV_420_888` stride 校验及 BGR 转换、JNI opaque handle 生命周期、OpenCV Android 4.13.0、Haar ROI、GREEN/POS/CHROM latest-only worker、应用私有目录会话输出和状态 UI。主机已交叉构建 APK并以模拟输入验证三种传统算法和输出契约，但目标摄像头枚举、真实帧率/时间戳/颜色、ROI 稳定性和 Activity stop/start 仍需真机证据。它尚未转换/加载 QNN 模型，未证明 Adreno。
 
 模型不进 Git。不得提交 `.pth`、`.pt`、`.onnx`、`.dlc`、`.bin` 或转换后的私有模型/context 产物；只记录可审计的版本、工具参数、hash 和外部存放位置。`--deep fake` 是 host 测试接线，永远不得作为 Android 结果。
 
@@ -22,16 +22,12 @@ git status --short --branch
 - JDK 17，且 `JAVA_HOME` 指向该 JDK。
 - Android SDK platform 36 与 Android SDK Build-Tools 36。
 - Android NDK `28.2.13676358`，安装在 `$ANDROID_SDK_ROOT/ndk/28.2.13676358`。
-- 可用的 Gradle 9.1.0，仅用于首次生成 wrapper。
+- OpenCV Android SDK 4.13.0，且 `RPPG_OPENCV_ANDROID_SDK` 指向解压后的 `OpenCV-android-sdk`。
+- ONNX Runtime Android 1.27.0，且 `RPPG_ONNXRUNTIME_ANDROID` 指向校验并解压后的 AAR；AAR SHA-256 必须为 `077dec5e2d821234c7dc0aba584bec8f999854b546c754cab93a90741c56fbeb`。
 
-仓库目前没有已审阅的 Gradle wrapper。在已配置 Gradle 9.1.0 的公司机生成：
+仓库已包含固定的 Gradle wrapper。执行前验证：
 
 ```bash
-cd android
-gradle wrapper --gradle-version 9.1.0 --distribution-type bin \
-  --gradle-distribution-sha256-sum a17ddd85a26b6a7f5ddb71ff8b05fc5104c0202c6e64782429790c933686c806
-cd ..
-
 grep -Fx \
   'distributionSha256Sum=a17ddd85a26b6a7f5ddb71ff8b05fc5104c0202c6e64782429790c933686c806' \
   android/gradle/wrapper/gradle-wrapper.properties >/dev/null
@@ -43,7 +39,7 @@ test "$WRAPPER_JAR_SHA256" = \
 
 Gradle 9.1.0 的 `-bin` ZIP SHA256 必须是 `a17ddd85a26b6a7f5ddb71ff8b05fc5104c0202c6e64782429790c933686c806`，wrapper JAR SHA256 必须是 `76805e32c009c0cf0dd5d206bddc9fb22ea42e84db904b764f3047de095493f3`；两者均来自 [Gradle 官方 checksum 参考](https://gradle.org/release-checksums/)。官方 Gradle Wrapper 文档分别定义了[下载 distribution 的 SHA256 验证](https://docs.gradle.org/current/userguide/gradle_wrapper.html#verification-of-downloaded-gradle-distributions)和[wrapper JAR 完整性校验](https://docs.gradle.org/current/userguide/gradle_wrapper.html#verifying-the-integrity-of-the-gradle-wrapper-jar)方式。
 
-在任何 `./gradlew` 或 `scripts/build_android.sh` 执行前，上述 `grep -Fx` 必须确认 properties 中存在完全一致的 `distributionSha256Sum=...`，`test` 必须确认 wrapper JAR hash 完全一致。任一校验失败就停止，不执行 wrapper。然后审阅 `gradlew`、`gradlew.bat`、`gradle/wrapper/` 和 distribution URL，再单独提交 wrapper；不要未审即提交。`scripts/build_android.sh` 当前按 JDK 17 → SDK root → 精确 NDK → wrapper 的顺序 fail-fast，因此前三个门禁通过后，会在缺少 `android/gradlew` 处停止。
+在任何 `./gradlew` 或 `scripts/build_android.sh` 执行前，上述 `grep -Fx` 必须确认 properties 中存在完全一致的 `distributionSha256Sum=...`，`test` 必须确认 wrapper JAR hash 完全一致。任一校验失败就停止，不执行 wrapper。`scripts/build_android.sh` 按 JDK 17 → SDK root → 精确 NDK → OpenCV 4.13.0 SDK → ONNX Runtime 1.27.0 与 checksum → wrapper 的顺序 fail-fast。
 
 ## 3. 台架证据采集
 
@@ -98,6 +94,8 @@ unset -f collect_qnn_device_evidence
 ```bash
 export JAVA_HOME=/absolute/path/to/jdk-17
 export ANDROID_SDK_ROOT=/absolute/path/to/android-sdk
+export RPPG_OPENCV_ANDROID_SDK=/absolute/path/to/OpenCV-android-sdk
+export RPPG_ONNXRUNTIME_ANDROID=/absolute/path/to/onnxruntime-android-1.27.0
 
 ./scripts/build_android.sh
 
@@ -105,13 +103,32 @@ adb install -r android/app/build/outputs/apk/debug/app-debug.apk
 adb shell am start -n com.jagger.rppgbench/.MainActivity
 ```
 
-启动后页面预期显示：
+EfficientPhys 模型不进入 Git 或 APK。拿到外部模型后先在 Mac 校验并导入应用私有目录：
 
-```text
-platform=android;abi=arm64-v8a;camera=not_compiled;deep=disabled;qnn_ready=false
+```bash
+MODEL=/absolute/path/to/efficientphys_pure.onnx
+test "$(shasum -a 256 "$MODEL" | awk '{print $1}')" = \
+  c1b321042db1335da70b0295cc84f653a2cfe90f75cff738b3045ea3c103257d
+adb push "$MODEL" /data/local/tmp/efficientphys_pure.onnx
+adb shell run-as com.jagger.rppgbench mkdir -p files/models
+adb shell run-as com.jagger.rppgbench cp \
+  /data/local/tmp/efficientphys_pure.onnx files/models/efficientphys_pure.onnx
+adb shell run-as com.jagger.rppgbench sha256sum \
+  files/models/efficientphys_pure.onnx
+adb shell rm /data/local/tmp/efficientphys_pure.onnx
 ```
 
-按现场需要保留启动失败或 native loader 证据，例如：
+勾选 “Run EfficientPhys with ONNX Runtime CPU” 后，状态必须明确显示
+`deep_backend=ONNX_RUNTIME_CPU`、deep BPM/quality、`deep_inference_ms` 或具体错误；
+请求 CPU 后不得回退到 fake 或 QNN。
+
+启动后页面先显示：
+
+```text
+platform=android;abi=arm64-v8a;camera=camera2;deep=onnxruntime_cpu;qnn_ready=false
+```
+
+点击 “List cameras” 时验证允许和拒绝权限两条路径；允许后页面必须显示 Camera2 NDK 返回的 ID。选择 GREEN/POS/CHROM 后点击 “Start camera”，状态 JSON 应持续增加 `accepted_frames`，`last_timestamp_sec` 严格递增，显示 measured FPS、`face_found` 和传统心率状态。切到后台后确认 `onStop()` 释放相机并生成 `events.jsonl`、`heart_rate.csv` 和 `session_summary.json`，再回到前台重复启动。按现场需要保留启动失败或 native loader 证据，例如：
 
 ```bash
 adb logcat -c
@@ -122,7 +139,7 @@ test -n "$APP_PID"
 adb logcat -d --pid="$APP_PID" > rppg-android-foundation-logcat.txt
 ```
 
-这个屏幕只证明 Activity 可进入且 JNI 返回了预期 build identity，不证明 camera、rPPG、QNN 或 Adreno。构建脚本成功时会打印上面的精确 debug APK 路径；路径中没有该文件就不得执行成功声明。
+主机 APK 证明 Camera2/OpenCV/传统 pipeline 可交叉编译，主机测试证明 GREEN/POS/CHROM 和会话输出对模拟输入满足契约；只有上述真机操作和 logcat/ADB 记录才能证明目标 camera、ROI 和现场 rPPG。它仍不证明 QNN 或 Adreno。构建脚本成功时会打印上面的精确 debug APK 路径；路径中没有该文件就不得执行成功声明。
 
 ## 5. 部署身份决策门禁
 
@@ -136,9 +153,9 @@ adb logcat -d --pid="$APP_PID" > rppg-android-foundation-logcat.txt
 
 1. Camera2/Camera NDK + `AImageReader`：完成 permission、camera 枚举、`YUV_420_888` row/pixel stride 转换测试、timestamp/FPS 和生命周期释放。
 2. OpenCV Android ROI + traditional：仅导入 ABI 匹配的 Android `core`/`imgproc`/`objdetect`，加载 ROI 资源，然后在 APK 验证 GREEN/POS/CHROM 和结果落盘。
-3. QAIRT converter 证据：用公司的精确 SDK 和 Android sample 转换外部 ONNX，保留命令、版本、输出、hash 或精确失败节点。
-4. 真实 QNN runtime：接入版本匹配的 headers/libraries 和已验证 model/context，禁止 CPU、ORT 或 fake fallback，记录 GPU backend 初始化和 graph 执行证据。
-5. 并发验收：同时运行 camera、ROI/traditional、latest-only deep worker、结果输出和 UI，验证 FPS、丢帧、时延、stop/destroy、会话隔离及无旧结果窜入。
+3. ONNX Runtime CPU：导入 hash 匹配的外部 EfficientPhys ONNX，验证固定 `[181,3,72,72]` → `[180,1]` 契约和冻结向量。
+4. 并发验收：同时运行 camera、ROI/traditional、latest-only deep worker、结果输出和 UI，验证 FPS、丢帧、时延、stop/destroy、会话隔离及无旧结果窜入。
+5. QNN/Adreno 仅作为后续可选优化；第一版手机演示不依赖 QAIRT。
 
 ## 7. 官方 Android 参考
 

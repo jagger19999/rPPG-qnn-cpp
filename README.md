@@ -4,11 +4,11 @@
 
 本项目只用于研究和工程验证，不是医疗器械，输出不得用于诊断、治疗、车辆安全闭环或其他高风险决策。
 
-## Android 主线的当前基础
+## Android 主线的当前 Camera2 切片
 
-仓库当前只完成 Android 基础交接面：Gradle 源码脚手架、单一 `arm64-v8a` ABI、AGP 9.0.1、NDK 28.2.13676358、最小 Java Activity 与 JNI build identity、pipeline 协作式停止接缝，以及构建环境 fail-fast 预检。
+仓库已完成可交叉构建的 Android Camera2/NDK 运行时切片：Gradle 源码脚手架、单一 `arm64-v8a` ABI、AGP 9.0.1、NDK 28.2.13676358、Java 运行时相机权限、Camera2 NDK 枚举与 `AImageReader`、`YUV_420_888` stride 校验和 BGR 转换、JNI opaque handle 生命周期、OpenCV Android 4.13.0 静态链接、Haar ROI、GREEN/POS/CHROM worker、ONNX Runtime Android 1.27.0 CPU EfficientPhys 后端、latest-only 深度 worker、应用私有目录会话输出和低频状态 UI。EfficientPhys 模型保持外部，必须按固定 SHA-256 导入应用私有目录。
 
-这个基础**尚未**请求或打开摄像头，未把完整 rPPG pipeline 链接进 APK，未包含 OpenCV Android，未在 APK 内运行 POS/CHROM，未转换或加载 QNN 模型，也未证明 Adreno 执行。`--deep fake` 始终只是 host 调度测试，绝不是 Android 结果。
+当前 Mac 已实际生成传统算法 + ONNX Runtime CPU debug APK，但本机没有真实 EfficientPhys ONNX，也没有连接获授权的 Android 真机，因此**尚未证明**模型冻结向量、目标摄像头、现场心率、推理时延/温升或生命周期。第一版手机演示不依赖 QNN/Adreno；`--deep fake` 始终只是 host 调度测试，Android 请求 CPU 后不会回退到 fake 或 QNN。
 
 以下相对链接只在源码 checkout 中可用；已安装的 Linux 四文件包不包含 `docs/` 或 `ANDROID_NEXT_STEPS.md`，也不应为此改动四文件 stage 白名单。源码 checkout 内的设计边界、基础实施计划和公司机后续交接分别见：
 
@@ -26,7 +26,7 @@ CMAKE_PREFIX_PATH=/opt/homebrew/opt/opencv@4 \
   ./scripts/build_linux.sh native
 ```
 
-本次 Android foundation 验证记录：fresh native Release 的 17/17 测试通过；Linux stage 恰好包含 4 个白名单文件；Git 已跟踪的 `.pth`/`.pt`/`.onnx`/`.dlc`/`.bin`/`.apk`/`.aab` 禁止产物计数为 0；当前 Mac 运行 `./scripts/build_android.sh` 停在 `JAVA_HOME must point to JDK 17`。Android 入口会依次检查 JDK 17、Android SDK、精确 NDK 28.2.13676358 和可执行 Gradle wrapper，任一前置不满足即停止；该结果不能用于声称已构建 APK。公司机完整操作和未解决门禁见 `ANDROID_NEXT_STEPS.md`。
+本次 Android 主机验证记录：fresh Release 的 18/18 CTest 通过；Gradle `assembleDebug` 成功；APK 只包含 `arm64-v8a/librppg_qnn_android.so`（OpenCV 静态链接）和固定 Haar asset，Manifest 只请求 `android.permission.CAMERA`。以上是主机交叉构建和模拟输入证据，不是设备摄像头或生理准确性声明。公司机完整操作和未解决门禁见 `ANDROID_NEXT_STEPS.md`。
 
 准备进入 Yocto/OpenEmbedded AArch64 高通台架时，请按源码 checkout 根目录中的
 `BENCH_NEXT_STEPS.md` 阶段门禁执行。该文档从 SDK/动态库冻结、交叉编译和 V4L2

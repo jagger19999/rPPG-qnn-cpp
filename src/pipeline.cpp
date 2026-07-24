@@ -267,9 +267,10 @@ int Pipeline::run() {
     output = std::make_unique<AsyncOutputWorker>(*sink);
 
     std::optional<DeepWindowBuilder> deep_builder;
-    if (config_.deep == "fake") {
+    if (config_.deep != "disabled") {
       if (!dependencies_.make_deep_runtime) {
-        throw AppError(ErrorCode::ConfigInvalid, "Fake deep runtime factory is required");
+        throw AppError(ErrorCode::ConfigInvalid,
+                       "Requested deep runtime factory is required");
       }
       std::unique_ptr<IDeepRuntime> runtime = dependencies_.make_deep_runtime();
       if (!runtime) {
@@ -277,8 +278,6 @@ int Pipeline::run() {
       }
       deep_builder.emplace(6.0, 180U, cv::Size(72, 72));
       worker = std::make_unique<DeepWorker>(std::move(runtime));
-    } else if (config_.deep != "disabled") {
-      throw AppError(ErrorCode::ConfigInvalid, "Unsupported deep runtime: " + config_.deep);
     }
 
     TraditionalPredictor traditional(

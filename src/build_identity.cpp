@@ -28,11 +28,28 @@ constexpr const char* abi_name() {
 #endif
 }
 
+constexpr const char* camera_backend_name() {
+#if defined(__ANDROID__) && defined(RPPG_ANDROID_CAMERA2)
+  return "camera2";
+#else
+  return "not_compiled";
+#endif
+}
+
+constexpr const char* deep_backend_name() {
+#if defined(__ANDROID__) && defined(RPPG_ANDROID_ONNX_CPU)
+  return "onnxruntime_cpu";
+#else
+  return "disabled";
+#endif
+}
+
 }  // namespace
 
 BuildIdentity build_identity() {
   return BuildIdentity{
-      platform_name(), abi_name(), "not_compiled", "disabled", false};
+      platform_name(), abi_name(), camera_backend_name(), deep_backend_name(),
+      false};
 }
 
 std::string build_identity_text() {

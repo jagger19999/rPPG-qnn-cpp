@@ -37,6 +37,33 @@ if [[ ! -f "$ndk_toolchain" ]]; then
   die 'Android NDK 28.2.13676358 is required'
 fi
 
+if [[ -z ${RPPG_OPENCV_ANDROID_SDK:-} ||
+      "$RPPG_OPENCV_ANDROID_SDK" != /* ||
+      ! -f "$RPPG_OPENCV_ANDROID_SDK/sdk/native/jni/OpenCVConfig.cmake" ]]; then
+  die 'RPPG_OPENCV_ANDROID_SDK must point to OpenCV Android SDK 4.13.0'
+fi
+
+ort_aar_name=onnxruntime-android-1.27.0.aar
+ort_aar_sha256=077dec5e2d821234c7dc0aba584bec8f999854b546c754cab93a90741c56fbeb
+if [[ -z ${RPPG_ONNXRUNTIME_ANDROID:-} ||
+      "$RPPG_ONNXRUNTIME_ANDROID" != /* ||
+      ! -f "$RPPG_ONNXRUNTIME_ANDROID/.aar.sha256" ||
+      ! -f "$RPPG_ONNXRUNTIME_ANDROID/headers/onnxruntime_cxx_api.h" ||
+      ! -f "$RPPG_ONNXRUNTIME_ANDROID/jni/arm64-v8a/libonnxruntime.so" ]]; then
+  die 'RPPG_ONNXRUNTIME_ANDROID must point to ONNX Runtime Android 1.27.0'
+fi
+if [[ "$(<"$RPPG_ONNXRUNTIME_ANDROID/.aar.sha256")" != "$ort_aar_sha256" ]]; then
+  die 'ONNX Runtime Android 1.27.0 checksum mismatch'
+fi
+if [[ -f "$RPPG_ONNXRUNTIME_ANDROID/$ort_aar_name" ]]; then
+  actual_ort_sha256=$(
+    shasum -a 256 "$RPPG_ONNXRUNTIME_ANDROID/$ort_aar_name" | awk '{print $1}'
+  )
+  if [[ "$actual_ort_sha256" != "$ort_aar_sha256" ]]; then
+    die 'ONNX Runtime Android 1.27.0 checksum mismatch'
+  fi
+fi
+
 gradlew="$root/android/gradlew"
 if [[ ! -x "$gradlew" ]]; then
   die 'android/gradlew is missing or not executable'

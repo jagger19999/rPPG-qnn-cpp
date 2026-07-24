@@ -2,6 +2,12 @@ plugins {
     id 'com.android.application'
 }
 
+def onnxRuntimeRoot = System.getenv('RPPG_ONNXRUNTIME_ANDROID')
+if (onnxRuntimeRoot == null || onnxRuntimeRoot.isBlank()) {
+    throw new GradleException(
+            'RPPG_ONNXRUNTIME_ANDROID must point to onnxruntime-android-1.27.0')
+}
+
 android {
     namespace 'com.jagger.rppgbench'
     compileSdk 36
@@ -12,7 +18,7 @@ android {
         minSdk 26
         targetSdk 36
         versionCode 1
-        versionName '0.1.0-foundation'
+        versionName '0.3.0-traditional'
 
         ndk {
             abiFilters 'arm64-v8a'
@@ -49,5 +55,17 @@ android {
 
     buildFeatures {
         buildConfig false
+    }
+
+    sourceSets {
+        main {
+            jniLibs.srcDir file("${onnxRuntimeRoot}/jni")
+        }
+    }
+
+    packaging {
+        jniLibs {
+            excludes += ['**/libonnxruntime4j_jni.so']
+        }
     }
 }

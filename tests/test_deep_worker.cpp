@@ -314,7 +314,9 @@ void worker_converts_runtime_exceptions_into_safe_invalid_results() {
   EXPECT_TRUE(result.has_value());
   if (result.has_value()) {
     EXPECT_TRUE(!result->is_valid);
-    EXPECT_EQ(result->invalid_reason, std::string("model_inference_failed"));
+    EXPECT_EQ(result->backend, std::string("throwing"));
+    EXPECT_EQ(result->invalid_reason,
+              std::string("model_inference_failed: inference failed"));
     EXPECT_TRUE(std::isfinite(result->inference_ms));
   }
 }

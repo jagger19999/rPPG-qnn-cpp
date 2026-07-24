@@ -1,4 +1,4 @@
-#if defined(__linux__) && !defined(_GNU_SOURCE)
+#if defined(__linux__) && !defined(__ANDROID__) && !defined(_GNU_SOURCE)
 #define _GNU_SOURCE
 #endif
 
@@ -6,7 +6,7 @@
 
 #include <dlfcn.h>
 
-#if defined(__linux__)
+#if defined(__linux__) && !defined(__ANDROID__)
 #include <link.h>
 #endif
 
@@ -83,7 +83,10 @@ std::string resolve_macos_image(const std::string& attempted_path) {
 
 std::string resolve_loaded_library_path(void* handle,
                                         const std::string& attempted_path) {
-#if defined(__linux__)
+#if defined(__ANDROID__)
+  (void)handle;
+#endif
+#if defined(__linux__) && !defined(__ANDROID__)
   link_map* link_map = nullptr;
   if (dlinfo(handle, RTLD_DI_LINKMAP, &link_map) == 0 && link_map != nullptr &&
       link_map->l_name != nullptr && *link_map->l_name != '\0') {

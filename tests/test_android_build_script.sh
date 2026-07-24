@@ -94,9 +94,33 @@ mkdir -p "$(dirname "$toolchain")"
 : >"$toolchain"
 
 expect_failure \
-  'build_android.sh: android/gradlew is missing or not executable' \
+  'build_android.sh: RPPG_OPENCV_ANDROID_SDK must point to OpenCV Android SDK 4.13.0' \
   env -i PATH=/usr/bin:/bin JAVA_HOME="$java_17_patch_home" \
     ANDROID_SDK_ROOT="$fake_sdk" "$build_script"
+
+fake_opencv="$workspace/OpenCV-android-sdk"
+mkdir -p "$fake_opencv/sdk/native/jni"
+: >"$fake_opencv/sdk/native/jni/OpenCVConfig.cmake"
+
+expect_failure \
+  'build_android.sh: RPPG_ONNXRUNTIME_ANDROID must point to ONNX Runtime Android 1.27.0' \
+  env -i PATH=/usr/bin:/bin JAVA_HOME="$java_17_patch_home" \
+    ANDROID_SDK_ROOT="$fake_sdk" RPPG_OPENCV_ANDROID_SDK="$fake_opencv" \
+    "$build_script"
+
+fake_ort="$workspace/onnxruntime-android-1.27.0"
+mkdir -p "$fake_ort/headers" "$fake_ort/jni/arm64-v8a"
+: >"$fake_ort/headers/onnxruntime_cxx_api.h"
+: >"$fake_ort/jni/arm64-v8a/libonnxruntime.so"
+printf '%s\n' \
+  '077dec5e2d821234c7dc0aba584bec8f999854b546c754cab93a90741c56fbeb' \
+  >"$fake_ort/.aar.sha256"
+
+expect_failure \
+  'build_android.sh: android/gradlew is missing or not executable' \
+  env -i PATH=/usr/bin:/bin JAVA_HOME="$java_17_patch_home" \
+    ANDROID_SDK_ROOT="$fake_sdk" RPPG_OPENCV_ANDROID_SDK="$fake_opencv" \
+    RPPG_ONNXRUNTIME_ANDROID="$fake_ort" "$build_script"
 
 gradle_args="$workspace/gradle-args"
 cat >"$isolated_repo/android/gradlew" <<'GRADLEW'
@@ -119,13 +143,17 @@ expected_gradle_args=$(printf '%s\n' \
 expect_failure \
   'build_android.sh: Android debug APK was not produced' \
   env -i PATH=/usr/bin:/bin JAVA_HOME="$java_17_patch_home" \
-    ANDROID_SDK_ROOT="$fake_sdk" STUB_GRADLE_ARGS="$gradle_args" \
+    ANDROID_SDK_ROOT="$fake_sdk" RPPG_OPENCV_ANDROID_SDK="$fake_opencv" \
+    RPPG_ONNXRUNTIME_ANDROID="$fake_ort" \
+    STUB_GRADLE_ARGS="$gradle_args" \
     STUB_APK="$isolated_apk" "$isolated_repo/scripts/build_android.sh"
 assert_file_equals "$expected_gradle_args" "$gradle_args"
 
 success_output="$workspace/success-output"
 env -i PATH=/usr/bin:/bin JAVA_HOME="$java_17_patch_home" \
-  ANDROID_SDK_ROOT="$fake_sdk" STUB_GRADLE_ARGS="$gradle_args" \
+  ANDROID_SDK_ROOT="$fake_sdk" RPPG_OPENCV_ANDROID_SDK="$fake_opencv" \
+  RPPG_ONNXRUNTIME_ANDROID="$fake_ort" \
+  STUB_GRADLE_ARGS="$gradle_args" \
   STUB_CREATE_APK=1 STUB_APK="$isolated_apk" \
   "$isolated_repo/scripts/build_android.sh" >"$success_output"
 assert_file_equals "$expected_gradle_args" "$gradle_args"

@@ -32,24 +32,31 @@ int main() {
   struct ErrorCodeMapping {
     rppg_qnn::ErrorCode code;
     const char* name;
+    int exit_code;
   };
   const ErrorCodeMapping mappings[] = {
-      {rppg_qnn::ErrorCode::ConfigInvalid, "CONFIG_INVALID"},
-      {rppg_qnn::ErrorCode::CameraOpenFailed, "CAMERA_OPEN_FAILED"},
+      {rppg_qnn::ErrorCode::ConfigInvalid, "CONFIG_INVALID", 2},
+      {rppg_qnn::ErrorCode::CameraOpenFailed, "CAMERA_OPEN_FAILED", 3},
       {rppg_qnn::ErrorCode::CameraFormatUnsupported,
-       "CAMERA_FORMAT_UNSUPPORTED"},
-      {rppg_qnn::ErrorCode::LowCaptureFps, "LOW_CAPTURE_FPS"},
-      {rppg_qnn::ErrorCode::FaceNotFound, "FACE_NOT_FOUND"},
-      {rppg_qnn::ErrorCode::QnnLibraryNotFound, "QNN_LIBRARY_NOT_FOUND"},
-      {rppg_qnn::ErrorCode::QnnApiIncompatible, "QNN_API_INCOMPATIBLE"},
-      {rppg_qnn::ErrorCode::QnnGpuInitFailed, "QNN_GPU_INIT_FAILED"},
-      {rppg_qnn::ErrorCode::ModelManifestInvalid, "MODEL_MANIFEST_INVALID"},
-      {rppg_qnn::ErrorCode::ModelLoadFailed, "MODEL_LOAD_FAILED"},
-      {rppg_qnn::ErrorCode::InferenceFailed, "INFERENCE_FAILED"},
-      {rppg_qnn::ErrorCode::OutputWriteFailed, "OUTPUT_WRITE_FAILED"},
+       "CAMERA_FORMAT_UNSUPPORTED", 4},
+      {rppg_qnn::ErrorCode::LowCaptureFps, "LOW_CAPTURE_FPS", 5},
+      {rppg_qnn::ErrorCode::FaceNotFound, "FACE_NOT_FOUND", 6},
+      {rppg_qnn::ErrorCode::QnnLibraryNotFound, "QNN_LIBRARY_NOT_FOUND", 7},
+      {rppg_qnn::ErrorCode::QnnApiIncompatible, "QNN_API_INCOMPATIBLE", 8},
+      {rppg_qnn::ErrorCode::QnnGpuInitFailed, "QNN_GPU_INIT_FAILED", 9},
+      {rppg_qnn::ErrorCode::ModelManifestInvalid, "MODEL_MANIFEST_INVALID", 10},
+      {rppg_qnn::ErrorCode::ModelLoadFailed, "MODEL_LOAD_FAILED", 11},
+      {rppg_qnn::ErrorCode::InferenceFailed, "INFERENCE_FAILED", 12},
+      {rppg_qnn::ErrorCode::OutputWriteFailed, "OUTPUT_WRITE_FAILED", 13},
+      {rppg_qnn::ErrorCode::CameraPermissionDenied,
+       "CAMERA_PERMISSION_DENIED", 14},
+      {rppg_qnn::ErrorCode::CameraIdUnavailable, "CAMERA_ID_UNAVAILABLE", 15},
+      {rppg_qnn::ErrorCode::CameraImageInvalid, "CAMERA_IMAGE_INVALID", 16},
+      {rppg_qnn::ErrorCode::NativeStateInvalid, "NATIVE_STATE_INVALID", 17},
   };
   for (const auto& mapping : mappings) {
     EXPECT_EQ(rppg_qnn::to_string(mapping.code), mapping.name);
+    EXPECT_EQ(rppg_qnn::exit_code_for(mapping.code), mapping.exit_code);
   }
   EXPECT_EQ(rppg_qnn::to_string(static_cast<rppg_qnn::ErrorCode>(999)),
             "UNKNOWN_ERROR");
