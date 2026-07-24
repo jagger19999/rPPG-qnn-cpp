@@ -121,6 +121,9 @@ android/app/src/main/cpp/android_qnn_preflight_stub.cpp
 android/app/src/main/cpp/native_bridge.cpp
 android/app/src/main/java/com/jagger/rppgbench/MainActivity.java
 android/app/src/main/java/com/jagger/rppgbench/NativeBridge.java
+android/app/src/main/java/com/jagger/rppgbench/watch/HeartRateParser.java
+android/app/src/main/java/com/jagger/rppgbench/watch/WatchContracts.java
+android/app/src/main/java/com/jagger/rppgbench/watch/WatchSampleStore.java
 EOF
 )
 actual_sources=$(CDPATH= cd -- "$root" && find android \
@@ -264,6 +267,9 @@ android/app/src/main/cpp/android_qnn_preflight_stub.cpp
 android/app/src/main/cpp/native_bridge.cpp
 android/app/src/main/java/com/jagger/rppgbench/MainActivity.java
 android/app/src/main/java/com/jagger/rppgbench/NativeBridge.java
+android/app/src/main/java/com/jagger/rppgbench/watch/HeartRateParser.java
+android/app/src/main/java/com/jagger/rppgbench/watch/WatchContracts.java
+android/app/src/main/java/com/jagger/rppgbench/watch/WatchSampleStore.java
 android/app/src/main/res/values/strings.xml
 android/build.gradle
 android/gradle.properties
