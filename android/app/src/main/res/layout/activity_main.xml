@@ -64,6 +64,15 @@
             android:layout_marginTop="8dp"
             android:textSize="14sp" />
 
+        <TextView
+            android:id="@+id/fps_line"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:text="@string/fps_line_idle"
+            android:textSize="16sp"
+            android:textStyle="bold" />
+
         <ImageView
             android:id="@+id/roi_image"
             android:layout_width="160dp"
@@ -115,6 +124,18 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:text="@string/deep_selector_label" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:text="@string/camera_selector_label"
+                android:textSize="14sp" />
+
+            <Spinner
+                android:id="@+id/camera_selector"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content" />
 
             <Button
                 android:id="@+id/list_cameras"

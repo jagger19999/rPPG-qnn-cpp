@@ -80,6 +80,8 @@ std::string status_json(const CameraSessionStatus& status) {
          << "\",\"requested_width\":" << status.requested_width
          << ",\"requested_height\":" << status.requested_height
          << ",\"requested_fps\":" << status.requested_fps
+         << ",\"target_fps_min\":" << status.target_fps_min
+         << ",\"target_fps_max\":" << status.target_fps_max
          << ",\"measured_fps\":" << status.measured_fps
          << ",\"accepted_frames\":" << status.accepted_frames
          << ",\"dropped_frames\":" << status.dropped_frames
@@ -123,14 +125,16 @@ std::string status_json(const CameraSessionStatus& status) {
 }  // namespace
 
 std::string list_cameras_json() {
-  const std::vector<std::string> cameras = AndroidCameraSession::list_cameras();
+  const std::vector<CameraInfo> cameras =
+      AndroidCameraSession::list_camera_infos();
   std::ostringstream output;
   output << "{\"cameras\":[";
   for (std::size_t index = 0; index < cameras.size(); ++index) {
     if (index != 0U) {
       output << ',';
     }
-    output << '"' << json_escape(cameras[index]) << '"';
+    output << "{\"id\":\"" << json_escape(cameras[index].id)
+           << "\",\"facing\":\"" << json_escape(cameras[index].facing) << "\"}";
   }
   output << "]}";
   return output.str();

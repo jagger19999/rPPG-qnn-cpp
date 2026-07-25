@@ -11,6 +11,7 @@ import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
 import android.view.View;
+import android.widget.AdapterView;
 import android.widget.ArrayAdapter;
 import android.widget.Button;
 import android.widget.CheckBox;
@@ -27,6 +28,7 @@ import com.jagger.rppgbench.watch.WatchBleWorker;
 import com.jagger.rppgbench.watch.WatchContracts;
 import com.jagger.rppgbench.watch.WatchCsvExport;
 
+import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.File;
@@ -61,15 +63,19 @@ public final class MainActivity extends Activity {
     private HrMetricCard deepCard;
     private HrMetricCard watchCard;
     private TextView alignmentView;
+    private TextView fpsLine;
     private ImageView roiImage;
     private TextView roiPlaceholder;
     private TextView diagnosticText;
     private LinearLayout cameraSection;
     private LinearLayout watchSection;
     private Spinner methodSelector;
+    private Spinner cameraSelector;
     private Spinner watchDeviceSelector;
     private CheckBox deepSelector;
+    private ArrayAdapter<String> cameraAdapter;
     private ArrayAdapter<String> watchDeviceAdapter;
+    private final List<CameraEntry> cameraEntries = new ArrayList<>();
     private final List<WatchContracts.WatchDevice> watchDevices = new ArrayList<>();
     private final List<WatchContracts.WatchAlignmentResult> alignmentHistory = new ArrayList<>();
 
@@ -82,6 +88,7 @@ public final class MainActivity extends Activity {
     private String cameraId;
     private long nativeHandle;
     private boolean started;
+    private boolean cameraSpinnerInitializing;
     private int pendingAction = ACTION_NONE;
     private int pendingBleAction = BLE_ACTION_NONE;
     private WatchBleWorker watchWorker;
@@ -99,6 +106,7 @@ public final class MainActivity extends Activity {
         deepCard = new HrMetricCard(findViewById(R.id.card_deep));
         watchCard = new HrMetricCard(findViewById(R.id.card_watch));
         alignmentView = findViewById(R.id.alignment_line);
+        fpsLine = findViewById(R.id.fps_line);
         roiImage = findViewById(R.id.roi_image);
         roiPlaceholder = findViewById(R.id.roi_placeholder);
         diagnosticText = findViewById(R.id.diagnostic_text);
@@ -115,6 +123,34 @@ public final class MainActivity extends Activity {
         methodSelector.setAdapter(methodAdapter);
 
         deepSelector = findViewById(R.id.deep_selector);
+
+        cameraAdapter =
+                new ArrayAdapter<>(this, android.R.layout.simple_spinner_item, new ArrayList<>());
+        cameraAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        cameraSelector = findViewById(R.id.camera_selector);
+        cameraSelector.setAdapter(cameraAdapter);
+        cameraSelector.setOnItemSelectedListener(
+                new AdapterView.OnItemSelectedListener() {
+                    @Override
+                    public void onItemSelected(
+                            AdapterView<?> parent, View view, int position, long id) {
+                        if (cameraSpinnerInitializing || position < 0
+                                || position >= cameraEntries.size()) {
+                            return;
+                        }
+                        String selectedId = cameraEntries.get(position).id;
+                        if (selectedId.equals(cameraId)) {
+                            return;
+                        }
+                        cameraId = selectedId;
+                        if (started) {
+                            restartCameraWithSelectedId();
+                        }
+                    }
+
+                    @Override
+                    public void onNothingSelected(AdapterView<?> parent) {}
+                });
 
         watchDeviceAdapter =
                 new ArrayAdapter<>(this, android.R.layout.simple_spinner_item, new ArrayList<>());
@@ -137,6 +173,10 @@ public final class MainActivity extends Activity {
         setupFoldToggles();
 
         ensureWatchWorker();
+        if (checkSelfPermission(Manifest.permission.CAMERA)
+                == PackageManager.PERMISSION_GRANTED) {
+            refreshCameraSpinner(false);
+        }
         refreshCombinedStatus();
         statusHandler.post(statusPoll);
     }
@@ -243,10 +283,41 @@ public final class MainActivity extends Activity {
             alignmentView.setText(HrStatusFormatter.alignmentLine(null, null, null));
         }
 
+        updateFpsLine(cameraJson);
+
         if (diagnosticExpanded) {
             refreshDiagnosticContent(cameraJson);
         }
         refreshWatchDeviceSpinner();
+    }
+
+    private void updateFpsLine(String cameraJson) {
+        if (!started || nativeHandle == 0) {
+            fpsLine.setText(getString(R.string.fps_line_idle));
+            return;
+        }
+        try {
+            JSONObject json = new JSONObject(cameraJson);
+            double measured = json.optDouble("measured_fps", 0.0);
+            int targetMin = json.optInt("target_fps_min", 0);
+            int targetMax = json.optInt("target_fps_max", 0);
+            long dropped = json.optLong("dropped_frames", 0L);
+            String measuredText =
+                    measured > 0.0 ? formatDouble(measured) : "--";
+            String targetText =
+                    targetMin > 0 && targetMax > 0
+                            ? targetMin + "–" + targetMax
+                            : "--";
+            fpsLine.setText(
+                    String.format(
+                            Locale.CHINA,
+                            "采集 FPS: %s · 目标 %s · 丢帧 %d",
+                            measuredText,
+                            targetText,
+                            dropped));
+        } catch (Exception error) {
+            fpsLine.setText(getString(R.string.fps_line_idle));
+        }
     }
 
     private void refreshDiagnosticContent(String cameraJson) {
@@ -470,16 +541,131 @@ public final class MainActivity extends Activity {
     private void listCameras() {
         try {
             String cameras = NativeBridge.nativeListCameras();
-            cameraId = extractFirstCamera(cameras);
-            StringBuilder message = new StringBuilder(cameras);
-            if (cameraId == null) {
-                message.append("\nCAMERA_ID_UNAVAILABLE: no Camera2 NDK camera");
-            } else {
-                message.append("\nselected_camera_id=").append(cameraId);
-            }
-            showUserMessage(message.toString());
+            refreshCameraSpinner(true);
+            showUserMessage(cameras);
         } catch (Throwable error) {
             showUserMessage("CAMERA_LIST_FAILED: " + error.getMessage());
+        }
+    }
+
+    private void refreshCameraSpinner(boolean showSelectionMessage) {
+        try {
+            String camerasJson = NativeBridge.nativeListCameras();
+            populateCameraSpinner(camerasJson);
+            if (showSelectionMessage && cameraId != null) {
+                showUserMessage(camerasJson + "\nselected_camera_id=" + cameraId);
+            }
+        } catch (Throwable error) {
+            showUserMessage("CAMERA_LIST_FAILED: " + error.getMessage());
+        }
+    }
+
+    private void populateCameraSpinner(String camerasJson) {
+        List<CameraEntry> parsed = parseCameraEntries(camerasJson);
+        if (sameCameras(cameraEntries, parsed)) {
+            return;
+        }
+        cameraEntries.clear();
+        cameraEntries.addAll(parsed);
+        cameraAdapter.clear();
+        int defaultIndex = 0;
+        for (int index = 0; index < cameraEntries.size(); index++) {
+            CameraEntry entry = cameraEntries.get(index);
+            cameraAdapter.add(formatCameraLabel(entry));
+            if ("front".equals(entry.facing)) {
+                defaultIndex = index;
+            }
+        }
+        cameraAdapter.notifyDataSetChanged();
+        if (cameraEntries.isEmpty()) {
+            cameraId = null;
+            return;
+        }
+        cameraSpinnerInitializing = true;
+        cameraSelector.setSelection(defaultIndex, false);
+        cameraSpinnerInitializing = false;
+        cameraId = cameraEntries.get(defaultIndex).id;
+    }
+
+    private static List<CameraEntry> parseCameraEntries(String camerasJson) {
+        List<CameraEntry> entries = new ArrayList<>();
+        try {
+            JSONArray cameras = new JSONObject(camerasJson).getJSONArray("cameras");
+            for (int index = 0; index < cameras.length(); index++) {
+                JSONObject camera = cameras.getJSONObject(index);
+                entries.add(
+                        new CameraEntry(
+                                camera.getString("id"),
+                                camera.optString("facing", "unknown")));
+            }
+        } catch (Exception ignored) {
+            // Leave entries empty; caller shows failure elsewhere.
+        }
+        return entries;
+    }
+
+    private static boolean sameCameras(List<CameraEntry> left, List<CameraEntry> right) {
+        if (left.size() != right.size()) {
+            return false;
+        }
+        for (int index = 0; index < left.size(); index++) {
+            CameraEntry a = left.get(index);
+            CameraEntry b = right.get(index);
+            if (!a.id.equals(b.id) || !a.facing.equals(b.facing)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static String formatCameraLabel(CameraEntry entry) {
+        String facingLabel;
+        switch (entry.facing) {
+            case "front":
+                facingLabel = "前置";
+                break;
+            case "back":
+                facingLabel = "后置";
+                break;
+            case "external":
+                facingLabel = "外置";
+                break;
+            default:
+                facingLabel = "未知";
+                break;
+        }
+        return facingLabel + " (" + entry.id + ")";
+    }
+
+    private String selectedCameraId() {
+        int index = cameraSelector.getSelectedItemPosition();
+        if (index >= 0 && index < cameraEntries.size()) {
+            return cameraEntries.get(index).id;
+        }
+        return cameraId;
+    }
+
+    private void restartCameraWithSelectedId() {
+        stopCameraSilently();
+        startCamera();
+    }
+
+    private void stopCameraSilently() {
+        if (nativeHandle == 0) {
+            started = false;
+            return;
+        }
+        try {
+            NativeBridge.nativeStop(nativeHandle);
+            exportWatchCsv();
+        } catch (Throwable ignored) {
+            // Best effort before switching cameras.
+        } finally {
+            started = false;
+            NativeBridge.nativeDestroy(nativeHandle);
+            nativeHandle = 0;
+            roiImage.setVisibility(View.GONE);
+            roiPlaceholder.setVisibility(View.VISIBLE);
         }
     }
 
@@ -487,16 +673,20 @@ public final class MainActivity extends Activity {
         if (started) {
             return;
         }
-        if (cameraId == null) {
-            listCameras();
+        if (cameraEntries.isEmpty()) {
+            refreshCameraSpinner(false);
         }
+        cameraId = selectedCameraId();
         if (cameraId == null) {
+            showUserMessage("CAMERA_ID_UNAVAILABLE: no Camera2 NDK camera");
             return;
         }
         try {
-            if (nativeHandle == 0) {
-                nativeHandle = NativeBridge.nativeCreate(cameraId, 640, 480, 30);
+            if (nativeHandle != 0) {
+                NativeBridge.nativeDestroy(nativeHandle);
+                nativeHandle = 0;
             }
+            nativeHandle = NativeBridge.nativeCreate(cameraId, 640, 480, 30);
             File cascade = ensureCascadeAsset();
             sessionOutputDirectory =
                     new File(
@@ -612,6 +802,11 @@ public final class MainActivity extends Activity {
                 return;
             }
             performAction(action);
+            if (action == ACTION_NONE
+                    && checkSelfPermission(Manifest.permission.CAMERA)
+                            == PackageManager.PERMISSION_GRANTED) {
+                refreshCameraSpinner(false);
+            }
             return;
         }
         if (requestCode == BLE_PERMISSION_REQUEST) {
@@ -627,32 +822,18 @@ public final class MainActivity extends Activity {
         }
     }
 
-    private static String formatDouble(double value) {
-        return String.format(Locale.US, "%.4g", value);
+    private static final class CameraEntry {
+        private final String id;
+        private final String facing;
+
+        private CameraEntry(String id, String facing) {
+            this.id = id;
+            this.facing = facing;
+        }
     }
 
-    private static String extractFirstCamera(String json) {
-        int array = json.indexOf("[\"");
-        if (array < 0) {
-            return null;
-        }
-        int start = array + 2;
-        StringBuilder value = new StringBuilder();
-        boolean escaped = false;
-        for (int index = start; index < json.length(); index++) {
-            char character = json.charAt(index);
-            if (escaped) {
-                value.append(character);
-                escaped = false;
-            } else if (character == '\\') {
-                escaped = true;
-            } else if (character == '"') {
-                return value.toString();
-            } else {
-                value.append(character);
-            }
-        }
-        return null;
+    private static String formatDouble(double value) {
+        return String.format(Locale.US, "%.4g", value);
     }
 
     private File ensureCascadeAsset() throws IOException {

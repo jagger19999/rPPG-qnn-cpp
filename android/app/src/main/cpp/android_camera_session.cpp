@@ -13,11 +13,13 @@
 #include <android/log.h>
 #include <camera/NdkCameraDevice.h>
 #include <camera/NdkCameraManager.h>
+#include <camera/NdkCameraMetadataTags.h>
 #include <media/NdkImage.h>
 #include <media/NdkImageReader.h>
 
 #include <algorithm>
 #include <atomic>
+#include <cmath>
 #include <condition_variable>
 #include <cstdint>
 #include <deque>
@@ -56,6 +58,121 @@ void require_media_ok(media_status_t result, ErrorCode code,
   if (result != AMEDIA_OK) {
     throw AppError(code, std::string(operation) + " failed: " +
                              std::to_string(result));
+  }
+}
+
+std::string lens_facing_label(std::uint8_t facing) {
+  switch (facing) {
+    case ACAMERA_LENS_FACING_FRONT:
+      return "front";
+    case ACAMERA_LENS_FACING_BACK:
+      return "back";
+    case ACAMERA_LENS_FACING_EXTERNAL:
+      return "external";
+    default:
+      return "unknown";
+  }
+}
+
+std::string read_lens_facing(ACameraManager* manager,
+                             const char* camera_id) {
+  ACameraMetadata* characteristics = nullptr;
+  const camera_status_t result = ACameraManager_getCameraCharacteristics(
+      manager, camera_id, &characteristics);
+  if (result != ACAMERA_OK || characteristics == nullptr) {
+    return "unknown";
+  }
+  ACameraMetadata_const_entry entry{};
+  if (ACameraMetadata_getConstEntry(characteristics, ACAMERA_LENS_FACING,
+                                    &entry) != ACAMERA_OK ||
+      entry.count == 0U || entry.data.u8 == nullptr) {
+    ACameraMetadata_free(characteristics);
+    return "unknown";
+  }
+  const std::string facing = lens_facing_label(entry.data.u8[0]);
+  ACameraMetadata_free(characteristics);
+  return facing;
+}
+
+struct FpsRange {
+  int min_fps{0};
+  int max_fps{0};
+};
+
+FpsRange pick_target_fps_range(const ACameraMetadata_const_entry& entry,
+                               int desired_fps) {
+  if (entry.count < 2U || entry.data.i32 == nullptr ||
+      entry.count % 2U != 0U) {
+    return {desired_fps, desired_fps};
+  }
+
+  const std::size_t range_count = entry.count / 2U;
+  FpsRange exact_match{0, 0};
+  FpsRange includes_desired{0, 0};
+  FpsRange closest{entry.data.i32[0], entry.data.i32[1]};
+  int closest_distance =
+      std::abs(closest.min_fps - desired_fps) +
+      std::abs(closest.max_fps - desired_fps);
+
+  for (std::size_t index = 0; index < range_count; ++index) {
+    const int min_fps = entry.data.i32[index * 2U];
+    const int max_fps = entry.data.i32[index * 2U + 1U];
+    if (min_fps == desired_fps && max_fps == desired_fps) {
+      exact_match = {min_fps, max_fps};
+      break;
+    }
+    if (min_fps <= desired_fps && max_fps >= desired_fps) {
+      if (includes_desired.min_fps == 0 && includes_desired.max_fps == 0) {
+        includes_desired = {min_fps, max_fps};
+      } else if (min_fps > includes_desired.min_fps) {
+        includes_desired = {min_fps, max_fps};
+      }
+    }
+    const int distance =
+        std::abs(min_fps - desired_fps) + std::abs(max_fps - desired_fps);
+    if (distance < closest_distance) {
+      closest = {min_fps, max_fps};
+      closest_distance = distance;
+    }
+  }
+
+  if (exact_match.min_fps > 0) {
+    return exact_match;
+  }
+  if (includes_desired.min_fps > 0) {
+    return includes_desired;
+  }
+  return closest;
+}
+
+void apply_target_fps_range(ACameraManager* manager,
+                            const std::string& camera_id,
+                            ACaptureRequest* request, int desired_fps,
+                            CameraSessionStatus* snapshot) {
+  ACameraMetadata* characteristics = nullptr;
+  require_camera_ok(
+      ACameraManager_getCameraCharacteristics(manager, camera_id.c_str(),
+                                              &characteristics),
+      ErrorCode::CameraOpenFailed, "ACameraManager_getCameraCharacteristics");
+
+  ACameraMetadata_const_entry entry{};
+  const camera_status_t metadata_result = ACameraMetadata_getConstEntry(
+      characteristics, ACAMERA_CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES, &entry);
+  FpsRange chosen{desired_fps, desired_fps};
+  if (metadata_result == ACAMERA_OK) {
+    chosen = pick_target_fps_range(entry, desired_fps);
+  }
+
+  const int range[] = {chosen.min_fps, chosen.max_fps};
+  require_camera_ok(
+      ACaptureRequest_setEntry_i32(request, ACAMERA_CONTROL_AE_TARGET_FPS_RANGE,
+                                   2, range),
+      ErrorCode::CameraOpenFailed, "ACaptureRequest_setEntry_i32 FPS range");
+  ACameraMetadata_free(characteristics);
+
+  if (snapshot != nullptr) {
+    snapshot->target_fps_min = chosen.min_fps;
+    snapshot->target_fps_max = chosen.max_fps;
   }
 }
 
@@ -493,6 +610,12 @@ struct AndroidCameraSession::Impl {
                         ErrorCode::CameraOpenFailed,
                         "ACaptureRequest_addTarget");
 
+      {
+        std::lock_guard<std::mutex> lock(status_mutex);
+        apply_target_fps_range(manager, config.camera_id, request, config.fps,
+                               &snapshot);
+      }
+
       ACameraCaptureSession_stateCallbacks session_callbacks{
           this, &Impl::on_session_closed, &Impl::on_session_ready,
           &Impl::on_session_active};
@@ -800,6 +923,16 @@ AndroidCameraSession::AndroidCameraSession(CameraSessionConfig config)
 AndroidCameraSession::~AndroidCameraSession() = default;
 
 std::vector<std::string> AndroidCameraSession::list_cameras() {
+  const std::vector<CameraInfo> infos = list_camera_infos();
+  std::vector<std::string> ids;
+  ids.reserve(infos.size());
+  for (const CameraInfo& info : infos) {
+    ids.push_back(info.id);
+  }
+  return ids;
+}
+
+std::vector<CameraInfo> AndroidCameraSession::list_camera_infos() {
   ACameraManager* manager = ACameraManager_create();
   if (manager == nullptr) {
     throw AppError(ErrorCode::CameraOpenFailed,
@@ -815,13 +948,17 @@ std::vector<std::string> AndroidCameraSession::list_cameras() {
                        std::to_string(result));
   }
 
-  std::vector<std::string> ids;
+  std::vector<CameraInfo> cameras;
   try {
-    ids.reserve(static_cast<std::size_t>(std::max(camera_ids->numCameras, 0)));
+    cameras.reserve(static_cast<std::size_t>(std::max(camera_ids->numCameras, 0)));
     for (int index = 0; index < camera_ids->numCameras; ++index) {
-      if (camera_ids->cameraIds[index] != nullptr) {
-        ids.emplace_back(camera_ids->cameraIds[index]);
+      if (camera_ids->cameraIds[index] == nullptr) {
+        continue;
       }
+      CameraInfo info;
+      info.id = camera_ids->cameraIds[index];
+      info.facing = read_lens_facing(manager, info.id.c_str());
+      cameras.emplace_back(std::move(info));
     }
   } catch (...) {
     ACameraManager_deleteCameraIdList(camera_ids);
@@ -830,7 +967,7 @@ std::vector<std::string> AndroidCameraSession::list_cameras() {
   }
   ACameraManager_deleteCameraIdList(camera_ids);
   ACameraManager_delete(manager);
-  return ids;
+  return cameras;
 }
 
 void AndroidCameraSession::configure_processing(

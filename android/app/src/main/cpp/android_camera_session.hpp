@@ -22,12 +22,19 @@ struct TraditionalProcessingConfig {
   std::string model_path;
 };
 
+struct CameraInfo {
+  std::string id;
+  std::string facing{"unknown"};
+};
+
 struct CameraSessionStatus {
   std::string state{"created"};
   std::string camera_id;
   int requested_width{0};
   int requested_height{0};
   int requested_fps{0};
+  int target_fps_min{0};
+  int target_fps_max{0};
   double measured_fps{0.0};
   std::uint64_t accepted_frames{0};
   std::uint64_t dropped_frames{0};
@@ -65,6 +72,7 @@ class AndroidCameraSession {
   AndroidCameraSession& operator=(const AndroidCameraSession&) = delete;
 
   static std::vector<std::string> list_cameras();
+  static std::vector<CameraInfo> list_camera_infos();
 
   void configure_processing(TraditionalProcessingConfig config);
   void start();

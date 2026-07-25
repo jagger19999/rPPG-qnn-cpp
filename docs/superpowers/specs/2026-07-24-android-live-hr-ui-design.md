@@ -134,3 +134,18 @@ Stop / `onStop` 只停相机；手表不断开（与现有 BLE 设计一致）�
 - 布局：**A 三卡并排**
 - 脸：**都要**（ROI + 预览框），**分期**执行
 - Launcher：`/Users/wangjie/Documents/keti/rPPG-qnn-cpp/logo.png`
+
+## 10. Phase 2 增补（2026-07-25 真机反馈）
+
+真机一期发现：默认后置、无法选前置、measured FPS 过低，导致 rPPG/深度结果不可信。二期必须同时交付：
+
+1. **前置摄像头**
+   - `list_cameras` JSON 包含每路 `id` + `facing`（`front`/`back`/`external`/`unknown`）
+   - UI 摄像头下拉框；**默认选择 front**；切换后需 Stop/Start 生效
+2. **采集硬目标 30 FPS**
+   - CaptureRequest 设置 `AE_TARGET_FPS_RANGE` 为可用区间中覆盖 30 的最优（优先精确 `[30,30]`）
+   - 状态常显 `measured_fps`；验收：**连续稳定运行时 measured_fps ≥ 29.0**（允许短暂抖动），否则标为未通过
+   - 排查并削减拖垮采集的路径（ROI JPEG 不得阻塞 ImageReader 回调线程；预览双输出不得把分析降到远低于 30）
+3. **实时预览 + 人脸框**（与 ROI 小图并存）
+4. **界面清晰度**：三卡更大字号/对比；摄像头与 FPS 放在首屏可见区
+
