@@ -357,19 +357,19 @@ struct AndroidCameraSession::Impl {
   }
 
   void clear_roi_jpeg() {
-    std::lock_guard<std::mutex> lock(roi_jpeg_mutex);
+    std::lock_guard<std::mutex> lock(status_mutex);
     latest_roi_jpeg_.clear();
     last_roi_jpeg_sec_ = 0.0;
   }
 
   void maybe_publish_roi_jpeg(const RoiPacket& packet) {
     if (packet.roi_bgr.empty() || !packet.face.has_value()) {
-      std::lock_guard<std::mutex> lock(roi_jpeg_mutex);
+      std::lock_guard<std::mutex> lock(status_mutex);
       latest_roi_jpeg_.clear();
       return;
     }
     {
-      std::lock_guard<std::mutex> lock(roi_jpeg_mutex);
+      std::lock_guard<std::mutex> lock(status_mutex);
       if (packet.timestamp_sec - last_roi_jpeg_sec_ < 0.25) {
         return;
       }
@@ -379,15 +379,17 @@ struct AndroidCameraSession::Impl {
     std::vector<std::uint8_t> encoded;
     if (!cv::imencode(".jpg", small, encoded,
                        {cv::IMWRITE_JPEG_QUALITY, 80})) {
+      std::lock_guard<std::mutex> lock(status_mutex);
+      latest_roi_jpeg_.clear();
       return;
     }
-    std::lock_guard<std::mutex> lock(roi_jpeg_mutex);
+    std::lock_guard<std::mutex> lock(status_mutex);
     latest_roi_jpeg_ = std::move(encoded);
     last_roi_jpeg_sec_ = packet.timestamp_sec;
   }
 
   std::vector<std::uint8_t> latest_roi_jpeg() const {
-    std::lock_guard<std::mutex> lock(roi_jpeg_mutex);
+    std::lock_guard<std::mutex> lock(status_mutex);
     return latest_roi_jpeg_;
   }
 
@@ -755,7 +757,6 @@ struct AndroidCameraSession::Impl {
 
   CameraSessionConfig config;
   std::optional<TraditionalProcessingConfig> processing_config;
-  mutable std::mutex roi_jpeg_mutex;
   std::vector<std::uint8_t> latest_roi_jpeg_;
   double last_roi_jpeg_sec_{0.0};
   mutable std::mutex status_mutex;
