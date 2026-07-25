@@ -136,6 +136,7 @@ android/app/src/main/cpp/android_qnn_preflight_stub.cpp
 android/app/src/main/cpp/native_bridge.cpp
 android/app/src/main/java/com/jagger/rppgbench/MainActivity.java
 android/app/src/main/java/com/jagger/rppgbench/NativeBridge.java
+android/app/src/main/java/com/jagger/rppgbench/ui/HrStatusFormatter.java
 android/app/src/main/java/com/jagger/rppgbench/watch/AndroidBleBackend.java
 android/app/src/main/java/com/jagger/rppgbench/watch/HeartRateParser.java
 android/app/src/main/java/com/jagger/rppgbench/watch/WatchAligner.java
@@ -287,6 +288,7 @@ android/app/src/main/cpp/android_qnn_preflight_stub.cpp
 android/app/src/main/cpp/native_bridge.cpp
 android/app/src/main/java/com/jagger/rppgbench/MainActivity.java
 android/app/src/main/java/com/jagger/rppgbench/NativeBridge.java
+android/app/src/main/java/com/jagger/rppgbench/ui/HrStatusFormatter.java
 android/app/src/main/java/com/jagger/rppgbench/watch/AndroidBleBackend.java
 android/app/src/main/java/com/jagger/rppgbench/watch/HeartRateParser.java
 android/app/src/main/java/com/jagger/rppgbench/watch/WatchAligner.java
@@ -310,6 +312,7 @@ android/app/src/main/res/mipmap-xxxhdpi/ic_launcher_foreground.png
 android/app/src/main/res/mipmap-xxxhdpi/ic_launcher_round.png
 android/app/src/main/res/values/colors.xml
 android/app/src/main/res/values/strings.xml
+android/app/src/test/java/com/jagger/rppgbench/ui/HrStatusFormatterTest.java
 android/app/src/test/java/com/jagger/rppgbench/watch/HeartRateParserTest.java
 android/app/src/test/java/com/jagger/rppgbench/watch/WatchAlignerTest.java
 android/app/src/test/java/com/jagger/rppgbench/watch/WatchBleWorkerTest.java
