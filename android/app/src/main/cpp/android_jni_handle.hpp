@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 namespace rppg_qnn::android {
 
@@ -18,5 +19,6 @@ std::string start_camera_session(std::int64_t handle);
 std::string stop_camera_session(std::int64_t handle);
 void destroy_camera_session(std::int64_t handle) noexcept;
 std::string camera_session_status_json(std::int64_t handle);
+std::vector<std::uint8_t> camera_session_roi_jpeg(std::int64_t handle);
 
 }  // namespace rppg_qnn::android

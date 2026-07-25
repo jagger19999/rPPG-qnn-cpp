@@ -70,6 +70,7 @@ class AndroidCameraSession {
   void start();
   void stop() noexcept;
   [[nodiscard]] CameraSessionStatus status() const;
+  [[nodiscard]] std::vector<std::uint8_t> latest_roi_jpeg() const;
 
  private:
   struct Impl;

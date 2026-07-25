@@ -12,6 +12,7 @@
 #include <string>
 #include <unordered_map>
 #include <utility>
+#include <vector>
 
 namespace rppg_qnn::android {
 namespace {
@@ -187,6 +188,10 @@ void destroy_camera_session(std::int64_t handle) noexcept {
 
 std::string camera_session_status_json(std::int64_t handle) {
   return status_json(lookup(handle)->status());
+}
+
+std::vector<std::uint8_t> camera_session_roi_jpeg(std::int64_t handle) {
+  return lookup(handle)->latest_roi_jpeg();
 }
 
 }  // namespace rppg_qnn::android

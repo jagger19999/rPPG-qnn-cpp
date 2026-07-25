@@ -198,13 +198,14 @@ for required_api in \
   'public static native String nativeStart(long handle);' \
   'public static native String nativeStop(long handle);' \
   'public static native void nativeDestroy(long handle);' \
-  'public static native String nativeGetStatus(long handle);'; do
+  'public static native String nativeGetStatus(long handle);' \
+  'public static native byte[] nativeGetRoiJpeg(long handle);'; do
   if ! grep -Fq "$required_api" "$native_bridge_java"; then
     echo "android packaging check: NativeBridge must declare $required_api" >&2
     exit 1
   fi
 done
-if ! grep -Fq 'find_package(OpenCV 4.13.0 EXACT REQUIRED COMPONENTS core imgproc objdetect)' "$camera_cmake" ||
+if ! grep -Fq 'find_package(OpenCV 4.13.0 EXACT REQUIRED COMPONENTS core imgproc imgcodecs objdetect)' "$camera_cmake" ||
    ! grep -Fq 'RPPG_OPENCV_ANDROID_SDK' "$camera_cmake"; then
   echo "android packaging check: Android CMake must pin the OpenCV 4.13.0 SDK" >&2
   exit 1

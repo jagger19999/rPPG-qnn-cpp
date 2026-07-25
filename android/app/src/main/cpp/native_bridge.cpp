@@ -8,6 +8,7 @@
 #include <functional>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace {
 
@@ -132,4 +133,35 @@ Java_com_jagger_rppgbench_NativeBridge_nativeGetStatus(JNIEnv* env, jclass,
   return string_result(env, [handle] {
     return rppg_qnn::android::camera_session_status_json(handle);
   });
+}
+
+extern "C" JNIEXPORT jbyteArray JNICALL
+Java_com_jagger_rppgbench_NativeBridge_nativeGetRoiJpeg(JNIEnv* env, jclass,
+                                                         jlong handle) noexcept {
+  try {
+    const std::vector<std::uint8_t> jpeg =
+        rppg_qnn::android::camera_session_roi_jpeg(handle);
+    jbyteArray result = env->NewByteArray(static_cast<jsize>(jpeg.size()));
+    if (result == nullptr) {
+      return env->NewByteArray(0);
+    }
+    if (!jpeg.empty()) {
+      env->SetByteArrayRegion(
+          result, 0, static_cast<jsize>(jpeg.size()),
+          reinterpret_cast<const jbyte*>(jpeg.data()));
+    }
+    return result;
+  } catch (const std::exception& error) {
+    jclass exception_class = env->FindClass("java/lang/IllegalStateException");
+    if (exception_class != nullptr) {
+      env->ThrowNew(exception_class, error_text(error).c_str());
+    }
+    return env->NewByteArray(0);
+  } catch (...) {
+    jclass exception_class = env->FindClass("java/lang/IllegalStateException");
+    if (exception_class != nullptr) {
+      env->ThrowNew(exception_class, "NATIVE_ERROR: unknown");
+    }
+    return env->NewByteArray(0);
+  }
 }

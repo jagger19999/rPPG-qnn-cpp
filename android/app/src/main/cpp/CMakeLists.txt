@@ -11,7 +11,7 @@ if(NOT DEFINED ENV{RPPG_OPENCV_ANDROID_SDK})
     message(FATAL_ERROR "RPPG_OPENCV_ANDROID_SDK must point to OpenCV-android-sdk")
 endif()
 set(OpenCV_DIR "$ENV{RPPG_OPENCV_ANDROID_SDK}/sdk/native/jni")
-find_package(OpenCV 4.13.0 EXACT REQUIRED COMPONENTS core imgproc objdetect)
+find_package(OpenCV 4.13.0 EXACT REQUIRED COMPONENTS core imgproc imgcodecs objdetect)
 
 if(NOT DEFINED ENV{RPPG_ONNXRUNTIME_ANDROID})
     message(FATAL_ERROR

@@ -18,4 +18,5 @@ public final class NativeBridge {
     public static native String nativeStop(long handle);
     public static native void nativeDestroy(long handle);
     public static native String nativeGetStatus(long handle);
+    public static native byte[] nativeGetRoiJpeg(long handle);
 }

@@ -33,6 +33,8 @@
 #include <vector>
 
 #include <opencv2/core.hpp>
+#include <opencv2/imgcodecs.hpp>
+#include <opencv2/imgproc.hpp>
 
 namespace rppg_qnn::android {
 namespace {
@@ -172,6 +174,19 @@ class StatusResultSink final : public IResultSink {
   ErrorCallback error_callback_;
 };
 
+class ThumbnailRoi final : public IRoiProcessor {
+ public:
+  using PublishCallback = std::function<void(const RoiPacket&)>;
+
+  ThumbnailRoi(std::unique_ptr<IRoiProcessor> inner, PublishCallback publish);
+
+  RoiPacket process(const FramePacket& frame) override;
+
+ private:
+  std::unique_ptr<IRoiProcessor> inner_;
+  PublishCallback publish_;
+};
+
 }  // namespace
 
 struct AndroidCameraSession::Impl {
@@ -264,8 +279,11 @@ struct AndroidCameraSession::Impl {
     dependencies.make_source = [queue, fps = pipeline_config.fps] {
       return std::make_unique<QueueFrameSource>(queue, fps);
     };
-    dependencies.make_roi = [cascade = requested.cascade_path] {
-      return std::make_unique<RoiProcessor>(cascade);
+    dependencies.make_roi = [this, cascade = requested.cascade_path] {
+      ThumbnailRoi::PublishCallback publish =
+          [this](const RoiPacket& packet) { maybe_publish_roi_jpeg(packet); };
+      return std::make_unique<ThumbnailRoi>(
+          std::make_unique<RoiProcessor>(cascade), std::move(publish));
     };
     if (requested.deep_enabled) {
       dependencies.make_deep_runtime = [model = requested.model_path] {
@@ -335,6 +353,42 @@ struct AndroidCameraSession::Impl {
       processing_thread.join();
     }
     frame_queue.reset();
+    clear_roi_jpeg();
+  }
+
+  void clear_roi_jpeg() {
+    std::lock_guard<std::mutex> lock(roi_jpeg_mutex);
+    latest_roi_jpeg_.clear();
+    last_roi_jpeg_sec_ = 0.0;
+  }
+
+  void maybe_publish_roi_jpeg(const RoiPacket& packet) {
+    if (packet.roi_bgr.empty() || !packet.face.has_value()) {
+      std::lock_guard<std::mutex> lock(roi_jpeg_mutex);
+      latest_roi_jpeg_.clear();
+      return;
+    }
+    {
+      std::lock_guard<std::mutex> lock(roi_jpeg_mutex);
+      if (packet.timestamp_sec - last_roi_jpeg_sec_ < 0.25) {
+        return;
+      }
+    }
+    cv::Mat small;
+    cv::resize(packet.roi_bgr, small, cv::Size(160, 160));
+    std::vector<std::uint8_t> encoded;
+    if (!cv::imencode(".jpg", small, encoded,
+                       {cv::IMWRITE_JPEG_QUALITY, 80})) {
+      return;
+    }
+    std::lock_guard<std::mutex> lock(roi_jpeg_mutex);
+    latest_roi_jpeg_ = std::move(encoded);
+    last_roi_jpeg_sec_ = packet.timestamp_sec;
+  }
+
+  std::vector<std::uint8_t> latest_roi_jpeg() const {
+    std::lock_guard<std::mutex> lock(roi_jpeg_mutex);
+    return latest_roi_jpeg_;
   }
 
   void start() {
@@ -377,6 +431,7 @@ struct AndroidCameraSession::Impl {
       snapshot.deep_invalid_reason.clear();
       timestamps.clear();
     }
+    clear_roi_jpeg();
 
     try {
       start_processing();
@@ -700,6 +755,9 @@ struct AndroidCameraSession::Impl {
 
   CameraSessionConfig config;
   std::optional<TraditionalProcessingConfig> processing_config;
+  mutable std::mutex roi_jpeg_mutex;
+  std::vector<std::uint8_t> latest_roi_jpeg_;
+  double last_roi_jpeg_sec_{0.0};
   mutable std::mutex status_mutex;
   CameraSessionStatus snapshot;
   std::deque<double> timestamps;
@@ -722,6 +780,18 @@ struct AndroidCameraSession::Impl {
   ACaptureRequest* request{nullptr};
   ACameraCaptureSession* capture_session{nullptr};
 };
+
+ThumbnailRoi::ThumbnailRoi(std::unique_ptr<IRoiProcessor> inner,
+                           PublishCallback publish)
+    : inner_(std::move(inner)), publish_(std::move(publish)) {}
+
+RoiPacket ThumbnailRoi::process(const FramePacket& frame) {
+  RoiPacket packet = inner_->process(frame);
+  if (publish_) {
+    publish_(packet);
+  }
+  return packet;
+}
 
 AndroidCameraSession::AndroidCameraSession(CameraSessionConfig config)
     : impl_(std::make_unique<Impl>(std::move(config))) {}
@@ -773,6 +843,10 @@ void AndroidCameraSession::stop() noexcept { impl_->stop(); }
 
 CameraSessionStatus AndroidCameraSession::status() const {
   return impl_->status();
+}
+
+std::vector<std::uint8_t> AndroidCameraSession::latest_roi_jpeg() const {
+  return impl_->latest_roi_jpeg();
 }
 
 }  // namespace rppg_qnn::android
