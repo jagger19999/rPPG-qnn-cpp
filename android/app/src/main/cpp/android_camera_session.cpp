@@ -11,6 +11,7 @@
 #include "rppg_qnn/yuv420.hpp"
 
 #include <android/log.h>
+#include <android/native_window.h>
 #include <camera/NdkCameraDevice.h>
 #include <camera/NdkCameraManager.h>
 #include <camera/NdkCameraMetadataTags.h>
@@ -293,7 +294,8 @@ class StatusResultSink final : public IResultSink {
 
 class ThumbnailRoi final : public IRoiProcessor {
  public:
-  using PublishCallback = std::function<void(const RoiPacket&)>;
+  using PublishCallback =
+      std::function<void(const RoiPacket&, int frame_width, int frame_height)>;
 
   ThumbnailRoi(std::unique_ptr<IRoiProcessor> inner, PublishCallback publish);
 
@@ -315,7 +317,13 @@ struct AndroidCameraSession::Impl {
     snapshot.requested_fps = config.fps;
   }
 
-  ~Impl() { stop(); }
+  ~Impl() {
+    stop();
+    if (preview_window != nullptr) {
+      ANativeWindow_release(preview_window);
+      preview_window = nullptr;
+    }
+  }
 
   void set_error(ErrorCode code, std::string message) {
     __android_log_print(ANDROID_LOG_ERROR, kLogTag, "%.*s: %s",
@@ -398,7 +406,10 @@ struct AndroidCameraSession::Impl {
     };
     dependencies.make_roi = [this, cascade = requested.cascade_path] {
       ThumbnailRoi::PublishCallback publish =
-          [this](const RoiPacket& packet) { maybe_publish_roi_jpeg(packet); };
+          [this](const RoiPacket& packet, int frame_width, int frame_height) {
+            update_face_rect(packet, frame_width, frame_height);
+            maybe_publish_roi_jpeg(packet);
+          };
       return std::make_unique<ThumbnailRoi>(
           std::make_unique<RoiProcessor>(cascade), std::move(publish));
     };
@@ -479,6 +490,42 @@ struct AndroidCameraSession::Impl {
     last_roi_jpeg_sec_ = 0.0;
   }
 
+  void update_face_rect(const RoiPacket& packet, int frame_width,
+                        int frame_height) {
+    std::lock_guard<std::mutex> lock(status_mutex);
+    if (packet.face.has_value() && frame_width > 0 && frame_height > 0) {
+      const FaceBox& face = *packet.face;
+      snapshot.face_rect_x =
+          static_cast<double>(face.x) / static_cast<double>(frame_width);
+      snapshot.face_rect_y =
+          static_cast<double>(face.y) / static_cast<double>(frame_height);
+      snapshot.face_rect_w =
+          static_cast<double>(face.width) / static_cast<double>(frame_width);
+      snapshot.face_rect_h =
+          static_cast<double>(face.height) / static_cast<double>(frame_height);
+      snapshot.face_rect_available = true;
+      snapshot.face_found = true;
+      return;
+    }
+    snapshot.face_rect_available = false;
+    snapshot.face_found = false;
+  }
+
+  void set_preview_surface(::ANativeWindow* window) {
+    std::lock_guard<std::mutex> lock(status_mutex);
+    if (snapshot.state == "running" || snapshot.state == "starting" ||
+        snapshot.state == "stopping") {
+      throw AppError(ErrorCode::NativeStateInvalid,
+                     "preview surface must be set before camera start");
+    }
+    if (preview_window != nullptr) {
+      ANativeWindow_release(preview_window);
+      preview_window = nullptr;
+    }
+    preview_window = window;
+    snapshot.preview_enabled = preview_window != nullptr;
+  }
+
   void maybe_publish_roi_jpeg(const RoiPacket& packet) {
     if (packet.roi_bgr.empty() || !packet.face.has_value()) {
       std::lock_guard<std::mutex> lock(status_mutex);
@@ -534,6 +581,12 @@ struct AndroidCameraSession::Impl {
       snapshot.dropped_frames = 0;
       snapshot.last_timestamp_sec = 0.0;
       snapshot.face_found = false;
+      snapshot.face_rect_available = false;
+      snapshot.face_rect_x = 0.0;
+      snapshot.face_rect_y = 0.0;
+      snapshot.face_rect_w = 0.0;
+      snapshot.face_rect_h = 0.0;
+      snapshot.preview_enabled = preview_window != nullptr;
       snapshot.heart_rate_available = false;
       snapshot.bpm = 0.0;
       snapshot.confidence = 0.0;
@@ -610,6 +663,25 @@ struct AndroidCameraSession::Impl {
                         ErrorCode::CameraOpenFailed,
                         "ACaptureRequest_addTarget");
 
+      const bool use_preview = preview_window != nullptr;
+      if (use_preview) {
+        require_camera_ok(
+            ACaptureSessionOutput_create(preview_window, &preview_session_output),
+            ErrorCode::CameraOpenFailed, "ACaptureSessionOutput_create preview");
+        require_camera_ok(
+            ACaptureSessionOutputContainer_add(output_container,
+                                               preview_session_output),
+            ErrorCode::CameraOpenFailed,
+            "ACaptureSessionOutputContainer_add preview");
+        require_camera_ok(
+            ACameraOutputTarget_create(preview_window, &preview_output_target),
+            ErrorCode::CameraOpenFailed, "ACameraOutputTarget_create preview");
+        require_camera_ok(
+            ACaptureRequest_addTarget(request, preview_output_target),
+            ErrorCode::CameraOpenFailed,
+            "ACaptureRequest_addTarget preview");
+      }
+
       {
         std::lock_guard<std::mutex> lock(status_mutex);
         apply_target_fps_range(manager, config.camera_id, request, config.fps,
@@ -619,10 +691,39 @@ struct AndroidCameraSession::Impl {
       ACameraCaptureSession_stateCallbacks session_callbacks{
           this, &Impl::on_session_closed, &Impl::on_session_ready,
           &Impl::on_session_active};
-      require_camera_ok(ACameraDevice_createCaptureSession(
-                            device, output_container, &session_callbacks,
-                            &capture_session),
-                        ErrorCode::CameraOpenFailed,
+      camera_status_t session_result = ACameraDevice_createCaptureSession(
+          device, output_container, &session_callbacks, &capture_session);
+      if (session_result != ACAMERA_OK && use_preview) {
+        __android_log_print(
+            ANDROID_LOG_WARN, kLogTag,
+            "dual output capture session failed (%d); falling back to "
+            "ImageReader only",
+            session_result);
+        if (preview_output_target != nullptr) {
+          (void)ACaptureRequest_removeTarget(request, preview_output_target);
+          ACameraOutputTarget_free(preview_output_target);
+          preview_output_target = nullptr;
+        }
+        if (output_container != nullptr && preview_session_output != nullptr) {
+          (void)ACaptureSessionOutputContainer_remove(output_container,
+                                                      preview_session_output);
+        }
+        if (preview_session_output != nullptr) {
+          ACaptureSessionOutput_free(preview_session_output);
+          preview_session_output = nullptr;
+        }
+        session_result = ACameraDevice_createCaptureSession(
+            device, output_container, &session_callbacks, &capture_session);
+        {
+          std::lock_guard<std::mutex> lock(status_mutex);
+          snapshot.preview_enabled = false;
+          if (snapshot.error_message.empty()) {
+            snapshot.error_message =
+                "preview_unavailable: dual output session rejected";
+          }
+        }
+      }
+      require_camera_ok(session_result, ErrorCode::CameraOpenFailed,
                         "ACameraDevice_createCaptureSession");
 
       ACaptureRequest* requests[] = {request};
@@ -633,6 +734,9 @@ struct AndroidCameraSession::Impl {
       std::lock_guard<std::mutex> lock(status_mutex);
       if (snapshot.state == "starting") {
         snapshot.state = "running";
+      }
+      if (use_preview && preview_session_output != nullptr) {
+        snapshot.preview_enabled = true;
       }
     } catch (const AppError& error) {
       const ErrorCode code = error.code();
@@ -696,6 +800,10 @@ struct AndroidCameraSession::Impl {
       ACameraOutputTarget_free(output_target);
       output_target = nullptr;
     }
+    if (preview_output_target != nullptr) {
+      ACameraOutputTarget_free(preview_output_target);
+      preview_output_target = nullptr;
+    }
     if (output_container != nullptr && session_output != nullptr) {
       (void)ACaptureSessionOutputContainer_remove(output_container,
                                                   session_output);
@@ -703,6 +811,14 @@ struct AndroidCameraSession::Impl {
     if (session_output != nullptr) {
       ACaptureSessionOutput_free(session_output);
       session_output = nullptr;
+    }
+    if (output_container != nullptr && preview_session_output != nullptr) {
+      (void)ACaptureSessionOutputContainer_remove(output_container,
+                                                  preview_session_output);
+    }
+    if (preview_session_output != nullptr) {
+      ACaptureSessionOutput_free(preview_session_output);
+      preview_session_output = nullptr;
     }
     if (output_container != nullptr) {
       ACaptureSessionOutputContainer_free(output_container);
@@ -897,10 +1013,13 @@ struct AndroidCameraSession::Impl {
   ACameraManager* manager{nullptr};
   ACameraDevice* device{nullptr};
   AImageReader* reader{nullptr};
-  ANativeWindow* window{nullptr};
+  ::ANativeWindow* window{nullptr};
+  ::ANativeWindow* preview_window{nullptr};
   ACaptureSessionOutputContainer* output_container{nullptr};
   ACaptureSessionOutput* session_output{nullptr};
+  ACaptureSessionOutput* preview_session_output{nullptr};
   ACameraOutputTarget* output_target{nullptr};
+  ACameraOutputTarget* preview_output_target{nullptr};
   ACaptureRequest* request{nullptr};
   ACameraCaptureSession* capture_session{nullptr};
 };
@@ -912,7 +1031,7 @@ ThumbnailRoi::ThumbnailRoi(std::unique_ptr<IRoiProcessor> inner,
 RoiPacket ThumbnailRoi::process(const FramePacket& frame) {
   RoiPacket packet = inner_->process(frame);
   if (publish_) {
-    publish_(packet);
+    publish_(packet, frame.bgr.cols, frame.bgr.rows);
   }
   return packet;
 }
@@ -973,6 +1092,10 @@ std::vector<CameraInfo> AndroidCameraSession::list_camera_infos() {
 void AndroidCameraSession::configure_processing(
     TraditionalProcessingConfig config) {
   impl_->configure_processing(std::move(config));
+}
+
+void AndroidCameraSession::set_preview_surface(::ANativeWindow* window) {
+  impl_->set_preview_surface(window);
 }
 
 void AndroidCameraSession::start() { impl_->start(); }

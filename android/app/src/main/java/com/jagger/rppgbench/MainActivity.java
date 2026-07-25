@@ -5,21 +5,26 @@ import android.app.Activity;
 import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.graphics.SurfaceTexture;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
+import android.view.Surface;
+import android.view.TextureView;
 import android.view.View;
 import android.widget.AdapterView;
 import android.widget.ArrayAdapter;
 import android.widget.Button;
 import android.widget.CheckBox;
+import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.Spinner;
 import android.widget.TextView;
 
+import com.jagger.rppgbench.ui.FaceBoxOverlay;
 import com.jagger.rppgbench.ui.HrMetricCard;
 import com.jagger.rppgbench.ui.HrStatusFormatter;
 import com.jagger.rppgbench.watch.AndroidBleBackend;
@@ -64,6 +69,10 @@ public final class MainActivity extends Activity {
     private HrMetricCard watchCard;
     private TextView alignmentView;
     private TextView fpsLine;
+    private FrameLayout previewContainer;
+    private TextureView previewSurface;
+    private FaceBoxOverlay faceBoxOverlay;
+    private TextView previewPlaceholder;
     private ImageView roiImage;
     private TextView roiPlaceholder;
     private TextView diagnosticText;
@@ -88,6 +97,8 @@ public final class MainActivity extends Activity {
     private String cameraId;
     private long nativeHandle;
     private boolean started;
+    private boolean previewSurfaceReady;
+    private boolean pendingPreviewBinding;
     private boolean cameraSpinnerInitializing;
     private int pendingAction = ACTION_NONE;
     private int pendingBleAction = BLE_ACTION_NONE;
@@ -107,6 +118,10 @@ public final class MainActivity extends Activity {
         watchCard = new HrMetricCard(findViewById(R.id.card_watch));
         alignmentView = findViewById(R.id.alignment_line);
         fpsLine = findViewById(R.id.fps_line);
+        previewContainer = findViewById(R.id.preview_container);
+        previewSurface = findViewById(R.id.preview_surface);
+        faceBoxOverlay = findViewById(R.id.face_box_overlay);
+        previewPlaceholder = findViewById(R.id.preview_placeholder);
         roiImage = findViewById(R.id.roi_image);
         roiPlaceholder = findViewById(R.id.roi_placeholder);
         diagnosticText = findViewById(R.id.diagnostic_text);
@@ -143,6 +158,7 @@ public final class MainActivity extends Activity {
                             return;
                         }
                         cameraId = selectedId;
+                        updatePreviewMirror();
                         if (started) {
                             restartCameraWithSelectedId();
                         }
@@ -170,6 +186,7 @@ public final class MainActivity extends Activity {
                 .setOnClickListener(view -> runWithBlePermission(BLE_ACTION_CONNECT));
         findViewById(R.id.disconnect_watch).setOnClickListener(view -> disconnectWatch());
 
+        setupPreviewSurface();
         setupFoldToggles();
 
         ensureWatchWorker();
@@ -179,6 +196,36 @@ public final class MainActivity extends Activity {
         }
         refreshCombinedStatus();
         statusHandler.post(statusPoll);
+    }
+
+    private void setupPreviewSurface() {
+        previewSurface.setSurfaceTextureListener(
+                new TextureView.SurfaceTextureListener() {
+                    @Override
+                    public void onSurfaceTextureAvailable(
+                            SurfaceTexture surfaceTexture, int width, int height) {
+                        surfaceTexture.setDefaultBufferSize(640, 480);
+                        previewSurfaceReady = true;
+                        if (pendingPreviewBinding || started) {
+                            bindPreviewSurface(surfaceTexture);
+                        }
+                    }
+
+                    @Override
+                    public void onSurfaceTextureSizeChanged(
+                            SurfaceTexture surfaceTexture, int width, int height) {}
+
+                    @Override
+                    public boolean onSurfaceTextureDestroyed(SurfaceTexture surfaceTexture) {
+                        previewSurfaceReady = false;
+                        pendingPreviewBinding = false;
+                        releasePreviewSurface();
+                        return true;
+                    }
+
+                    @Override
+                    public void onSurfaceTextureUpdated(SurfaceTexture surfaceTexture) {}
+                });
     }
 
     private void setupFoldToggles() {
@@ -284,6 +331,8 @@ public final class MainActivity extends Activity {
         }
 
         updateFpsLine(cameraJson);
+        updateFaceBoxOverlay(cameraJson);
+        updatePreviewState(cameraJson);
 
         if (diagnosticExpanded) {
             refreshDiagnosticContent(cameraJson);
@@ -317,6 +366,109 @@ public final class MainActivity extends Activity {
                             dropped));
         } catch (Exception error) {
             fpsLine.setText(getString(R.string.fps_line_idle));
+        }
+    }
+
+    private void updateFaceBoxOverlay(String cameraJson) {
+        if (faceBoxOverlay == null) {
+            return;
+        }
+        if (!started || nativeHandle == 0) {
+            faceBoxOverlay.clearFaceRect();
+            return;
+        }
+        try {
+            JSONObject json = new JSONObject(cameraJson);
+            JSONObject faceRect = json.optJSONObject("face_rect");
+            if (faceRect != null) {
+                faceBoxOverlay.setFaceRect(
+                        (float) faceRect.getDouble("x"),
+                        (float) faceRect.getDouble("y"),
+                        (float) faceRect.getDouble("w"),
+                        (float) faceRect.getDouble("h"));
+            } else {
+                faceBoxOverlay.clearFaceRect();
+            }
+        } catch (Exception error) {
+            faceBoxOverlay.clearFaceRect();
+        }
+    }
+
+    private void updatePreviewState(String cameraJson) {
+        if (previewContainer == null) {
+            return;
+        }
+        if (!started || nativeHandle == 0) {
+            previewContainer.setVisibility(View.GONE);
+            previewPlaceholder.setVisibility(View.GONE);
+            previewSurface.setVisibility(View.VISIBLE);
+            return;
+        }
+        previewContainer.setVisibility(View.VISIBLE);
+        boolean previewEnabled = false;
+        try {
+            previewEnabled = new JSONObject(cameraJson).optBoolean("preview_enabled", false);
+        } catch (Exception ignored) {
+            // Keep preview visible; placeholder covers unavailable preview.
+        }
+        previewSurface.setVisibility(previewEnabled ? View.VISIBLE : View.GONE);
+        previewPlaceholder.setVisibility(previewEnabled ? View.GONE : View.VISIBLE);
+    }
+
+    private void updatePreviewMirror() {
+        if (previewSurface == null || faceBoxOverlay == null) {
+            return;
+        }
+        boolean mirror = isSelectedCameraFront();
+        previewSurface.setScaleX(mirror ? -1f : 1f);
+        faceBoxOverlay.setMirrorHorizontal(mirror);
+    }
+
+    private boolean isSelectedCameraFront() {
+        String selectedId = selectedCameraId();
+        if (selectedId == null) {
+            return false;
+        }
+        for (CameraEntry entry : cameraEntries) {
+            if (selectedId.equals(entry.id)) {
+                return "front".equals(entry.facing);
+            }
+        }
+        return false;
+    }
+
+    private void bindPreviewSurface(SurfaceTexture surfaceTexture) {
+        if (nativeHandle == 0 || surfaceTexture == null) {
+            return;
+        }
+        pendingPreviewBinding = false;
+        try {
+            NativeBridge.nativeSetPreviewSurface(nativeHandle, new Surface(surfaceTexture));
+        } catch (Throwable error) {
+            showUserMessage("PREVIEW_SURFACE_FAILED: " + error.getMessage());
+        }
+    }
+
+    private void releasePreviewSurface() {
+        if (nativeHandle == 0) {
+            return;
+        }
+        try {
+            NativeBridge.nativeSetPreviewSurface(nativeHandle, null);
+        } catch (Throwable ignored) {
+            // Best effort when TextureView is torn down.
+        }
+    }
+
+    private void preparePreviewSurfaceBinding() {
+        pendingPreviewBinding = true;
+        updatePreviewMirror();
+        if (previewSurfaceReady && previewSurface.isAvailable()) {
+            SurfaceTexture surfaceTexture = previewSurface.getSurfaceTexture();
+            if (surfaceTexture != null) {
+                surfaceTexture.setDefaultBufferSize(640, 480);
+                bindPreviewSurface(surfaceTexture);
+            }
         }
     }
 
@@ -666,6 +818,8 @@ public final class MainActivity extends Activity {
             nativeHandle = 0;
             roiImage.setVisibility(View.GONE);
             roiPlaceholder.setVisibility(View.VISIBLE);
+            previewContainer.setVisibility(View.GONE);
+            faceBoxOverlay.clearFaceRect();
         }
     }
 
@@ -712,6 +866,7 @@ public final class MainActivity extends Activity {
                 showUserMessage(configured);
                 return;
             }
+            preparePreviewSurfaceBinding();
             alignmentHistory.clear();
             latestAlignment = null;
             lastAlignedWindowEndSec = null;
@@ -719,10 +874,12 @@ public final class MainActivity extends Activity {
             String result = NativeBridge.nativeStart(nativeHandle);
             if (!result.contains("\"state\":\"running\"")) {
                 showUserMessage(result);
+                releasePreviewSurface();
                 sessionStartMonotonicSec = null;
                 return;
             }
             started = true;
+            updatePreviewMirror();
             userMessage = "";
             refreshCombinedStatus();
         } catch (Throwable error) {
@@ -743,8 +900,11 @@ public final class MainActivity extends Activity {
             showUserMessage("CAMERA_STOP_FAILED: " + error.getMessage());
         } finally {
             started = false;
+            releasePreviewSurface();
             roiImage.setVisibility(View.GONE);
             roiPlaceholder.setVisibility(View.VISIBLE);
+            previewContainer.setVisibility(View.GONE);
+            faceBoxOverlay.clearFaceRect();
         }
     }
 

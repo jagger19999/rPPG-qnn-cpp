@@ -5,6 +5,8 @@
 #include <string>
 #include <vector>
 
+struct ANativeWindow;
+
 namespace rppg_qnn::android {
 
 struct CameraSessionConfig {
@@ -41,6 +43,12 @@ struct CameraSessionStatus {
   double last_timestamp_sec{0.0};
   bool processing_enabled{false};
   bool face_found{false};
+  bool face_rect_available{false};
+  double face_rect_x{0.0};
+  double face_rect_y{0.0};
+  double face_rect_w{0.0};
+  double face_rect_h{0.0};
+  bool preview_enabled{false};
   std::string traditional_method;
   bool heart_rate_available{false};
   double bpm{0.0};
@@ -75,6 +83,7 @@ class AndroidCameraSession {
   static std::vector<CameraInfo> list_camera_infos();
 
   void configure_processing(TraditionalProcessingConfig config);
+  void set_preview_surface(::ANativeWindow* window);
   void start();
   void stop() noexcept;
   [[nodiscard]] CameraSessionStatus status() const;

@@ -17,5 +17,6 @@
     <string name="toggle_diagnostic">诊断</string>
     <string name="deep_selector_label">Run EfficientPhys with ONNX Runtime CPU</string>
     <string name="roi_placeholder">未检测到人脸</string>
+    <string name="preview_placeholder">预览不可用</string>
     <string name="roi_image_description">Face ROI thumbnail</string>
 </resources>

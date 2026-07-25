@@ -3,6 +3,8 @@
 #include "android_camera_session.hpp"
 #include "rppg_qnn/error.hpp"
 
+#include <android/native_window.h>
+
 #include <atomic>
 #include <iomanip>
 #include <memory>
@@ -88,7 +90,13 @@ std::string status_json(const CameraSessionStatus& status) {
          << ",\"last_timestamp_sec\":" << status.last_timestamp_sec
          << ",\"processing_enabled\":"
          << (status.processing_enabled ? "true" : "false")
-         << ",\"face_found\":" << (status.face_found ? "true" : "false")
+         << ",\"face_found\":" << (status.face_found ? "true" : "false");
+  if (status.face_rect_available) {
+    output << ",\"face_rect\":{\"x\":" << status.face_rect_x
+           << ",\"y\":" << status.face_rect_y << ",\"w\":" << status.face_rect_w
+           << ",\"h\":" << status.face_rect_h << "}";
+  }
+  output << ",\"preview_enabled\":" << (status.preview_enabled ? "true" : "false")
          << ",\"traditional_method\":\""
          << json_escape(status.traditional_method)
          << "\",\"heart_rate_available\":"
@@ -162,6 +170,11 @@ std::string configure_camera_processing(
   session->configure_processing(TraditionalProcessingConfig{
       method, cascade_path, output_directory, deep_enabled, model_path});
   return status_json(session->status());
+}
+
+void set_camera_preview_surface(std::int64_t handle, ::ANativeWindow* window) {
+  const auto session = lookup(handle);
+  session->set_preview_surface(window);
 }
 
 std::string start_camera_session(std::int64_t handle) {

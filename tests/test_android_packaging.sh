@@ -136,6 +136,7 @@ android/app/src/main/cpp/android_qnn_preflight_stub.cpp
 android/app/src/main/cpp/native_bridge.cpp
 android/app/src/main/java/com/jagger/rppgbench/MainActivity.java
 android/app/src/main/java/com/jagger/rppgbench/NativeBridge.java
+android/app/src/main/java/com/jagger/rppgbench/ui/FaceBoxOverlay.java
 android/app/src/main/java/com/jagger/rppgbench/ui/HrMetricCard.java
 android/app/src/main/java/com/jagger/rppgbench/ui/HrStatusFormatter.java
 android/app/src/main/java/com/jagger/rppgbench/watch/AndroidBleBackend.java
@@ -196,6 +197,7 @@ for required_api in \
   'public static native String nativeListCameras();' \
   'public static native long nativeCreate(String cameraId, int width, int height, int fps);' \
   'public static native String nativeConfigureProcessing(' \
+  'public static native void nativeSetPreviewSurface(long handle, android.view.Surface surface);' \
   'public static native String nativeStart(long handle);' \
   'public static native String nativeStop(long handle);' \
   'public static native void nativeDestroy(long handle);' \
@@ -231,9 +233,12 @@ for lifecycle_token in \
   requestPermissions \
   onRequestPermissionsResult \
   nativeListCameras \
+  nativeSetPreviewSurface \
   nativeStart \
   nativeStop \
   nativeDestroy \
+  TextureView \
+  FaceBoxOverlay \
   onStop; do
   if ! grep -Fq "$lifecycle_token" "$activity_java"; then
     echo "android packaging check: Activity must implement $lifecycle_token" >&2
@@ -290,6 +295,7 @@ android/app/src/main/cpp/android_qnn_preflight_stub.cpp
 android/app/src/main/cpp/native_bridge.cpp
 android/app/src/main/java/com/jagger/rppgbench/MainActivity.java
 android/app/src/main/java/com/jagger/rppgbench/NativeBridge.java
+android/app/src/main/java/com/jagger/rppgbench/ui/FaceBoxOverlay.java
 android/app/src/main/java/com/jagger/rppgbench/ui/HrMetricCard.java
 android/app/src/main/java/com/jagger/rppgbench/ui/HrStatusFormatter.java
 android/app/src/main/java/com/jagger/rppgbench/watch/AndroidBleBackend.java

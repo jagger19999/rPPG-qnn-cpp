@@ -4,6 +4,8 @@
 #include <string>
 #include <vector>
 
+struct ANativeWindow;
+
 namespace rppg_qnn::android {
 
 std::string list_cameras_json();
@@ -15,6 +17,7 @@ std::string configure_camera_processing(std::int64_t handle,
                                         const std::string& output_directory,
                                         bool deep_enabled,
                                         const std::string& model_path);
+void set_camera_preview_surface(std::int64_t handle, ::ANativeWindow* window);
 std::string start_camera_session(std::int64_t handle);
 std::string stop_camera_session(std::int64_t handle);
 void destroy_camera_session(std::int64_t handle) noexcept;

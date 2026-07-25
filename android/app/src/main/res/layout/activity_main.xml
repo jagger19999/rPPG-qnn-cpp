@@ -73,6 +73,37 @@
             android:textSize="16sp"
             android:textStyle="bold" />
 
+        <FrameLayout
+            android:id="@+id/preview_container"
+            android:layout_width="match_parent"
+            android:layout_height="200dp"
+            android:layout_marginTop="8dp"
+            android:visibility="gone">
+
+            <TextureView
+                android:id="@+id/preview_surface"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent" />
+
+            <com.jagger.rppgbench.ui.FaceBoxOverlay
+                android:id="@+id/face_box_overlay"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:clickable="false"
+                android:focusable="false" />
+
+            <TextView
+                android:id="@+id/preview_placeholder"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:gravity="center"
+                android:text="@string/preview_placeholder"
+                android:textColor="@color/hr_muted"
+                android:textSize="14sp"
+                android:visibility="gone" />
+
+        </FrameLayout>
+
         <ImageView
             android:id="@+id/roi_image"
             android:layout_width="160dp"
@@ -92,13 +123,6 @@
             android:text="@string/roi_placeholder"
             android:textColor="@color/hr_muted"
             android:textSize="14sp" />
-
-        <TextureView
-            android:id="@+id/preview_surface"
-            android:layout_width="match_parent"
-            android:layout_height="200dp"
-            android:layout_marginTop="8dp"
-            android:visibility="gone" />
 
         <Button
             android:id="@+id/toggle_camera"

@@ -2,6 +2,8 @@
 #include "rppg_qnn/build_identity.hpp"
 #include "rppg_qnn/error.hpp"
 
+#include <android/native_window.h>
+#include <android/native_window_jni.h>
 #include <jni.h>
 
 #include <exception>
@@ -103,6 +105,33 @@ Java_com_jagger_rppgbench_NativeBridge_nativeConfigureProcessing(
         handle, native_method, native_cascade, native_output,
         deep_enabled == JNI_TRUE, native_model);
   });
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_jagger_rppgbench_NativeBridge_nativeSetPreviewSurface(
+    JNIEnv* env, jclass, jlong handle, jobject surface) noexcept {
+  try {
+    ::ANativeWindow* window = nullptr;
+    if (surface != nullptr) {
+      window = ANativeWindow_fromSurface(env, surface);
+      if (window == nullptr) {
+        throw rppg_qnn::AppError(rppg_qnn::ErrorCode::CameraOpenFailed,
+                                 "ANativeWindow_fromSurface returned null");
+      }
+    }
+    rppg_qnn::android::set_camera_preview_surface(handle, window);
+  } catch (const std::exception& error) {
+    const std::string message = error_text(error);
+    jclass exception_class = env->FindClass("java/lang/IllegalStateException");
+    if (exception_class != nullptr) {
+      env->ThrowNew(exception_class, message.c_str());
+    }
+  } catch (...) {
+    jclass exception_class = env->FindClass("java/lang/IllegalStateException");
+    if (exception_class != nullptr) {
+      env->ThrowNew(exception_class, "NATIVE_ERROR: unknown");
+    }
+  }
 }
 
 extern "C" JNIEXPORT jstring JNICALL
