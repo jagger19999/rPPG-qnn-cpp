@@ -3,18 +3,24 @@ package com.jagger.rppgbench;
 import android.Manifest;
 import android.app.Activity;
 import android.content.pm.PackageManager;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
+import android.view.View;
 import android.widget.ArrayAdapter;
 import android.widget.Button;
 import android.widget.CheckBox;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.Spinner;
 import android.widget.TextView;
 
+import com.jagger.rppgbench.ui.HrMetricCard;
+import com.jagger.rppgbench.ui.HrStatusFormatter;
 import com.jagger.rppgbench.watch.AndroidBleBackend;
 import com.jagger.rppgbench.watch.WatchAligner;
 import com.jagger.rppgbench.watch.WatchBleWorker;
@@ -51,14 +57,27 @@ public final class MainActivity extends Activity {
                 }
             };
 
-    private TextView status;
-    private TextView watchStatusView;
+    private HrMetricCard traditionalCard;
+    private HrMetricCard deepCard;
+    private HrMetricCard watchCard;
+    private TextView alignmentView;
+    private ImageView roiImage;
+    private TextView roiPlaceholder;
+    private TextView diagnosticText;
+    private LinearLayout cameraSection;
+    private LinearLayout watchSection;
     private Spinner methodSelector;
     private Spinner watchDeviceSelector;
     private CheckBox deepSelector;
     private ArrayAdapter<String> watchDeviceAdapter;
     private final List<WatchContracts.WatchDevice> watchDevices = new ArrayList<>();
     private final List<WatchContracts.WatchAlignmentResult> alignmentHistory = new ArrayList<>();
+
+    private boolean cameraExpanded = true;
+    private boolean watchExpanded = true;
+    private boolean diagnosticExpanded = false;
+    private String userMessage = "";
+    private String lastCameraJson = "{}";
 
     private String cameraId;
     private long nativeHandle;
@@ -74,24 +93,19 @@ public final class MainActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        setContentView(R.layout.activity_main);
 
-        LinearLayout content = new LinearLayout(this);
-        content.setOrientation(LinearLayout.VERTICAL);
-        int padding = Math.round(24 * getResources().getDisplayMetrics().density);
-        content.setPadding(padding, padding, padding, padding);
+        traditionalCard = new HrMetricCard(findViewById(R.id.card_traditional));
+        deepCard = new HrMetricCard(findViewById(R.id.card_deep));
+        watchCard = new HrMetricCard(findViewById(R.id.card_watch));
+        alignmentView = findViewById(R.id.alignment_line);
+        roiImage = findViewById(R.id.roi_image);
+        roiPlaceholder = findViewById(R.id.roi_placeholder);
+        diagnosticText = findViewById(R.id.diagnostic_text);
+        cameraSection = findViewById(R.id.camera_section);
+        watchSection = findViewById(R.id.watch_section);
 
-        TextView title = new TextView(this);
-        title.setText(R.string.app_title);
-        content.addView(title);
-
-        TextView boundary = new TextView(this);
-        boundary.setText(R.string.camera_smoke_boundary);
-        content.addView(boundary);
-
-        status = new TextView(this);
-        content.addView(status);
-
-        methodSelector = new Spinner(this);
+        methodSelector = findViewById(R.id.method_selector);
         ArrayAdapter<String> methodAdapter =
                 new ArrayAdapter<>(
                         this,
@@ -99,60 +113,61 @@ public final class MainActivity extends Activity {
                         new String[] {"green", "pos", "chrom"});
         methodAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
         methodSelector.setAdapter(methodAdapter);
-        content.addView(methodSelector);
 
-        deepSelector = new CheckBox(this);
-        deepSelector.setText("Run EfficientPhys with ONNX Runtime CPU");
-        content.addView(deepSelector);
-
-        Button list = new Button(this);
-        list.setText(R.string.list_cameras);
-        list.setOnClickListener(view -> runWithCameraPermission(ACTION_LIST));
-        content.addView(list);
-
-        Button start = new Button(this);
-        start.setText(R.string.start_camera);
-        start.setOnClickListener(view -> runWithCameraPermission(ACTION_START));
-        content.addView(start);
-
-        Button stop = new Button(this);
-        stop.setText(R.string.stop_camera);
-        stop.setOnClickListener(view -> stopCamera());
-        content.addView(stop);
-
-        TextView disclaimer = new TextView(this);
-        disclaimer.setText(R.string.watch_disclaimer);
-        content.addView(disclaimer);
-
-        watchStatusView = new TextView(this);
-        content.addView(watchStatusView);
+        deepSelector = findViewById(R.id.deep_selector);
 
         watchDeviceAdapter =
                 new ArrayAdapter<>(this, android.R.layout.simple_spinner_item, new ArrayList<>());
         watchDeviceAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
-        watchDeviceSelector = new Spinner(this);
+        watchDeviceSelector = findViewById(R.id.watch_device_selector);
         watchDeviceSelector.setAdapter(watchDeviceAdapter);
-        content.addView(watchDeviceSelector);
 
-        Button scanWatch = new Button(this);
-        scanWatch.setText(R.string.scan_watch);
-        scanWatch.setOnClickListener(view -> runWithBlePermission(BLE_ACTION_SCAN));
-        content.addView(scanWatch);
+        findViewById(R.id.list_cameras)
+                .setOnClickListener(view -> runWithCameraPermission(ACTION_LIST));
+        findViewById(R.id.start_camera)
+                .setOnClickListener(view -> runWithCameraPermission(ACTION_START));
+        findViewById(R.id.stop_camera).setOnClickListener(view -> stopCamera());
 
-        Button connectWatch = new Button(this);
-        connectWatch.setText(R.string.connect_watch);
-        connectWatch.setOnClickListener(view -> runWithBlePermission(BLE_ACTION_CONNECT));
-        content.addView(connectWatch);
+        findViewById(R.id.scan_watch)
+                .setOnClickListener(view -> runWithBlePermission(BLE_ACTION_SCAN));
+        findViewById(R.id.connect_watch)
+                .setOnClickListener(view -> runWithBlePermission(BLE_ACTION_CONNECT));
+        findViewById(R.id.disconnect_watch).setOnClickListener(view -> disconnectWatch());
 
-        Button disconnectWatch = new Button(this);
-        disconnectWatch.setText(R.string.disconnect_watch);
-        disconnectWatch.setOnClickListener(view -> disconnectWatch());
-        content.addView(disconnectWatch);
+        setupFoldToggles();
 
-        setContentView(content);
         ensureWatchWorker();
-        refreshNativeStatus();
+        refreshCombinedStatus();
         statusHandler.post(statusPoll);
+    }
+
+    private void setupFoldToggles() {
+        Button toggleCamera = findViewById(R.id.toggle_camera);
+        Button toggleWatch = findViewById(R.id.toggle_watch);
+        Button toggleDiagnostic = findViewById(R.id.toggle_diagnostic);
+
+        cameraSection.setVisibility(cameraExpanded ? View.VISIBLE : View.GONE);
+        watchSection.setVisibility(watchExpanded ? View.VISIBLE : View.GONE);
+        diagnosticText.setVisibility(diagnosticExpanded ? View.VISIBLE : View.GONE);
+
+        toggleCamera.setOnClickListener(
+                view -> {
+                    cameraExpanded = !cameraExpanded;
+                    cameraSection.setVisibility(cameraExpanded ? View.VISIBLE : View.GONE);
+                });
+        toggleWatch.setOnClickListener(
+                view -> {
+                    watchExpanded = !watchExpanded;
+                    watchSection.setVisibility(watchExpanded ? View.VISIBLE : View.GONE);
+                });
+        toggleDiagnostic.setOnClickListener(
+                view -> {
+                    diagnosticExpanded = !diagnosticExpanded;
+                    diagnosticText.setVisibility(diagnosticExpanded ? View.VISIBLE : View.GONE);
+                    if (diagnosticExpanded) {
+                        refreshDiagnosticContent(lastCameraJson);
+                    }
+                });
     }
 
     private void ensureWatchWorker() {
@@ -172,25 +187,75 @@ public final class MainActivity extends Activity {
         return SystemClock.elapsedRealtimeNanos() / 1_000_000_000.0;
     }
 
-    private void refreshNativeStatus() {
-        try {
-            status.setText(NativeBridge.nativeBuildIdentity());
-        } catch (Throwable error) {
-            status.setText("NATIVE_LOAD_FAILED: " + error.getClass().getSimpleName());
+    private void showUserMessage(String message) {
+        userMessage = message == null ? "" : message;
+        if (!userMessage.isEmpty()) {
+            diagnosticExpanded = true;
+            diagnosticText.setVisibility(View.VISIBLE);
         }
-        refreshWatchLabels();
+        refreshDiagnosticContent(lastCameraJson);
     }
 
     private void refreshCombinedStatus() {
-        StringBuilder builder = new StringBuilder();
+        String cameraJson = "{}";
         if (started && nativeHandle != 0) {
             try {
-                String cameraStatus = NativeBridge.nativeGetStatus(nativeHandle);
-                builder.append(cameraStatus);
-                maybeAlignFromCameraStatus(cameraStatus);
+                cameraJson = NativeBridge.nativeGetStatus(nativeHandle);
+                maybeAlignFromCameraStatus(cameraJson);
+                updateRoiImage();
             } catch (Throwable error) {
-                builder.append("CAMERA_STATUS_FAILED: ").append(error.getMessage());
+                showUserMessage("CAMERA_STATUS_FAILED: " + error.getMessage());
+                refreshWatchDeviceSpinner();
+                return;
             }
+        }
+        lastCameraJson = cameraJson;
+
+        try {
+            JSONObject json = new JSONObject(cameraJson);
+            traditionalCard.bind("传统 rPPG", HrStatusFormatter.traditional(json));
+            deepCard.bind("深度 EfficientPhys", HrStatusFormatter.deep(json));
+        } catch (Exception error) {
+            traditionalCard.bind("传统 rPPG", new HrStatusFormatter.CardView("--", "不可用"));
+            deepCard.bind("深度 EfficientPhys", new HrStatusFormatter.CardView("--", "不可用"));
+        }
+
+        WatchContracts.WatchHeartRateSnapshot snapshot =
+                watchWorker != null ? watchWorker.snapshot(monotonicSec()) : null;
+        if (snapshot != null) {
+            Integer bpm =
+                    snapshot.latestSample != null ? snapshot.latestSample.bpm : null;
+            watchCard.bind(
+                    "广播心率",
+                    HrStatusFormatter.watch(snapshot.status.name(), bpm, snapshot.errorCode));
+        } else {
+            watchCard.bind(
+                    "广播心率", HrStatusFormatter.watch("DISCONNECTED", null, null));
+        }
+
+        if (latestAlignment != null) {
+            alignmentView.setText(
+                    HrStatusFormatter.alignmentLine(
+                            latestAlignment.status.name(),
+                            latestAlignment.absoluteErrorBpm,
+                            latestAlignment.coverageRatio));
+        } else {
+            alignmentView.setText(HrStatusFormatter.alignmentLine(null, null, null));
+        }
+
+        if (diagnosticExpanded) {
+            refreshDiagnosticContent(cameraJson);
+        }
+        refreshWatchDeviceSpinner();
+    }
+
+    private void refreshDiagnosticContent(String cameraJson) {
+        StringBuilder builder = new StringBuilder();
+        if (!userMessage.isEmpty()) {
+            builder.append(userMessage).append('\n');
+        }
+        if (started && nativeHandle != 0) {
+            builder.append(cameraJson);
         } else {
             try {
                 builder.append(NativeBridge.nativeBuildIdentity());
@@ -199,9 +264,26 @@ public final class MainActivity extends Activity {
             }
         }
         builder.append('\n').append(formatWatchStatusLine());
-        status.setText(builder.toString());
-        refreshWatchLabels();
-        refreshWatchDeviceSpinner();
+        diagnosticText.setText(builder.toString());
+    }
+
+    private void updateRoiImage() {
+        try {
+            byte[] jpeg = NativeBridge.nativeGetRoiJpeg(nativeHandle);
+            if (jpeg != null && jpeg.length > 0) {
+                Bitmap bitmap = BitmapFactory.decodeByteArray(jpeg, 0, jpeg.length);
+                if (bitmap != null) {
+                    roiImage.setImageBitmap(bitmap);
+                    roiImage.setVisibility(View.VISIBLE);
+                    roiPlaceholder.setVisibility(View.GONE);
+                    return;
+                }
+            }
+        } catch (Throwable ignored) {
+            // Keep cards visible even if ROI decode fails.
+        }
+        roiImage.setVisibility(View.GONE);
+        roiPlaceholder.setVisibility(View.VISIBLE);
     }
 
     private void maybeAlignFromCameraStatus(String cameraStatusJson) {
@@ -263,13 +345,6 @@ public final class MainActivity extends Activity {
             line.append("\nwatch_coverage=").append(formatDouble(latestAlignment.coverageRatio));
         }
         return line.toString();
-    }
-
-    private void refreshWatchLabels() {
-        if (watchStatusView == null) {
-            return;
-        }
-        watchStatusView.setText(formatWatchStatusLine());
     }
 
     private void refreshWatchDeviceSpinner() {
@@ -362,9 +437,10 @@ public final class MainActivity extends Activity {
     private void scanWatch() {
         ensureWatchWorker();
         if (!watchWorker.startScan(15.0)) {
-            status.setText("WATCH_SCAN_BUSY");
+            showUserMessage("WATCH_SCAN_BUSY");
             return;
         }
+        userMessage = "";
         refreshCombinedStatus();
     }
 
@@ -372,13 +448,14 @@ public final class MainActivity extends Activity {
         ensureWatchWorker();
         int index = watchDeviceSelector.getSelectedItemPosition();
         if (index < 0 || index >= watchDevices.size()) {
-            status.setText("WATCH_DEVICE_NOT_SELECTED");
+            showUserMessage("WATCH_DEVICE_NOT_SELECTED");
             return;
         }
         if (!watchWorker.connect(watchDevices.get(index).id)) {
-            status.setText("WATCH_CONNECT_REJECTED");
+            showUserMessage("WATCH_CONNECT_REJECTED");
             return;
         }
+        userMessage = "";
         refreshCombinedStatus();
     }
 
@@ -386,6 +463,7 @@ public final class MainActivity extends Activity {
         if (watchWorker != null) {
             watchWorker.disconnect();
         }
+        userMessage = "";
         refreshCombinedStatus();
     }
 
@@ -393,14 +471,15 @@ public final class MainActivity extends Activity {
         try {
             String cameras = NativeBridge.nativeListCameras();
             cameraId = extractFirstCamera(cameras);
-            status.setText(cameras);
+            StringBuilder message = new StringBuilder(cameras);
             if (cameraId == null) {
-                status.append("\nCAMERA_ID_UNAVAILABLE: no Camera2 NDK camera");
+                message.append("\nCAMERA_ID_UNAVAILABLE: no Camera2 NDK camera");
             } else {
-                status.append("\nselected_camera_id=" + cameraId);
+                message.append("\nselected_camera_id=").append(cameraId);
             }
+            showUserMessage(message.toString());
         } catch (Throwable error) {
-            status.setText("CAMERA_LIST_FAILED: " + error.getMessage());
+            showUserMessage("CAMERA_LIST_FAILED: " + error.getMessage());
         }
     }
 
@@ -426,7 +505,7 @@ public final class MainActivity extends Activity {
             File model =
                     new File(new File(getFilesDir(), "models"), "efficientphys_pure.onnx");
             if (deepSelector.isChecked() && !model.isFile()) {
-                status.setText(
+                showUserMessage(
                         "MODEL_LOAD_FAILED: import models/efficientphys_pure.onnx "
                                 + "to app-private storage with adb run-as");
                 return;
@@ -440,7 +519,7 @@ public final class MainActivity extends Activity {
                             deepSelector.isChecked(),
                             model.getAbsolutePath());
             if (!configured.startsWith("{")) {
-                status.setText(configured);
+                showUserMessage(configured);
                 return;
             }
             alignmentHistory.clear();
@@ -448,15 +527,16 @@ public final class MainActivity extends Activity {
             lastAlignedWindowEndSec = null;
             sessionStartMonotonicSec = monotonicSec();
             String result = NativeBridge.nativeStart(nativeHandle);
-            status.setText(result);
             if (!result.contains("\"state\":\"running\"")) {
+                showUserMessage(result);
                 sessionStartMonotonicSec = null;
                 return;
             }
             started = true;
+            userMessage = "";
             refreshCombinedStatus();
         } catch (Throwable error) {
-            status.setText("CAMERA_START_FAILED: " + error.getMessage());
+            showUserMessage("CAMERA_START_FAILED: " + error.getMessage());
         }
     }
 
@@ -468,11 +548,13 @@ public final class MainActivity extends Activity {
         try {
             String stopped = NativeBridge.nativeStop(nativeHandle);
             exportWatchCsv();
-            status.setText(stopped + "\n" + formatWatchStatusLine());
+            showUserMessage(stopped + "\n" + formatWatchStatusLine());
         } catch (Throwable error) {
-            status.setText("CAMERA_STOP_FAILED: " + error.getMessage());
+            showUserMessage("CAMERA_STOP_FAILED: " + error.getMessage());
         } finally {
             started = false;
+            roiImage.setVisibility(View.GONE);
+            roiPlaceholder.setVisibility(View.VISIBLE);
         }
     }
 
@@ -493,7 +575,7 @@ public final class MainActivity extends Activity {
                     sessionStartMonotonicSec,
                     label);
         } catch (Exception error) {
-            status.append("\nWATCH_CSV_EXPORT_FAILED: " + error.getMessage());
+            showUserMessage("WATCH_CSV_EXPORT_FAILED: " + error.getMessage());
         }
     }
 
@@ -526,7 +608,7 @@ public final class MainActivity extends Activity {
             pendingAction = ACTION_NONE;
             if (grantResults.length == 0
                     || grantResults[0] != PackageManager.PERMISSION_GRANTED) {
-                status.setText("CAMERA_PERMISSION_DENIED: permission was not granted");
+                showUserMessage("CAMERA_PERMISSION_DENIED: permission was not granted");
                 return;
             }
             performAction(action);
@@ -537,7 +619,7 @@ public final class MainActivity extends Activity {
             pendingBleAction = BLE_ACTION_NONE;
             for (int result : grantResults) {
                 if (result != PackageManager.PERMISSION_GRANTED) {
-                    status.setText("BLUETOOTH_PERMISSION_DENIED: permission was not granted");
+                    showUserMessage("BLUETOOTH_PERMISSION_DENIED: permission was not granted");
                     return;
                 }
             }
