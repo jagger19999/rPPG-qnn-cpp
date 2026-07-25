@@ -136,6 +136,7 @@ android/app/src/main/cpp/android_qnn_preflight_stub.cpp
 android/app/src/main/cpp/native_bridge.cpp
 android/app/src/main/java/com/jagger/rppgbench/MainActivity.java
 android/app/src/main/java/com/jagger/rppgbench/NativeBridge.java
+android/app/src/main/java/com/jagger/rppgbench/ui/HrMetricCard.java
 android/app/src/main/java/com/jagger/rppgbench/ui/HrStatusFormatter.java
 android/app/src/main/java/com/jagger/rppgbench/watch/AndroidBleBackend.java
 android/app/src/main/java/com/jagger/rppgbench/watch/HeartRateParser.java
@@ -289,6 +290,7 @@ android/app/src/main/cpp/android_qnn_preflight_stub.cpp
 android/app/src/main/cpp/native_bridge.cpp
 android/app/src/main/java/com/jagger/rppgbench/MainActivity.java
 android/app/src/main/java/com/jagger/rppgbench/NativeBridge.java
+android/app/src/main/java/com/jagger/rppgbench/ui/HrMetricCard.java
 android/app/src/main/java/com/jagger/rppgbench/ui/HrStatusFormatter.java
 android/app/src/main/java/com/jagger/rppgbench/watch/AndroidBleBackend.java
 android/app/src/main/java/com/jagger/rppgbench/watch/HeartRateParser.java
@@ -298,6 +300,8 @@ android/app/src/main/java/com/jagger/rppgbench/watch/WatchBleWorker.java
 android/app/src/main/java/com/jagger/rppgbench/watch/WatchContracts.java
 android/app/src/main/java/com/jagger/rppgbench/watch/WatchCsvExport.java
 android/app/src/main/java/com/jagger/rppgbench/watch/WatchSampleStore.java
+android/app/src/main/res/layout/activity_main.xml
+android/app/src/main/res/layout/view_hr_metric_card.xml
 android/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml
 android/app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml
 android/app/src/main/res/mipmap-hdpi/ic_launcher.png

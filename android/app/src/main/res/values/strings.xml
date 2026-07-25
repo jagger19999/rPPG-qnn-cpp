@@ -10,4 +10,10 @@
     <string name="connect_watch">连接手表</string>
     <string name="disconnect_watch">断开手表</string>
     <string name="watch_disclaimer">广播心率为实验参考，非医学诊断；时间戳为手机接收时刻。</string>
+    <string name="toggle_camera">相机配置</string>
+    <string name="toggle_watch">手表</string>
+    <string name="toggle_diagnostic">诊断</string>
+    <string name="deep_selector_label">Run EfficientPhys with ONNX Runtime CPU</string>
+    <string name="roi_placeholder">未检测到人脸</string>
+    <string name="roi_image_description">Face ROI thumbnail</string>
 </resources>
