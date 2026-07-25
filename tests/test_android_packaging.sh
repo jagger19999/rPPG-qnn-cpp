@@ -38,6 +38,15 @@ if ! grep -Fq '<opencv_storage>' "$haar_asset" ||
   exit 1
 fi
 
+if [[ ! -f "$root/android/branding/logo.png" ]]; then
+  echo "android packaging check: branding logo missing" >&2
+  exit 1
+fi
+if ! grep -Fq 'android:icon="@mipmap/ic_launcher"' "$manifest"; then
+  echo "android packaging check: application icon must be @mipmap/ic_launcher" >&2
+  exit 1
+fi
+
 if [[ ! -x "$gradlew" ]]; then
   echo "android packaging check: $gradlew must be executable" >&2
   exit 1
@@ -286,12 +295,27 @@ android/app/src/main/java/com/jagger/rppgbench/watch/WatchBleWorker.java
 android/app/src/main/java/com/jagger/rppgbench/watch/WatchContracts.java
 android/app/src/main/java/com/jagger/rppgbench/watch/WatchCsvExport.java
 android/app/src/main/java/com/jagger/rppgbench/watch/WatchSampleStore.java
+android/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml
+android/app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml
+android/app/src/main/res/mipmap-hdpi/ic_launcher.png
+android/app/src/main/res/mipmap-hdpi/ic_launcher_round.png
+android/app/src/main/res/mipmap-mdpi/ic_launcher.png
+android/app/src/main/res/mipmap-mdpi/ic_launcher_round.png
+android/app/src/main/res/mipmap-xhdpi/ic_launcher.png
+android/app/src/main/res/mipmap-xhdpi/ic_launcher_round.png
+android/app/src/main/res/mipmap-xxhdpi/ic_launcher.png
+android/app/src/main/res/mipmap-xxhdpi/ic_launcher_round.png
+android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png
+android/app/src/main/res/mipmap-xxxhdpi/ic_launcher_foreground.png
+android/app/src/main/res/mipmap-xxxhdpi/ic_launcher_round.png
+android/app/src/main/res/values/colors.xml
 android/app/src/main/res/values/strings.xml
 android/app/src/test/java/com/jagger/rppgbench/watch/HeartRateParserTest.java
 android/app/src/test/java/com/jagger/rppgbench/watch/WatchAlignerTest.java
 android/app/src/test/java/com/jagger/rppgbench/watch/WatchBleWorkerTest.java
 android/app/src/test/java/com/jagger/rppgbench/watch/WatchCsvExportTest.java
 android/app/src/test/java/com/jagger/rppgbench/watch/WatchSampleStoreTest.java
+android/branding/logo.png
 android/build.gradle
 android/gradle.properties
 android/gradle/wrapper/gradle-wrapper.jar

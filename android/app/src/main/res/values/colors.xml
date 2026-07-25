@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="ic_launcher_background">#1A0508</color>
+    <color name="hr_card_bg">#FFFFFFF5</color>
+    <color name="hr_watch_accent">#C9A227</color>
+    <color name="hr_muted">#666666</color>
+    <color name="page_bg">#F4F1EA</color>
+</resources>
