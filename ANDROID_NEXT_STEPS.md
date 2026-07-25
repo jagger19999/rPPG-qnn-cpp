@@ -154,6 +154,22 @@ adb shell run-as com.jagger.rppgbench ls files/sessions
 - [Android ORT CPU + Watch BLE Design](docs/superpowers/specs/2026-07-24-android-onnx-cpu-watch-ble-design.md)
 - [Android ORT CPU + Watch BLE Plan](docs/superpowers/plans/2026-07-24-android-onnx-cpu-watch-ble.md)
 
+### Phase 1 Live HR UI 真机门禁（一期退出条件）
+
+主机已交叉构建三卡 Live UI、ROI 缩略图 JNI 与 launcher 图标；以下项**必须**在目标设备上目视确认，不可用主机测试代替。Phase 2（实时预览 + 人脸框）尚未开始，不在本清单内。
+
+- [ ] **Launcher 图标**：安装后桌面显示 `logo.png` 衍生的品牌图标，而非系统默认机器人。
+- [ ] **三卡 Live 心率**：应用顶部并排三个大号 BPM 卡片（传统 rPPG / 深度 EfficientPhys / 手表广播），数字清晰可读；**不得**把整段 status JSON 堆在顶部主区域。
+- [ ] **ROI 脸图**：检测到人脸时 ROI 缩略图持续更新；未检测到人脸时显示占位（如「未检测到人脸」），不得空白或崩溃。
+- [ ] **折叠分区**：相机、手表、诊断分别为可折叠区块；**诊断默认收起**；首次进入可展开相机一次。
+- [ ] **Stop / onStop 生命周期**：点击 Stop 或 Activity `onStop()` 释放相机并写会话产物，但**不断开**手表 BLE；只有显式「断开手表」或 `onDestroy` 才关闭 BLE worker。
+- [ ] **Phase 2 仍待**：实时 Camera2 预览 Surface + 人脸框 overlay 未交付；预览失败降级策略见 [Live HR UI 设计](docs/superpowers/specs/2026-07-24-android-live-hr-ui-design.md)。
+
+设计与实现计划：
+
+- [Android Live HR UI Design](docs/superpowers/specs/2026-07-24-android-live-hr-ui-design.md)
+- [Android Live HR UI Plan](docs/superpowers/plans/2026-07-24-android-live-hr-ui.md)
+
 ### 仍待真机门禁（不可用主机测试代替）
 
 1. 安装 debug APK；导入并校验 ONNX SHA-256。

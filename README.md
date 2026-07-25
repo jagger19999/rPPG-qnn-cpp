@@ -6,7 +6,7 @@
 
 ## Android 主线的当前 Camera2 切片
 
-仓库已完成可交叉构建的 Android Camera2/NDK 运行时切片：Gradle 源码脚手架、单一 `arm64-v8a` ABI、AGP 9.0.1、NDK 28.2.13676358、Java 运行时相机与蓝牙权限、Camera2 NDK 枚举与 `AImageReader`、`YUV_420_888` stride 校验和 BGR 转换、JNI opaque handle 生命周期、OpenCV Android 4.13.0 静态链接、Haar ROI、GREEN/POS/CHROM worker、ONNX Runtime Android 1.27.0 CPU EfficientPhys 后端、latest-only 深度 worker、HUAWEI GT 5 Pro 心率广播 BLE 参考对齐与会话 CSV、应用私有目录会话输出和低频状态 UI。EfficientPhys 模型保持外部，必须按固定 SHA-256 导入应用私有目录。
+仓库已完成可交叉构建的 Android Camera2/NDK 运行时切片：Gradle 源码脚手架、单一 `arm64-v8a` ABI、AGP 9.0.1、NDK 28.2.13676358、Java 运行时相机与蓝牙权限、Camera2 NDK 枚举与 `AImageReader`、`YUV_420_888` stride 校验和 BGR 转换、JNI opaque handle 生命周期、OpenCV Android 4.13.0 静态链接、Haar ROI、GREEN/POS/CHROM worker、ONNX Runtime Android 1.27.0 CPU EfficientPhys 后端、latest-only 深度 worker、HUAWEI GT 5 Pro 心率广播 BLE 参考对齐与会话 CSV、应用私有目录会话输出和低频状态 UI。Phase 1 Live HR UI 在 `MainActivity` 顶部呈现传统/深度/手表三路大号 BPM 卡片与 ROI 脸图缩略图，配置与诊断折叠收起。EfficientPhys 模型保持外部，必须按固定 SHA-256 导入应用私有目录。
 
 当前 Mac 已实际生成传统算法 + ONNX Runtime CPU + 手表 BLE debug APK，但本机没有连接获授权的 Android 真机与手表广播验收，因此**尚未证明**模型冻结向量、目标摄像头、现场心率、手表对齐或生命周期。第一版手机演示不依赖 QNN/Adreno；`--deep fake` 始终只是 host 调度测试，Android 请求 CPU 后不会回退到 fake 或 QNN。
 
