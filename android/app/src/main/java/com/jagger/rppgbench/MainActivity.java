@@ -128,6 +128,8 @@ public final class MainActivity extends Activity {
     private CameraStartRequest pendingStartRequest;
     private long pendingStartGeneration;
     private final CameraStartGeneration cameraStartGeneration = new CameraStartGeneration();
+    private final CameraUiSessionPolicy cameraUiSessionPolicy =
+            new CameraUiSessionPolicy();
     private final ExecutorService cameraStartExecutor =
             Executors.newSingleThreadExecutor(
                     runnable -> {
@@ -154,7 +156,7 @@ public final class MainActivity extends Activity {
         watchCard = new HrMetricCard(findViewById(R.id.card_watch));
         traditionalWaveformCard = new PpgWaveformCard(findViewById(R.id.waveform_traditional));
         deepWaveformCard = new PpgWaveformCard(findViewById(R.id.waveform_deep));
-        clearWaveformsForNewSession();
+        initializeWaveformCards();
         alignmentView = findViewById(R.id.alignment_line);
         fpsLine = findViewById(R.id.fps_line);
         previewContainer = findViewById(R.id.preview_container);
@@ -228,7 +230,7 @@ public final class MainActivity extends Activity {
         listCamerasButton.setOnClickListener(view -> runWithCameraPermission(ACTION_LIST));
         startCameraButton.setOnClickListener(view -> runWithCameraPermission(ACTION_START));
         stopCameraButton.setOnClickListener(view -> stopCamera());
-        setCameraControlsLocked(false);
+        applyCameraUiDecision(cameraUiSessionPolicy.current());
 
         findViewById(R.id.scan_watch)
                 .setOnClickListener(view -> runWithBlePermission(BLE_ACTION_SCAN));
@@ -513,6 +515,10 @@ public final class MainActivity extends Activity {
         deepWaveform = null;
         traditionalWaveformRevision = 0;
         deepWaveformRevision = 0;
+        initializeWaveformCards();
+    }
+
+    private void initializeWaveformCards() {
         if (traditionalWaveformCard != null) {
             traditionalWaveformCard.clear(getString(R.string.waveform_traditional_title),
                     getString(R.string.waveform_traditional_sampling));
@@ -749,6 +755,16 @@ public final class MainActivity extends Activity {
         listCamerasButton.setEnabled(!locked);
         startCameraButton.setEnabled(!locked);
         stopCameraButton.setEnabled(locked);
+    }
+
+    private void applyCameraUiDecision(CameraUiSessionPolicy.Decision decision) {
+        if (decision.requestFinalSnapshot && decision.retainLastResult) {
+            retainLatestCameraResult();
+        }
+        if (decision.clearHistory) {
+            clearWaveformsForNewSession();
+        }
+        setCameraControlsLocked(decision.selectorsLocked);
     }
 
     private void refreshDiagnosticContent(String cameraJson) {
@@ -1086,14 +1102,16 @@ public final class MainActivity extends Activity {
 
     private void stopCameraSilently() {
         cameraStartGeneration.cancel();
+        CameraUiSessionPolicy.Decision uiDecision =
+                cameraUiSessionPolicy.stopRequested();
         pendingCameraStart = false;
         startWorkerSubmitted = false;
         pendingStartRequest = null;
         statusHandler.removeCallbacks(finishStartWhenPreviewReady);
         pendingPreviewBinding = false;
+        applyCameraUiDecision(uiDecision);
         if (nativeHandle == 0) {
             started = false;
-            setCameraControlsLocked(false);
             return;
         }
         try {
@@ -1109,7 +1127,6 @@ public final class MainActivity extends Activity {
             roiPlaceholder.setVisibility(View.VISIBLE);
             previewContainer.setVisibility(View.GONE);
             faceBoxOverlay.clearFaceRect();
-            setCameraControlsLocked(false);
         }
     }
 
@@ -1155,7 +1172,7 @@ public final class MainActivity extends Activity {
         pendingStartGeneration = cameraStartGeneration.begin();
         pendingCameraStart = true;
         startWorkerSubmitted = false;
-        setCameraControlsLocked(true);
+        applyCameraUiDecision(cameraUiSessionPolicy.begin());
         showUserMessage("正在后台校验模型并启动相机…");
         preparePreviewSurfaceBinding();
         if (previewSurfaceReady && previewSurface.isAvailable()) {
@@ -1196,7 +1213,7 @@ public final class MainActivity extends Activity {
                 pendingCameraStart = false;
                 startWorkerSubmitted = false;
                 pendingStartRequest = null;
-                setCameraControlsLocked(false);
+                applyCameraUiDecision(cameraUiSessionPolicy.fail());
                 showUserMessage("CAMERA_START_FAILED: background executor is unavailable");
             }
         }
@@ -1308,7 +1325,7 @@ public final class MainActivity extends Activity {
         alignmentHistory.clear();
         latestAlignment = null;
         lastAlignedWindowEndSec = null;
-        clearWaveformsForNewSession();
+        applyCameraUiDecision(cameraUiSessionPolicy.accept());
         applyPreviewAspect();
         userMessage = "";
         refreshCombinedStatus();
@@ -1333,7 +1350,7 @@ public final class MainActivity extends Activity {
                     startWorkerSubmitted = false;
                     pendingStartRequest = null;
                     pendingPreviewBinding = false;
-                    setCameraControlsLocked(false);
+                    applyCameraUiDecision(cameraUiSessionPolicy.fail());
                     previewContainer.setVisibility(View.GONE);
                     showUserMessage("CAMERA_START_FAILED: " + message);
                 });
@@ -1354,19 +1371,20 @@ public final class MainActivity extends Activity {
 
     private void stopCamera() {
         cameraStartGeneration.cancel();
+        CameraUiSessionPolicy.Decision uiDecision =
+                cameraUiSessionPolicy.stopRequested();
         pendingCameraStart = false;
         startWorkerSubmitted = false;
         pendingStartRequest = null;
         statusHandler.removeCallbacks(finishStartWhenPreviewReady);
         pendingPreviewBinding = false;
+        applyCameraUiDecision(uiDecision);
         if (nativeHandle == 0) {
             started = false;
-            setCameraControlsLocked(false);
             previewContainer.setVisibility(View.GONE);
             return;
         }
         try {
-            retainLatestCameraResult();
             String stopped = NativeBridge.nativeStop(nativeHandle);
             exportWatchCsv();
             showUserMessage(stopped + "\n" + formatWatchStatusLine());
@@ -1379,7 +1397,6 @@ public final class MainActivity extends Activity {
             roiPlaceholder.setVisibility(View.VISIBLE);
             previewContainer.setVisibility(View.GONE);
             faceBoxOverlay.clearFaceRect();
-            setCameraControlsLocked(false);
         }
     }
 
