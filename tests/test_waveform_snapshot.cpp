@@ -32,10 +32,23 @@ void rejects_constant_or_non_finite_waveform() {
                    .available);
 }
 
+void selects_python_compatible_sample_rates() {
+  rppg_qnn::HeartRateResult traditional;
+  traditional.method = "CHROM";
+  traditional.source_fps = 21.5;
+  EXPECT_EQ(rppg_qnn::waveform_sample_rate_hz(traditional), 21.5);
+
+  rppg_qnn::HeartRateResult deep;
+  deep.method = "TSCAN";
+  deep.source_fps = 21.5;
+  EXPECT_EQ(rppg_qnn::waveform_sample_rate_hz(deep), 30.0);
+}
+
 }  // namespace
 
 int main() {
   normalizes_finite_waveform();
   rejects_constant_or_non_finite_waveform();
+  selects_python_compatible_sample_rates();
   return test_support::finish();
 }

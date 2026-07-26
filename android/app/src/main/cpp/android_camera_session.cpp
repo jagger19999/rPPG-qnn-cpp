@@ -488,8 +488,7 @@ struct AndroidCameraSession::Impl {
           },
           [this](const HeartRateResult& result) {
             std::lock_guard<std::mutex> lock(status_mutex);
-            const double sample_rate =
-                result.source_fps > 0.0 ? result.source_fps : 30.0;
+            const double sample_rate = waveform_sample_rate_hz(result);
             WaveformSnapshot waveform = make_waveform_snapshot(
                 result.waveform, result.method, sample_rate, result.is_valid,
                 result.invalid_reason);

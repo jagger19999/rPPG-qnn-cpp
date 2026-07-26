@@ -7,6 +7,13 @@
 
 namespace rppg_qnn {
 
+double waveform_sample_rate_hz(const HeartRateResult& result) {
+  if (result.method == "TSCAN" || result.method == "DEEP") {
+    return 30.0;
+  }
+  return result.source_fps > 0.0 ? result.source_fps : 30.0;
+}
+
 WaveformSnapshot make_waveform_snapshot(const std::vector<float>& values,
                                         std::string method,
                                         double sample_rate_hz, bool is_valid,
