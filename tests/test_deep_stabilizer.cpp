@@ -69,6 +69,24 @@ void rejects_nonfinite_raw_bpm() {
   EXPECT_EQ(result.correction_reason, std::string("rejected_invalid_bpm"));
 }
 
+void waveform_validation_is_scale_invariant() {
+  rppg_qnn::DeepStabilizer baseline_stabilizer;
+  rppg_qnn::DeepStabilizer scaled_stabilizer;
+  const auto baseline_waveform = waveform({{70.0, 1.0}});
+  auto scaled_waveform = baseline_waveform;
+  for (float& value : scaled_waveform) {
+    value *= 1e-8F;
+  }
+
+  const auto baseline =
+      baseline_stabilizer.stabilize(baseline_waveform, 70.0, 0.8);
+  const auto scaled =
+      scaled_stabilizer.stabilize(scaled_waveform, 70.0, 0.8);
+  EXPECT_EQ(scaled.stability_valid, baseline.stability_valid);
+  EXPECT_EQ(scaled.display_bpm, baseline.display_bpm);
+  EXPECT_EQ(scaled.correction_reason, baseline.correction_reason);
+}
+
 void corrects_half_and_double_only_with_spectral_support() {
   rppg_qnn::DeepStabilizer half_stabilizer;
   (void)half_stabilizer.stabilize(waveform({{70.0, 1.0}}), 70.0, 0.8);
@@ -146,6 +164,27 @@ void displays_median_of_three_accepted_values() {
   EXPECT_EQ(result.correction_reason, std::string("accepted_raw"));
 }
 
+void reports_median_smoothing_without_hiding_other_corrections() {
+  rppg_qnn::DeepStabilizer simple;
+  (void)simple.stabilize(waveform({{70.0, 1.0}}), 70.0, 0.8);
+  auto result = simple.stabilize(waveform({{80.0, 1.0}}), 80.0, 0.8);
+  EXPECT_TRUE(result.stability_valid);
+  expect_near(result.display_bpm, 75.0);
+  EXPECT_EQ(result.correction_reason,
+            std::string("accepted_raw_median_smoothed"));
+
+  rppg_qnn::DeepStabilizer combined;
+  (void)combined.stabilize(waveform({{60.0, 1.0}}), 60.0, 0.8);
+  (void)combined.stabilize(waveform({{70.0, 1.0}}), 70.0, 0.8);
+  (void)combined.stabilize(waveform({{80.0, 1.0}}), 80.0, 0.8);
+  result = combined.stabilize(
+      waveform({{120.0, 1.0}, {60.0, 0.8}}), 120.0, 0.8);
+  EXPECT_TRUE(result.stability_valid);
+  expect_near(result.display_bpm, 70.0);
+  EXPECT_EQ(result.correction_reason,
+            std::string("corrected_to_half_median_smoothed"));
+}
+
 void reset_discards_history() {
   rppg_qnn::DeepStabilizer stabilizer;
   (void)stabilizer.stabilize(waveform({{70.0, 1.0}}), 70.0, 0.8);
@@ -163,11 +202,13 @@ int main() {
   rejects_low_confidence();
   rejects_nonfinite_and_constant_waveforms();
   rejects_nonfinite_raw_bpm();
+  waveform_validation_is_scale_invariant();
   corrects_half_and_double_only_with_spectral_support();
   rejects_unsupported_large_jump();
   allows_supported_large_jump_and_clears_history();
   rejected_value_does_not_pollute_history();
   displays_median_of_three_accepted_values();
+  reports_median_smoothing_without_hiding_other_corrections();
   reset_discards_history();
   return test_support::finish();
 }

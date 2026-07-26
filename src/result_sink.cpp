@@ -147,11 +147,11 @@ ResultSink::ResultSink(std::filesystem::path output_dir) : output_dir_(std::move
   }
   events_.imbue(std::locale::classic());
   heart_rate_.imbue(std::locale::classic());
-  heart_rate_ << "schema_version,method,window_start_sec,window_end_sec,bpm,raw_bpm,"
-                 "display_bpm,confidence,is_valid,stability_valid,correction_reason,"
-                 "invalid_reason,source_fps,source_frame_count,max_frame_gap_sec,"
+  heart_rate_ << "schema_version,method,window_start_sec,window_end_sec,bpm,confidence,"
+                 "is_valid,invalid_reason,source_fps,source_frame_count,max_frame_gap_sec,"
                  "window_materialization_ms,preprocess_ms,runtime_ms,postprocess_ms,"
-                 "inference_ms,backend,model_sha256\r\n";
+                 "inference_ms,backend,model_sha256,raw_bpm,display_bpm,"
+                 "stability_valid,correction_reason\r\n";
   if (!heart_rate_) {
     fail_permanently("could not write heart-rate CSV header");
   }
@@ -274,17 +274,17 @@ void ResultSink::publish(const HeartRateResult& result) {
   heart_rate_ << result.schema_version << ',' << csv_field(result.method) << ','
               << csv_number(result.window_start_sec) << ','
               << csv_number(result.window_end_sec) << ',' << csv_number(result.bpm) << ','
-              << csv_number(result.raw_bpm) << ',' << csv_number(result.display_bpm) << ','
               << csv_number(result.confidence) << ',' << json_bool(result.is_valid) << ','
-              << json_bool(result.stability_valid) << ','
-              << csv_field(result.correction_reason) << ','
               << csv_field(result.invalid_reason) << ',' << csv_number(result.source_fps) << ','
               << result.source_frame_count << ',' << csv_number(result.max_frame_gap_sec) << ','
               << csv_number(result.window_materialization_ms) << ','
               << csv_number(result.preprocess_ms) << ',' << csv_number(result.runtime_ms) << ','
               << csv_number(result.postprocess_ms) << ','
               << csv_number(result.inference_ms) << ',' << csv_field(result.backend) << ','
-              << csv_field(result.model_sha256) << "\r\n";
+              << csv_field(result.model_sha256) << ',' << csv_number(result.raw_bpm) << ','
+              << csv_number(result.display_bpm) << ','
+              << json_bool(result.stability_valid) << ','
+              << csv_field(result.correction_reason) << "\r\n";
   events_.flush();
   heart_rate_.flush();
   if (!events_) {

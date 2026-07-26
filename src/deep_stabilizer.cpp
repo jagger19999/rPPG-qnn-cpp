@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <limits>
 #include <numeric>
 #include <utility>
 #include <vector>
@@ -24,7 +25,7 @@ constexpr double kHarmonicSupportRatio = 0.50;
 constexpr double kLargeJumpBpm = 20.0;
 constexpr double kJumpDominanceRatio = 1.50;
 constexpr double kHarmonicReferenceToleranceBpm = 12.0;
-constexpr double kConstantRangeEpsilon = 1e-6;
+constexpr double kMedianReasonToleranceBpm = 0.05;
 
 DeepStabilityResult rejected(const char* reason) {
   return {0.0, false, reason};
@@ -79,10 +80,23 @@ DeepStabilityResult DeepStabilizer::stabilize(
                    [](float value) { return std::isfinite(value); })) {
     return rejected("rejected_nonfinite_waveform");
   }
-  const auto [minimum, maximum] =
-      std::minmax_element(waveform.begin(), waveform.end());
-  if (static_cast<double>(*maximum) - static_cast<double>(*minimum) <=
-      kConstantRangeEpsilon) {
+  const double mean =
+      std::accumulate(waveform.begin(), waveform.end(), 0.0) /
+      static_cast<double>(waveform.size());
+  double centered_energy = 0.0;
+  double total_energy = 0.0;
+  for (float value : waveform) {
+    const double sample = static_cast<double>(value);
+    const double centered = sample - mean;
+    centered_energy += centered * centered;
+    total_energy += sample * sample;
+  }
+  // Relative energy keeps this structural test invariant under amplitude
+  // scaling. The common spectral postprocessor remains responsible for
+  // deciding whether non-constant energy is sufficient for a valid BPM.
+  if (centered_energy <= std::numeric_limits<double>::epsilon() *
+                             total_energy *
+                             static_cast<double>(waveform.size())) {
     return rejected("rejected_constant_waveform");
   }
   if (!std::isfinite(confidence) || confidence < kMinimumConfidence) {
@@ -131,7 +145,11 @@ DeepStabilityResult DeepStabilizer::stabilize(
   }
   const double display =
       median(std::vector<double>(accepted_bpm_.begin(), accepted_bpm_.end()));
-  return {display, true, reason};
+  std::string transparent_reason(reason);
+  if (std::abs(display - accepted_bpm) > kMedianReasonToleranceBpm) {
+    transparent_reason += "_median_smoothed";
+  }
+  return {display, true, std::move(transparent_reason)};
 }
 
 void DeepStabilizer::reset() noexcept { accepted_bpm_.clear(); }
