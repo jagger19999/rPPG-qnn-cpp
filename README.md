@@ -25,7 +25,7 @@ RPPG_TSCAN_ONNX=/Users/wangjie/Documents/keti/rPPG/ubfc_tscan_full_lr3e-5_Epoch1
   "$RPPG_PYTHON" -m pytest tests/test_tscan_reference_vector.py -q
 ```
 - C++ host：`cmake -S . -B build-task7-parity -DBUILD_TESTING=ON -DCMAKE_PREFIX_PATH=/opt/homebrew/opt/opencv@4 && cmake --build build-task7-parity -j4 && ctest --test-dir build-task7-parity --output-on-failure` 通过 `21/21`。
-- APK：本机使用下面的精确绝对路径调用成功；这些路径只记录本机验证环境，不是其他机器的安装约定。`app-debug.apk` SHA-256 为 `0f70687a9104771e6b055c3dd2d57e2aa36af128c958a25819bb81b967016919`，包含 `lib/arm64-v8a/librppg_qnn_android.so` 与 `libonnxruntime.so`，不包含 `.onnx` 模型。
+- APK：本机使用下面的精确绝对路径调用成功；这些路径只记录本机验证环境，不是其他机器的安装约定。`app-debug.apk` SHA-256 为 `64a64d7eaf3570a8ef8a913704645d143d6a3716dfb9c1c91dc1f8de10bd06cd`，包含 `lib/arm64-v8a/librppg_qnn_android.so` 与 `libonnxruntime.so`，不包含 `.onnx` 模型。
 
 ```bash
 cd android
