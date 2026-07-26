@@ -33,10 +33,15 @@ for required_file in \
   fi
 done
 
-if ! grep -Fq 'catch (const Ort::Exception& error)' "$onnx_runtime" ||
-   ! grep -Fq 'ErrorCode::ModelLoadFailed' "$onnx_runtime" ||
-   ! grep -Fq 'ONNX Runtime CPU model load failed:' "$onnx_runtime"; then
-  echo "android packaging check: ONNX model initialization must translate Ort errors to ModelLoadFailed" >&2
+constructor_contract=$(sed -n \
+  '/explicit OnnxCpuSession/,/std::string backend_name/p' "$onnx_runtime")
+if ! grep -Fq 'explicit OnnxCpuSession(const std::string& model_path) try' \
+       <<<"$constructor_contract" ||
+   ! grep -Fq 'catch (const AppError&) {' <<<"$constructor_contract" ||
+   ! grep -Fq 'catch (const Ort::Exception& error) {' <<<"$constructor_contract" ||
+   ! grep -Fq 'ErrorCode::ModelLoadFailed' <<<"$constructor_contract" ||
+   ! grep -Fq 'ONNX Runtime CPU model load failed:' <<<"$constructor_contract"; then
+  echo "android packaging check: ONNX constructor must use a function-try-block and translate Ort initialization errors" >&2
   exit 1
 fi
 

@@ -24,7 +24,7 @@ constexpr std::size_t kInputValues = kFrames * kChannels * kHeight * kWidth;
 
 class OnnxCpuSession final : public ITscanSession {
  public:
-  explicit OnnxCpuSession(const std::string& model_path)
+  explicit OnnxCpuSession(const std::string& model_path) try
       : environment_(ORT_LOGGING_LEVEL_WARNING, "rppg-tscan"),
         session_options_(),
         session_(nullptr) {
@@ -32,17 +32,17 @@ class OnnxCpuSession final : public ITscanSession {
       throw AppError(ErrorCode::ModelLoadFailed,
                      "TSCAN ONNX model is missing: " + model_path);
     }
-    try {
-      session_options_.SetIntraOpNumThreads(2);
-      session_options_.SetInterOpNumThreads(1);
-      session_options_.SetGraphOptimizationLevel(
-          GraphOptimizationLevel::ORT_ENABLE_ALL);
-      session_ = Ort::Session(environment_, model_path.c_str(), session_options_);
-    } catch (const Ort::Exception& error) {
-      throw AppError(ErrorCode::ModelLoadFailed,
-                     std::string("ONNX Runtime CPU model load failed: ") +
-                         error.what());
-    }
+    session_options_.SetIntraOpNumThreads(2);
+    session_options_.SetInterOpNumThreads(1);
+    session_options_.SetGraphOptimizationLevel(
+        GraphOptimizationLevel::ORT_ENABLE_ALL);
+    session_ = Ort::Session(environment_, model_path.c_str(), session_options_);
+  } catch (const AppError&) {
+    throw;
+  } catch (const Ort::Exception& error) {
+    throw AppError(ErrorCode::ModelLoadFailed,
+                   std::string("ONNX Runtime CPU model load failed: ") +
+                       error.what());
   }
 
   [[nodiscard]] std::string backend_name() const override {
