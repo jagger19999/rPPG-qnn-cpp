@@ -3,6 +3,7 @@ package com.jagger.rppgbench;
 import android.Manifest;
 import android.app.Activity;
 import android.content.pm.PackageManager;
+import android.content.res.AssetManager;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Matrix;
@@ -48,6 +49,11 @@ import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public final class MainActivity extends Activity {
     private static final int CAMERA_CAPTURE_WIDTH = 640;
@@ -95,6 +101,9 @@ public final class MainActivity extends Activity {
     private Spinner cameraSelector;
     private Spinner watchDeviceSelector;
     private CheckBox deepSelector;
+    private Button listCamerasButton;
+    private Button startCameraButton;
+    private Button stopCameraButton;
     private ArrayAdapter<String> cameraAdapter;
     private ArrayAdapter<String> watchDeviceAdapter;
     private final List<CameraEntry> cameraEntries = new ArrayList<>();
@@ -113,6 +122,18 @@ public final class MainActivity extends Activity {
     private boolean previewSurfaceReady;
     private boolean pendingPreviewBinding;
     private boolean pendingCameraStart;
+    private boolean lifecycleStopped;
+    private boolean startWorkerSubmitted;
+    private CameraStartRequest pendingStartRequest;
+    private long pendingStartGeneration;
+    private final CameraStartGeneration cameraStartGeneration = new CameraStartGeneration();
+    private final ExecutorService cameraStartExecutor =
+            Executors.newSingleThreadExecutor(
+                    runnable -> {
+                        Thread thread = new Thread(runnable, "rppg-camera-start");
+                        thread.setDaemon(true);
+                        return thread;
+                    });
     private boolean cameraSpinnerInitializing;
     private int pendingAction = ACTION_NONE;
     private int pendingBleAction = BLE_ACTION_NONE;
@@ -191,11 +212,13 @@ public final class MainActivity extends Activity {
         watchDeviceSelector = findViewById(R.id.watch_device_selector);
         watchDeviceSelector.setAdapter(watchDeviceAdapter);
 
-        findViewById(R.id.list_cameras)
-                .setOnClickListener(view -> runWithCameraPermission(ACTION_LIST));
-        findViewById(R.id.start_camera)
-                .setOnClickListener(view -> runWithCameraPermission(ACTION_START));
-        findViewById(R.id.stop_camera).setOnClickListener(view -> stopCamera());
+        listCamerasButton = findViewById(R.id.list_cameras);
+        startCameraButton = findViewById(R.id.start_camera);
+        stopCameraButton = findViewById(R.id.stop_camera);
+        listCamerasButton.setOnClickListener(view -> runWithCameraPermission(ACTION_LIST));
+        startCameraButton.setOnClickListener(view -> runWithCameraPermission(ACTION_START));
+        stopCameraButton.setOnClickListener(view -> stopCamera());
+        setCameraControlsLocked(false);
 
         findViewById(R.id.scan_watch)
                 .setOnClickListener(view -> runWithBlePermission(BLE_ACTION_SCAN));
@@ -228,7 +251,6 @@ public final class MainActivity extends Activity {
                         // TextureView only gets a Surface after the container is visible.
                         // Bind + start must wait for this callback; binding while running is rejected.
                         if (pendingCameraStart) {
-                            bindPreviewSurface(surfaceTexture);
                             finishStartCamera();
                             return;
                         }
@@ -694,9 +716,17 @@ public final class MainActivity extends Activity {
             if (surfaceTexture != null) {
                 surfaceTexture.setDefaultBufferSize(
                         CAMERA_CAPTURE_WIDTH, CAMERA_CAPTURE_HEIGHT);
-                bindPreviewSurface(surfaceTexture);
             }
         }
+    }
+
+    private void setCameraControlsLocked(boolean locked) {
+        methodSelector.setEnabled(!locked);
+        deepSelector.setEnabled(!locked);
+        cameraSelector.setEnabled(!locked);
+        listCamerasButton.setEnabled(!locked);
+        startCameraButton.setEnabled(!locked);
+        stopCameraButton.setEnabled(locked);
     }
 
     private void refreshDiagnosticContent(String cameraJson) {
@@ -1033,10 +1063,15 @@ public final class MainActivity extends Activity {
     }
 
     private void stopCameraSilently() {
+        cameraStartGeneration.cancel();
         pendingCameraStart = false;
+        startWorkerSubmitted = false;
+        pendingStartRequest = null;
         statusHandler.removeCallbacks(finishStartWhenPreviewReady);
+        pendingPreviewBinding = false;
         if (nativeHandle == 0) {
             started = false;
+            setCameraControlsLocked(false);
             return;
         }
         try {
@@ -1052,6 +1087,7 @@ public final class MainActivity extends Activity {
             roiPlaceholder.setVisibility(View.VISIBLE);
             previewContainer.setVisibility(View.GONE);
             faceBoxOverlay.clearFaceRect();
+            setCameraControlsLocked(false);
         }
     }
 
@@ -1063,7 +1099,7 @@ public final class MainActivity extends Activity {
             };
 
     private void startCamera() {
-        if (started || pendingCameraStart) {
+        if (lifecycleStopped || started || pendingCameraStart) {
             return;
         }
         if (cameraEntries.isEmpty()) {
@@ -1074,115 +1110,233 @@ public final class MainActivity extends Activity {
             showUserMessage("CAMERA_ID_UNAVAILABLE: no Camera2 NDK camera");
             return;
         }
-        try {
-            if (nativeHandle != 0) {
-                NativeBridge.nativeDestroy(nativeHandle);
-                nativeHandle = 0;
-            }
-            nativeHandle =
-                    NativeBridge.nativeCreate(
-                            cameraId, CAMERA_CAPTURE_WIDTH, CAMERA_CAPTURE_HEIGHT, 30);
-            File cascade = ensureCascadeAsset();
-            sessionOutputDirectory =
-                    new File(
-                            new File(getFilesDir(), "sessions"),
-                            "session-" + System.currentTimeMillis());
-            String deepModel = deepSelector.isChecked() ? "tscan" : "disabled";
-            File model =
-                    ModelIntegrity.modelFile(new File(getFilesDir(), "models"), deepModel);
-            try {
-                ModelIntegrity.verify(deepModel, model);
-            } catch (IOException | IllegalArgumentException error) {
-                showUserMessage("MODEL_LOAD_FAILED: " + error.getMessage());
-                return;
-            }
-            String configured =
-                    NativeBridge.nativeConfigureProcessing(
-                            nativeHandle,
-                            methodSelector.getSelectedItem().toString(),
-                            cascade.getAbsolutePath(),
-                            sessionOutputDirectory.getAbsolutePath(),
-                            deepModel,
-                            model == null ? "" : model.getAbsolutePath());
-            if (!configured.startsWith("{")) {
-                showUserMessage(configured);
-                return;
-            }
-            alignmentHistory.clear();
-            latestAlignment = null;
-            lastAlignedWindowEndSec = null;
-            clearWaveformsForNewSession();
-            // Preview Surface must exist before nativeStart; GONE TextureView has none.
-            pendingCameraStart = true;
-            preparePreviewSurfaceBinding();
-            if (previewSurfaceReady && previewSurface.isAvailable()) {
-                finishStartCamera();
-            } else {
-                // Next layout pass often creates the SurfaceTexture; timeout falls back.
-                previewSurface.post(
-                        () -> {
-                            if (pendingCameraStart
-                                    && previewSurface.isAvailable()
-                                    && !started) {
-                                finishStartCamera();
-                            }
-                        });
-                statusHandler.postDelayed(finishStartWhenPreviewReady, 750);
-            }
-        } catch (Throwable error) {
-            pendingCameraStart = false;
-            showUserMessage("CAMERA_START_FAILED: " + error.getMessage());
+        if (nativeHandle != 0) {
+            NativeBridge.nativeDestroy(nativeHandle);
+            nativeHandle = 0;
+        }
+        File filesDirectory = getFilesDir();
+        String deepModel = deepSelector.isChecked() ? "tscan" : "disabled";
+        pendingStartRequest =
+                new CameraStartRequest(
+                        cameraId,
+                        methodSelector.getSelectedItem().toString(),
+                        deepModel,
+                        ModelIntegrity.modelFile(new File(filesDirectory, "models"), deepModel),
+                        filesDirectory,
+                        getAssets(),
+                        new File(
+                                new File(filesDirectory, "sessions"),
+                                "session-" + System.currentTimeMillis()),
+                        displayRotationDegrees());
+        pendingStartGeneration = cameraStartGeneration.begin();
+        pendingCameraStart = true;
+        startWorkerSubmitted = false;
+        setCameraControlsLocked(true);
+        showUserMessage("正在后台校验模型并启动相机…");
+        preparePreviewSurfaceBinding();
+        if (previewSurfaceReady && previewSurface.isAvailable()) {
+            finishStartCamera();
+        } else {
+            statusHandler.postDelayed(finishStartWhenPreviewReady, 750);
         }
     }
 
     private void finishStartCamera() {
-        if (!pendingCameraStart || started || nativeHandle == 0) {
+        if (!pendingCameraStart || started || startWorkerSubmitted
+                || pendingStartRequest == null) {
             return;
         }
         statusHandler.removeCallbacks(finishStartWhenPreviewReady);
-        pendingCameraStart = false;
-        try {
-            NativeBridge.nativeSetDisplayRotation(nativeHandle, displayRotationDegrees());
-            applyPreviewAspect();
-            if (previewSurfaceReady && previewSurface.isAvailable()) {
-                SurfaceTexture surfaceTexture = previewSurface.getSurfaceTexture();
-                if (surfaceTexture != null) {
-                    surfaceTexture.setDefaultBufferSize(
-                            CAMERA_CAPTURE_WIDTH, CAMERA_CAPTURE_HEIGHT);
-                    bindPreviewSurface(surfaceTexture);
-                }
+        pendingPreviewBinding = false;
+        Surface surface = null;
+        if (previewSurfaceReady && previewSurface.isAvailable()) {
+            SurfaceTexture surfaceTexture = previewSurface.getSurfaceTexture();
+            if (surfaceTexture != null) {
+                surfaceTexture.setDefaultBufferSize(
+                        CAMERA_CAPTURE_WIDTH, CAMERA_CAPTURE_HEIGHT);
+                surface = new Surface(surfaceTexture);
             }
-            sessionStartMonotonicSec = monotonicSec();
-            String result = NativeBridge.nativeStart(nativeHandle);
-            if (!result.contains("\"state\":\"running\"")) {
-                showUserMessage(result);
-                releasePreviewSurface();
-                sessionStartMonotonicSec = null;
+        }
+        startWorkerSubmitted = true;
+        CameraStartRequest request = pendingStartRequest;
+        long generation = pendingStartGeneration;
+        Surface capturedSurface = surface;
+        try {
+            cameraStartExecutor.execute(
+                    () -> runCameraStart(generation, request, capturedSurface));
+        } catch (RejectedExecutionException error) {
+            if (capturedSurface != null) {
+                capturedSurface.release();
+            }
+            if (cameraStartGeneration.isCurrent(generation)) {
+                pendingCameraStart = false;
+                startWorkerSubmitted = false;
+                pendingStartRequest = null;
+                setCameraControlsLocked(false);
+                showUserMessage("CAMERA_START_FAILED: background executor is unavailable");
+            }
+        }
+    }
+
+    private void runCameraStart(
+            long generation, CameraStartRequest request, Surface preview) {
+        long handle = 0;
+        boolean transferredToActivity = false;
+        try (PreparedModel prepared = PreparedModel.prepare(request.deepModel, request.modelFile)) {
+            if (!cameraStartGeneration.isCurrent(generation)) {
                 return;
             }
-            started = true;
-            applyPreviewAspect();
-            userMessage = "";
-            refreshCombinedStatus();
-            try {
-                if (!new JSONObject(result).optBoolean("preview_enabled", false)) {
-                    showUserMessage(
-                            "预览未接入（仅分析通路）。请看诊断里 preview_enabled / "
-                                    + "preview_unavailable。");
-                }
-            } catch (Exception ignored) {
-                // Status poll will refresh preview_enabled.
+            File cascade = ensureCascadeAsset(request.filesDirectory, request.assets);
+            handle =
+                    NativeBridge.nativeCreate(
+                            request.cameraId,
+                            CAMERA_CAPTURE_WIDTH,
+                            CAMERA_CAPTURE_HEIGHT,
+                            30);
+            String configured =
+                    NativeBridge.nativeConfigureProcessing(
+                            handle,
+                            request.method,
+                            cascade.getAbsolutePath(),
+                            request.sessionDirectory.getAbsolutePath(),
+                            request.deepModel,
+                            prepared.nativePath());
+            if (!configured.startsWith("{")) {
+                throw new IllegalStateException(configured);
             }
+            NativeBridge.nativeSetDisplayRotation(handle, request.displayRotationDegrees);
+            if (preview != null) {
+                NativeBridge.nativeSetPreviewSurface(handle, preview);
+            }
+            if (!cameraStartGeneration.isCurrent(generation)) {
+                return;
+            }
+            double startMonotonicSec = monotonicSec();
+            String result = NativeBridge.nativeStart(handle);
+            if (!result.contains("\"state\":\"running\"")) {
+                throw new IllegalStateException(result);
+            }
+
+            AtomicBoolean deliveryOpen = new AtomicBoolean(true);
+            AtomicBoolean accepted = new AtomicBoolean(false);
+            CountDownLatch delivered = new CountDownLatch(1);
+            long completedHandle = handle;
+            boolean posted =
+                    statusHandler.post(
+                            () -> {
+                                try {
+                                    if (deliveryOpen.compareAndSet(true, false)
+                                            && cameraStartGeneration.isCurrent(generation)) {
+                                        // Transfer ownership before UI work can throw.
+                                        accepted.set(true);
+                                        acceptStartedCamera(
+                                                request,
+                                                completedHandle,
+                                                result,
+                                                startMonotonicSec);
+                                    }
+                                } finally {
+                                    delivered.countDown();
+                                }
+                            });
+            if (!posted) {
+                deliveryOpen.set(false);
+                delivered.countDown();
+            }
+            boolean interrupted = false;
+            while (true) {
+                try {
+                    delivered.await();
+                    break;
+                } catch (InterruptedException ignored) {
+                    interrupted = true;
+                }
+            }
+            if (interrupted) {
+                Thread.currentThread().interrupt();
+            }
+            transferredToActivity = accepted.get();
         } catch (Throwable error) {
-            showUserMessage("CAMERA_START_FAILED: " + error.getMessage());
+            if (!transferredToActivity) {
+                postCameraStartFailure(generation, error.getMessage());
+            }
+        } finally {
+            if (preview != null) {
+                preview.release();
+            }
+            if (handle != 0 && !transferredToActivity) {
+                stopAndDestroyNative(handle);
+            }
+        }
+    }
+
+    private void acceptStartedCamera(
+            CameraStartRequest request, long handle, String result, double startMonotonicSec) {
+        nativeHandle = handle;
+        sessionOutputDirectory = request.sessionDirectory;
+        sessionStartMonotonicSec = startMonotonicSec;
+        pendingCameraStart = false;
+        startWorkerSubmitted = false;
+        pendingStartRequest = null;
+        started = true;
+        alignmentHistory.clear();
+        latestAlignment = null;
+        lastAlignedWindowEndSec = null;
+        clearWaveformsForNewSession();
+        applyPreviewAspect();
+        userMessage = "";
+        refreshCombinedStatus();
+        try {
+            if (!new JSONObject(result).optBoolean("preview_enabled", false)) {
+                showUserMessage(
+                        "预览未接入（仅分析通路）。请看诊断里 preview_enabled / "
+                                + "preview_unavailable。");
+            }
+        } catch (Exception ignored) {
+            // Status poll will refresh preview_enabled.
+        }
+    }
+
+    private void postCameraStartFailure(long generation, String message) {
+        statusHandler.post(
+                () -> {
+                    if (!cameraStartGeneration.isCurrent(generation)) {
+                        return;
+                    }
+                    pendingCameraStart = false;
+                    startWorkerSubmitted = false;
+                    pendingStartRequest = null;
+                    pendingPreviewBinding = false;
+                    setCameraControlsLocked(false);
+                    previewContainer.setVisibility(View.GONE);
+                    showUserMessage("CAMERA_START_FAILED: " + message);
+                });
+    }
+
+    private static void stopAndDestroyNative(long handle) {
+        try {
+            NativeBridge.nativeStop(handle);
+        } catch (Throwable ignored) {
+            // The handle may have failed before reaching the running state.
+        }
+        try {
+            NativeBridge.nativeDestroy(handle);
+        } catch (Throwable ignored) {
+            // Best-effort cleanup for canceled/failed background starts.
         }
     }
 
     private void stopCamera() {
+        cameraStartGeneration.cancel();
         pendingCameraStart = false;
+        startWorkerSubmitted = false;
+        pendingStartRequest = null;
         statusHandler.removeCallbacks(finishStartWhenPreviewReady);
+        pendingPreviewBinding = false;
         if (nativeHandle == 0) {
             started = false;
+            setCameraControlsLocked(false);
+            previewContainer.setVisibility(View.GONE);
             return;
         }
         try {
@@ -1198,6 +1352,7 @@ public final class MainActivity extends Activity {
             roiPlaceholder.setVisibility(View.VISIBLE);
             previewContainer.setVisibility(View.GONE);
             faceBoxOverlay.clearFaceRect();
+            setCameraControlsLocked(false);
         }
     }
 
@@ -1223,13 +1378,23 @@ public final class MainActivity extends Activity {
     }
 
     @Override
+    protected void onStart() {
+        super.onStart();
+        lifecycleStopped = false;
+    }
+
+    @Override
     protected void onStop() {
+        lifecycleStopped = true;
         stopCamera();
         super.onStop();
     }
 
     @Override
     protected void onDestroy() {
+        lifecycleStopped = true;
+        cameraStartGeneration.destroy();
+        cameraStartExecutor.shutdown();
         statusHandler.removeCallbacks(statusPoll);
         if (watchWorker != null) {
             watchWorker.close();
@@ -1287,17 +1452,48 @@ public final class MainActivity extends Activity {
         }
     }
 
+    private static final class CameraStartRequest {
+        private final String cameraId;
+        private final String method;
+        private final String deepModel;
+        private final File modelFile;
+        private final File filesDirectory;
+        private final AssetManager assets;
+        private final File sessionDirectory;
+        private final int displayRotationDegrees;
+
+        private CameraStartRequest(
+                String cameraId,
+                String method,
+                String deepModel,
+                File modelFile,
+                File filesDirectory,
+                AssetManager assets,
+                File sessionDirectory,
+                int displayRotationDegrees) {
+            this.cameraId = cameraId;
+            this.method = method;
+            this.deepModel = deepModel;
+            this.modelFile = modelFile;
+            this.filesDirectory = filesDirectory;
+            this.assets = assets;
+            this.sessionDirectory = sessionDirectory;
+            this.displayRotationDegrees = displayRotationDegrees;
+        }
+    }
+
     private static String formatDouble(double value) {
         return String.format(Locale.US, "%.4g", value);
     }
 
-    private File ensureCascadeAsset() throws IOException {
-        File cascade = new File(getFilesDir(), "haarcascade_frontalface_default.xml");
+    private static File ensureCascadeAsset(File filesDirectory, AssetManager assets)
+            throws IOException {
+        File cascade = new File(filesDirectory, "haarcascade_frontalface_default.xml");
         if (cascade.isFile() && cascade.length() > 0) {
             return cascade;
         }
         File temporary = new File(cascade.getAbsolutePath() + ".tmp");
-        try (InputStream input = getAssets().open("haarcascade_frontalface_default.xml");
+        try (InputStream input = assets.open("haarcascade_frontalface_default.xml");
                 FileOutputStream output = new FileOutputStream(temporary)) {
             byte[] buffer = new byte[16 * 1024];
             int count;

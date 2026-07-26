@@ -150,9 +150,11 @@ android/app/src/main/cpp/android_onnx_model_contract.cpp
 android/app/src/main/cpp/android_onnx_model_contract.hpp
 android/app/src/main/cpp/android_qnn_preflight_stub.cpp
 android/app/src/main/cpp/native_bridge.cpp
+android/app/src/main/java/com/jagger/rppgbench/CameraStartGeneration.java
 android/app/src/main/java/com/jagger/rppgbench/MainActivity.java
 android/app/src/main/java/com/jagger/rppgbench/ModelIntegrity.java
 android/app/src/main/java/com/jagger/rppgbench/NativeBridge.java
+android/app/src/main/java/com/jagger/rppgbench/PreparedModel.java
 android/app/src/main/java/com/jagger/rppgbench/PreviewRotation.java
 android/app/src/main/java/com/jagger/rppgbench/ui/FaceBoxOverlay.java
 android/app/src/main/java/com/jagger/rppgbench/ui/HrMetricCard.java
@@ -205,7 +207,20 @@ camera_cmake="$root/android/app/src/main/cpp/CMakeLists.txt"
 native_bridge_cpp="$root/android/app/src/main/cpp/native_bridge.cpp"
 native_bridge_java="$root/android/app/src/main/java/com/jagger/rppgbench/NativeBridge.java"
 activity_java="$root/android/app/src/main/java/com/jagger/rppgbench/MainActivity.java"
+prepared_model_java="$root/android/app/src/main/java/com/jagger/rppgbench/PreparedModel.java"
 strings_xml="$root/android/app/src/main/res/values/strings.xml"
+
+if ! grep -Fq 'Executors.newSingleThreadExecutor' "$activity_java" ||
+   ! grep -Fq 'PreparedModel.prepare' "$activity_java" ||
+   ! grep -Fq 'cameraStartGeneration.isCurrent' "$activity_java" ||
+   ! grep -Fq 'cameraStartGeneration.destroy()' "$activity_java" ||
+   ! grep -Fq 'cameraStartExecutor.shutdown()' "$activity_java" ||
+   ! grep -Fq 'ParcelFileDescriptor.open' "$prepared_model_java" ||
+   ! grep -Fq 'ParcelFileDescriptor.dup' "$prepared_model_java" ||
+   ! grep -Fq '"/proc/self/fd/"' "$prepared_model_java"; then
+  echo "android packaging check: background start and stable-FD model preparation are required" >&2
+  exit 1
+fi
 
 for field_mapping in \
   'camera_id|camera ID' \
@@ -348,9 +363,11 @@ android/app/src/main/cpp/android_onnx_model_contract.cpp
 android/app/src/main/cpp/android_onnx_model_contract.hpp
 android/app/src/main/cpp/android_qnn_preflight_stub.cpp
 android/app/src/main/cpp/native_bridge.cpp
+android/app/src/main/java/com/jagger/rppgbench/CameraStartGeneration.java
 android/app/src/main/java/com/jagger/rppgbench/MainActivity.java
 android/app/src/main/java/com/jagger/rppgbench/ModelIntegrity.java
 android/app/src/main/java/com/jagger/rppgbench/NativeBridge.java
+android/app/src/main/java/com/jagger/rppgbench/PreparedModel.java
 android/app/src/main/java/com/jagger/rppgbench/PreviewRotation.java
 android/app/src/main/java/com/jagger/rppgbench/ui/FaceBoxOverlay.java
 android/app/src/main/java/com/jagger/rppgbench/ui/HrMetricCard.java
@@ -386,6 +403,7 @@ android/app/src/main/res/mipmap-xxxhdpi/ic_launcher_foreground.png
 android/app/src/main/res/mipmap-xxxhdpi/ic_launcher_round.png
 android/app/src/main/res/values/colors.xml
 android/app/src/main/res/values/strings.xml
+android/app/src/test/java/com/jagger/rppgbench/CameraStartGenerationTest.java
 android/app/src/test/java/com/jagger/rppgbench/ModelIntegrityTest.java
 android/app/src/test/java/com/jagger/rppgbench/PreviewRotationTest.java
 android/app/src/test/java/com/jagger/rppgbench/ui/HrStatusFormatterTest.java

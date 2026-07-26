@@ -1,12 +1,10 @@
 package com.jagger.rppgbench;
 
 import java.io.File;
-import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
-import java.util.Locale;
 
 public final class ModelIntegrity {
     public static final class Spec {
@@ -48,29 +46,20 @@ public final class ModelIntegrity {
         return spec == null ? null : new File(modelDirectory, spec.filename);
     }
 
-    public static void verify(String deepModel, File model) throws IOException {
-        Spec spec = specFor(deepModel);
-        if (spec == null) {
-            if (model != null) {
-                throw new IllegalArgumentException("disabled deep model must not have a model file");
-            }
-            return;
-        }
+    static void requireExpectedFilename(Spec spec, File model) {
         if (model == null || !spec.filename.equals(model.getName())) {
-            throw new IllegalArgumentException(
-                    "selected " + deepModel + " model filename must be " + spec.filename);
-        }
-        if (!model.isFile()) {
-            throw new IllegalArgumentException("selected model file is missing: " + model);
-        }
-        String actual = sha256(model);
-        if (!spec.sha256.equals(actual)) {
-            throw new IllegalArgumentException(
-                    "selected " + deepModel + " model SHA-256 mismatch: " + actual);
+            throw new IllegalArgumentException("selected model filename must be " + spec.filename);
         }
     }
 
-    private static String sha256(File file) throws IOException {
+    static void verifySha256(String expected, InputStream input) throws IOException {
+        String actual = sha256(input);
+        if (!expected.equals(actual)) {
+            throw new IllegalArgumentException("selected model SHA-256 mismatch: " + actual);
+        }
+    }
+
+    static String sha256(InputStream input) throws IOException {
         final MessageDigest digest;
         try {
             digest = MessageDigest.getInstance("SHA-256");
@@ -78,15 +67,14 @@ public final class ModelIntegrity {
             throw new IllegalStateException("SHA-256 is unavailable", error);
         }
         byte[] buffer = new byte[1024 * 1024];
-        try (InputStream input = new FileInputStream(file)) {
-            int count;
-            while ((count = input.read(buffer)) != -1) {
-                digest.update(buffer, 0, count);
-            }
+        int count;
+        while ((count = input.read(buffer)) != -1) {
+            digest.update(buffer, 0, count);
         }
         StringBuilder hex = new StringBuilder(64);
         for (byte value : digest.digest()) {
-            hex.append(String.format(Locale.ROOT, "%02x", value & 0xff));
+            hex.append(Character.forDigit((value >>> 4) & 0x0f, 16));
+            hex.append(Character.forDigit(value & 0x0f, 16));
         }
         return hex.toString();
     }

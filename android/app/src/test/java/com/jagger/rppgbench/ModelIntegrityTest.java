@@ -4,7 +4,10 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
+import java.io.ByteArrayInputStream;
 import java.io.File;
+import java.io.IOException;
+import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import org.junit.Rule;
@@ -34,7 +37,7 @@ public final class ModelIntegrityTest {
         File wrong = temporaryFolder.newFile("renamed.onnx");
         Files.write(wrong.toPath(), "not a model".getBytes(StandardCharsets.UTF_8));
         try {
-            ModelIntegrity.verify("tscan", wrong);
+            ModelIntegrity.requireExpectedFilename(ModelIntegrity.specFor("tscan"), wrong);
             fail("expected filename rejection");
         } catch (IllegalArgumentException error) {
             assertTrue(error.getMessage().contains("filename"));
@@ -43,10 +46,11 @@ public final class ModelIntegrityTest {
 
     @Test
     public void rejectsHashMismatch() throws Exception {
-        File model = temporaryFolder.newFile("ubfc_tscan_full_lr3e-5_Epoch10.onnx");
-        Files.write(model.toPath(), "not the pinned model".getBytes(StandardCharsets.UTF_8));
         try {
-            ModelIntegrity.verify("tscan", model);
+            ModelIntegrity.verifySha256(
+                    ModelIntegrity.specFor("tscan").sha256,
+                    new ByteArrayInputStream(
+                            "not the pinned model".getBytes(StandardCharsets.UTF_8)));
             fail("expected SHA-256 rejection");
         } catch (IllegalArgumentException error) {
             assertTrue(error.getMessage().contains("SHA-256"));
@@ -54,7 +58,26 @@ public final class ModelIntegrityTest {
     }
 
     @Test
-    public void disabledNeedsNoModelFile() throws Exception {
-        ModelIntegrity.verify("disabled", null);
+    public void disabledNeedsNoModelSpec() {
+        assertEquals(null, ModelIntegrity.specFor("disabled"));
+    }
+
+    @Test
+    public void digestMatchesKnownAbcVector() throws Exception {
+        assertEquals(
+                "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+                ModelIntegrity.sha256(
+                        new ByteArrayInputStream("abc".getBytes(StandardCharsets.UTF_8))));
+    }
+
+    @Test(expected = IOException.class)
+    public void digestPropagatesInputFailure() throws Exception {
+        ModelIntegrity.sha256(
+                new InputStream() {
+                    @Override
+                    public int read() throws IOException {
+                        throw new IOException("synthetic read failure");
+                    }
+                });
     }
 }
