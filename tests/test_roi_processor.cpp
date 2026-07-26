@@ -1,6 +1,7 @@
 #include "rppg_qnn/error.hpp"
 #include "rppg_qnn/roi_processor.hpp"
 
+#include <cmath>
 #include <filesystem>
 #include <limits>
 #include <stdexcept>
@@ -64,6 +65,22 @@ void rejects_invalid_expanded_face_geometry() {
                    .has_value());
   EXPECT_TRUE(!expanded_face_roi(valid, cv::Size(100, 100),
                                  std::numeric_limits<double>::max())
+                   .has_value());
+
+  const double positive_int64_limit = std::ldexp(1.0, 63);
+  const double just_below_limit =
+      std::nextafter(positive_int64_limit, 0.0);
+  const double just_above_limit =
+      std::nextafter(positive_int64_limit,
+                     std::numeric_limits<double>::infinity());
+  EXPECT_TRUE(expanded_face_roi(FaceBox{0, 0, 1, 1, 0.0},
+                                cv::Size(20, 20), just_below_limit)
+                  .has_value());
+  EXPECT_TRUE(!expanded_face_roi(FaceBox{0, 0, 1, 1, 0.0},
+                                 cv::Size(20, 20), positive_int64_limit)
+                   .has_value());
+  EXPECT_TRUE(!expanded_face_roi(FaceBox{0, 0, 1, 1, 0.0},
+                                 cv::Size(20, 20), just_above_limit)
                    .has_value());
   EXPECT_TRUE(!expanded_face_roi(FaceBox{100, 100, 10, 10, 0.0},
                                  cv::Size(20, 20), 1.5).has_value());
@@ -192,6 +209,7 @@ void reuses_clipped_largest_face_until_the_next_detection_interval() {
   EXPECT_TRUE(detected.face.has_value());
   EXPECT_TRUE(!detected.used_fallback);
   EXPECT_TRUE(!detected.roi_bgr.empty());
+  EXPECT_TRUE(!detected.deep_roi_bgr.empty());
   if (detected.face.has_value()) {
     EXPECT_EQ(detected.face->x, 0);
     EXPECT_EQ(detected.face->y, 40);
@@ -201,6 +219,8 @@ void reuses_clipped_largest_face_until_the_next_detection_interval() {
 
   first.bgr.setTo(cv::Scalar());
   EXPECT_TRUE(detected.roi_bgr.at<cv::Vec3b>(0, 0) == cv::Vec3b(10, 20, 30));
+  EXPECT_TRUE(detected.deep_roi_bgr.at<cv::Vec3b>(0, 0) ==
+              cv::Vec3b(10, 20, 30));
 
   for (int index = 0; index < 9; ++index) {
     FramePacket reuse{static_cast<std::uint64_t>(index + 8),
@@ -213,6 +233,13 @@ void reuses_clipped_largest_face_until_the_next_detection_interval() {
     EXPECT_TRUE(fallback.face.has_value());
     EXPECT_TRUE(fallback.used_fallback);
     EXPECT_TRUE(!fallback.roi_bgr.empty());
+    EXPECT_TRUE(!fallback.deep_roi_bgr.empty());
+    EXPECT_EQ(fallback.deep_roi_bgr.size(), cv::Size(150, 180));
+    EXPECT_TRUE(fallback.deep_roi_bgr.at<cv::Vec3b>(0, 0) == cv::Vec3b(1, 2, 3));
+    reuse.bgr.setTo(cv::Scalar());
+    EXPECT_TRUE(fallback.roi_bgr.at<cv::Vec3b>(0, 0) == cv::Vec3b(1, 2, 3));
+    EXPECT_TRUE(fallback.deep_roi_bgr.at<cv::Vec3b>(0, 0) ==
+                cv::Vec3b(1, 2, 3));
   }
 
   FramePacket eleventh{17, 12.0, cv::Mat(200, 200, CV_8UC3, cv::Scalar())};

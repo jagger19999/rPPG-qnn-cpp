@@ -30,9 +30,9 @@ std::optional<std::int64_t> python_round_to_int64(const double value) {
       (fraction == 0.5 && std::fmod(std::abs(lower), 2.0) == 1.0)) {
     rounded = lower + 1.0;
   }
-  const long double widened = static_cast<long double>(rounded);
-  if (widened < static_cast<long double>(std::numeric_limits<std::int64_t>::min()) ||
-      widened > static_cast<long double>(std::numeric_limits<std::int64_t>::max())) {
+  constexpr double kInt64LowerBound = -0x1p63;
+  constexpr double kInt64UpperBound = 0x1p63;
+  if (rounded < kInt64LowerBound || rounded >= kInt64UpperBound) {
     return std::nullopt;
   }
   return static_cast<std::int64_t>(rounded);
