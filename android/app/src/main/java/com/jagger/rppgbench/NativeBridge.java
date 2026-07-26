@@ -15,6 +15,7 @@ public final class NativeBridge {
             long handle, String method, String cascadePath, String outputDirectory,
             boolean deepEnabled, String modelPath);
     public static native void nativeSetPreviewSurface(long handle, android.view.Surface surface);
+    public static native void nativeSetDisplayRotation(long handle, int rotationDegrees);
     public static native String nativeStart(long handle);
     public static native String nativeStop(long handle);
     public static native void nativeDestroy(long handle);

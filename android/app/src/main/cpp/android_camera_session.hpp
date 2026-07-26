@@ -27,6 +27,7 @@ struct TraditionalProcessingConfig {
 struct CameraInfo {
   std::string id;
   std::string facing{"unknown"};
+  int sensor_orientation{0};
 };
 
 struct CameraSessionStatus {
@@ -37,6 +38,9 @@ struct CameraSessionStatus {
   int requested_fps{0};
   int target_fps_min{0};
   int target_fps_max{0};
+  int sensor_orientation{0};
+  int display_rotation{0};
+  int frame_rotation{0};
   double measured_fps{0.0};
   std::uint64_t accepted_frames{0};
   std::uint64_t dropped_frames{0};
@@ -84,6 +88,7 @@ class AndroidCameraSession {
 
   void configure_processing(TraditionalProcessingConfig config);
   void set_preview_surface(::ANativeWindow* window);
+  void set_display_rotation(int rotation_degrees);
   void start();
   void stop() noexcept;
   [[nodiscard]] CameraSessionStatus status() const;

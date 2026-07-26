@@ -84,6 +84,9 @@ std::string status_json(const CameraSessionStatus& status) {
          << ",\"requested_fps\":" << status.requested_fps
          << ",\"target_fps_min\":" << status.target_fps_min
          << ",\"target_fps_max\":" << status.target_fps_max
+         << ",\"sensor_orientation\":" << status.sensor_orientation
+         << ",\"display_rotation\":" << status.display_rotation
+         << ",\"frame_rotation\":" << status.frame_rotation
          << ",\"measured_fps\":" << status.measured_fps
          << ",\"accepted_frames\":" << status.accepted_frames
          << ",\"dropped_frames\":" << status.dropped_frames
@@ -142,7 +145,9 @@ std::string list_cameras_json() {
       output << ',';
     }
     output << "{\"id\":\"" << json_escape(cameras[index].id)
-           << "\",\"facing\":\"" << json_escape(cameras[index].facing) << "\"}";
+           << "\",\"facing\":\"" << json_escape(cameras[index].facing)
+           << "\",\"sensor_orientation\":" << cameras[index].sensor_orientation
+           << "}";
   }
   output << "]}";
   return output.str();
@@ -175,6 +180,11 @@ std::string configure_camera_processing(
 void set_camera_preview_surface(std::int64_t handle, ::ANativeWindow* window) {
   const auto session = lookup(handle);
   session->set_preview_surface(window);
+}
+
+void set_camera_display_rotation(std::int64_t handle, int rotation_degrees) {
+  const auto session = lookup(handle);
+  session->set_display_rotation(rotation_degrees);
 }
 
 std::string start_camera_session(std::int64_t handle) {

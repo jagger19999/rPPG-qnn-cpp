@@ -95,6 +95,65 @@ std::string read_lens_facing(ACameraManager* manager,
   return facing;
 }
 
+int read_sensor_orientation(ACameraManager* manager, const char* camera_id) {
+  ACameraMetadata* characteristics = nullptr;
+  const camera_status_t result = ACameraManager_getCameraCharacteristics(
+      manager, camera_id, &characteristics);
+  if (result != ACAMERA_OK || characteristics == nullptr) {
+    return 0;
+  }
+  ACameraMetadata_const_entry entry{};
+  int orientation = 0;
+  if (ACameraMetadata_getConstEntry(characteristics,
+                                    ACAMERA_SENSOR_ORIENTATION, &entry) ==
+          ACAMERA_OK &&
+      entry.count > 0U && entry.data.i32 != nullptr) {
+    orientation = entry.data.i32[0];
+  }
+  ACameraMetadata_free(characteristics);
+  return orientation;
+}
+
+int normalize_rotation_degrees(int degrees) {
+  int normalized = degrees % 360;
+  if (normalized < 0) {
+    normalized += 360;
+  }
+  return normalized;
+}
+
+int compute_frame_rotation_degrees(int sensor_orientation,
+                                   int display_rotation_degrees,
+                                   bool front_facing) {
+  const int sensor = normalize_rotation_degrees(sensor_orientation);
+  const int display = normalize_rotation_degrees(display_rotation_degrees);
+  if (front_facing) {
+    return normalize_rotation_degrees(sensor + display);
+  }
+  return normalize_rotation_degrees(sensor - display);
+}
+
+void orient_bgr_frame(const cv::Mat& source, int rotation_degrees,
+                      cv::Mat* destination) {
+  if (destination == nullptr) {
+    return;
+  }
+  switch (normalize_rotation_degrees(rotation_degrees)) {
+    case 90:
+      cv::rotate(source, *destination, cv::ROTATE_90_CLOCKWISE);
+      break;
+    case 180:
+      cv::rotate(source, *destination, cv::ROTATE_180);
+      break;
+    case 270:
+      cv::rotate(source, *destination, cv::ROTATE_90_COUNTERCLOCKWISE);
+      break;
+    default:
+      *destination = source;
+      break;
+  }
+}
+
 struct FpsRange {
   int min_fps{0};
   int max_fps{0};
@@ -526,6 +585,18 @@ struct AndroidCameraSession::Impl {
     snapshot.preview_enabled = preview_window != nullptr;
   }
 
+  void set_display_rotation(int rotation_degrees) {
+    std::lock_guard<std::mutex> lock(status_mutex);
+    if (snapshot.state == "running" || snapshot.state == "starting" ||
+        snapshot.state == "stopping") {
+      throw AppError(ErrorCode::NativeStateInvalid,
+                     "display rotation must be set before camera start");
+    }
+    display_rotation_degrees_ =
+        normalize_rotation_degrees(rotation_degrees);
+    snapshot.display_rotation = display_rotation_degrees_;
+  }
+
   void maybe_publish_roi_jpeg(const RoiPacket& packet) {
     if (packet.roi_bgr.empty() || !packet.face.has_value()) {
       std::lock_guard<std::mutex> lock(status_mutex);
@@ -640,6 +711,19 @@ struct AndroidCameraSession::Impl {
       }
       require_camera_ok(open_result, ErrorCode::CameraOpenFailed,
                         "ACameraManager_openCamera");
+
+      sensor_orientation_ =
+          read_sensor_orientation(manager, config.camera_id.c_str());
+      const bool front_facing =
+          read_lens_facing(manager, config.camera_id.c_str()) == "front";
+      frame_rotation_degrees_ = compute_frame_rotation_degrees(
+          sensor_orientation_, display_rotation_degrees_, front_facing);
+      {
+        std::lock_guard<std::mutex> lock(status_mutex);
+        snapshot.sensor_orientation = sensor_orientation_;
+        snapshot.display_rotation = display_rotation_degrees_;
+        snapshot.frame_rotation = frame_rotation_degrees_;
+      }
 
       require_camera_ok(
           ACaptureSessionOutputContainer_create(&output_container),
@@ -964,9 +1048,11 @@ struct AndroidCameraSession::Impl {
 
     if (frame_queue != nullptr) {
       cv::Mat wrapped(height, width, CV_8UC3, bgr.data());
+      cv::Mat oriented;
+      orient_bgr_frame(wrapped, frame_rotation_degrees_, &oriented);
       bool replaced = false;
       if (frame_queue->push(
-              FramePacket{frame_id, timestamp_sec, wrapped.clone()},
+              FramePacket{frame_id, timestamp_sec, oriented.clone()},
               &replaced) &&
           replaced) {
         std::lock_guard<std::mutex> lock(status_mutex);
@@ -998,6 +1084,9 @@ struct AndroidCameraSession::Impl {
   std::optional<TraditionalProcessingConfig> processing_config;
   std::vector<std::uint8_t> latest_roi_jpeg_;
   double last_roi_jpeg_sec_{0.0};
+  int sensor_orientation_{0};
+  int display_rotation_degrees_{0};
+  int frame_rotation_degrees_{0};
   mutable std::mutex status_mutex;
   CameraSessionStatus snapshot;
   std::deque<double> timestamps;
@@ -1077,6 +1166,8 @@ std::vector<CameraInfo> AndroidCameraSession::list_camera_infos() {
       CameraInfo info;
       info.id = camera_ids->cameraIds[index];
       info.facing = read_lens_facing(manager, info.id.c_str());
+      info.sensor_orientation =
+          read_sensor_orientation(manager, info.id.c_str());
       cameras.emplace_back(std::move(info));
     }
   } catch (...) {
@@ -1096,6 +1187,10 @@ void AndroidCameraSession::configure_processing(
 
 void AndroidCameraSession::set_preview_surface(::ANativeWindow* window) {
   impl_->set_preview_surface(window);
+}
+
+void AndroidCameraSession::set_display_rotation(int rotation_degrees) {
+  impl_->set_display_rotation(rotation_degrees);
 }
 
 void AndroidCameraSession::start() { impl_->start(); }

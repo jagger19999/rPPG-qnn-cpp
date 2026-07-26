@@ -134,6 +134,25 @@ Java_com_jagger_rppgbench_NativeBridge_nativeSetPreviewSurface(
   }
 }
 
+extern "C" JNIEXPORT void JNICALL
+Java_com_jagger_rppgbench_NativeBridge_nativeSetDisplayRotation(
+    JNIEnv* env, jclass, jlong handle, jint rotation_degrees) noexcept {
+  try {
+    rppg_qnn::android::set_camera_display_rotation(handle, rotation_degrees);
+  } catch (const std::exception& error) {
+    const std::string message = error_text(error);
+    jclass exception_class = env->FindClass("java/lang/IllegalStateException");
+    if (exception_class != nullptr) {
+      env->ThrowNew(exception_class, message.c_str());
+    }
+  } catch (...) {
+    jclass exception_class = env->FindClass("java/lang/IllegalStateException");
+    if (exception_class != nullptr) {
+      env->ThrowNew(exception_class, "NATIVE_ERROR: unknown");
+    }
+  }
+}
+
 extern "C" JNIEXPORT jstring JNICALL
 Java_com_jagger_rppgbench_NativeBridge_nativeStart(JNIEnv* env, jclass,
                                                     jlong handle) noexcept {

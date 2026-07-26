@@ -449,8 +449,8 @@ public final class MainActivity extends Activity {
     }
 
     /**
-     * Capture buffer is 640×480 (4:3). A full-width × fixed-dp TextureView is wider, so the
-     * default fill stretch flattens faces. Resize the container to the buffer aspect ratio.
+     * Sensor buffer is landscape 640×480. Phone is portrait: rotate preview to
+     * match system camera, and size the container to the upright 3:4 aspect.
      */
     private void applyPreviewAspect() {
         if (previewContainer == null || previewSurface == null) {
@@ -462,19 +462,90 @@ public final class MainActivity extends Activity {
                     if (width <= 0) {
                         return;
                     }
+                    int relative = computeRelativeRotationDegrees();
+                    boolean swap = relative == 90 || relative == 270;
+                    int aspectWidth = swap ? CAMERA_CAPTURE_HEIGHT : CAMERA_CAPTURE_WIDTH;
+                    int aspectHeight = swap ? CAMERA_CAPTURE_WIDTH : CAMERA_CAPTURE_HEIGHT;
                     int height =
-                            Math.round(
-                                    width
-                                            * (CAMERA_CAPTURE_HEIGHT
-                                                    / (float) CAMERA_CAPTURE_WIDTH));
+                            Math.round(width * (aspectHeight / (float) aspectWidth));
                     ViewGroup.LayoutParams layoutParams = previewContainer.getLayoutParams();
                     if (layoutParams != null && layoutParams.height != height) {
                         layoutParams.height = height;
                         previewContainer.setLayoutParams(layoutParams);
                     }
-                    // Same aspect as buffer → identity transform (no stretch).
-                    previewSurface.setTransform(new Matrix());
+                    previewSurface.post(this::configurePreviewTransform);
                 });
+    }
+
+    private void configurePreviewTransform() {
+        if (previewSurface == null) {
+            return;
+        }
+        int viewWidth = previewSurface.getWidth();
+        int viewHeight = previewSurface.getHeight();
+        if (viewWidth <= 0 || viewHeight <= 0) {
+            return;
+        }
+        int relative = computeRelativeRotationDegrees();
+        Matrix matrix = new Matrix();
+        float centerX = viewWidth / 2f;
+        float centerY = viewHeight / 2f;
+
+        boolean swap = relative == 90 || relative == 270;
+        float bufferAspect =
+                swap
+                        ? (CAMERA_CAPTURE_HEIGHT / (float) CAMERA_CAPTURE_WIDTH)
+                        : (CAMERA_CAPTURE_WIDTH / (float) CAMERA_CAPTURE_HEIGHT);
+        float viewAspect = viewWidth / (float) viewHeight;
+        float scaleX = 1f;
+        float scaleY = 1f;
+        if (bufferAspect > viewAspect) {
+            scaleX = bufferAspect / viewAspect;
+        } else {
+            scaleY = viewAspect / bufferAspect;
+        }
+
+        matrix.postScale(scaleX, scaleY, centerX, centerY);
+        matrix.postRotate(relative, centerX, centerY);
+        previewSurface.setTransform(matrix);
+        updatePreviewMirror();
+    }
+
+    private int computeRelativeRotationDegrees() {
+        int sensor = selectedSensorOrientation();
+        int display = displayRotationDegrees();
+        if (isSelectedCameraFront()) {
+            return ((sensor + display) % 360 + 360) % 360;
+        }
+        return ((sensor - display) % 360 + 360) % 360;
+    }
+
+    private int displayRotationDegrees() {
+        int rotation = getWindowManager().getDefaultDisplay().getRotation();
+        switch (rotation) {
+            case Surface.ROTATION_90:
+                return 90;
+            case Surface.ROTATION_180:
+                return 180;
+            case Surface.ROTATION_270:
+                return 270;
+            case Surface.ROTATION_0:
+            default:
+                return 0;
+        }
+    }
+
+    private int selectedSensorOrientation() {
+        String selectedId = selectedCameraId();
+        if (selectedId == null) {
+            return 0;
+        }
+        for (CameraEntry entry : cameraEntries) {
+            if (selectedId.equals(entry.id)) {
+                return entry.sensorOrientation;
+            }
+        }
+        return 0;
     }
 
     private void updatePreviewMirror() {
@@ -811,7 +882,8 @@ public final class MainActivity extends Activity {
                 entries.add(
                         new CameraEntry(
                                 camera.getString("id"),
-                                camera.optString("facing", "unknown")));
+                                camera.optString("facing", "unknown"),
+                                camera.optInt("sensor_orientation", 0)));
             }
         } catch (Exception ignored) {
             // Leave entries empty; caller shows failure elsewhere.
@@ -826,7 +898,9 @@ public final class MainActivity extends Activity {
         for (int index = 0; index < left.size(); index++) {
             CameraEntry a = left.get(index);
             CameraEntry b = right.get(index);
-            if (!a.id.equals(b.id) || !a.facing.equals(b.facing)) {
+            if (!a.id.equals(b.id)
+                    || !a.facing.equals(b.facing)
+                    || a.sensorOrientation != b.sensorOrientation) {
                 return false;
             }
         }
@@ -973,6 +1047,8 @@ public final class MainActivity extends Activity {
         statusHandler.removeCallbacks(finishStartWhenPreviewReady);
         pendingCameraStart = false;
         try {
+            NativeBridge.nativeSetDisplayRotation(nativeHandle, displayRotationDegrees());
+            applyPreviewAspect();
             if (previewSurfaceReady && previewSurface.isAvailable()) {
                 SurfaceTexture surfaceTexture = previewSurface.getSurfaceTexture();
                 if (surfaceTexture != null) {
@@ -990,7 +1066,7 @@ public final class MainActivity extends Activity {
                 return;
             }
             started = true;
-            updatePreviewMirror();
+            applyPreviewAspect();
             userMessage = "";
             refreshCombinedStatus();
             try {
@@ -1107,10 +1183,12 @@ public final class MainActivity extends Activity {
     private static final class CameraEntry {
         private final String id;
         private final String facing;
+        private final int sensorOrientation;
 
-        private CameraEntry(String id, String facing) {
+        private CameraEntry(String id, String facing, int sensorOrientation) {
             this.id = id;
             this.facing = facing;
+            this.sensorOrientation = sensorOrientation;
         }
     }
 
