@@ -147,5 +147,7 @@ Stop / `onStop` 只停相机；手表不断开（与现有 BLE 设计一致）�
    - 状态常显 `measured_fps`；验收：**连续稳定运行时 measured_fps ≥ 29.0**（允许短暂抖动），否则标为未通过
    - 排查并削减拖垮采集的路径（ROI JPEG 不得阻塞 ImageReader 回调线程；预览双输出不得把分析降到远低于 30）
 3. **实时预览 + 人脸框**（与 ROI 小图并存）
+   - `TextureView` 必须在 `nativeStart` **之前**可见并拿到 Surface；`GONE` 的 TextureView 无 Surface，会导致 `preview_enabled:false` /「预览不可用」
+   - 运行中禁止再设 preview Surface（须 Stop 后重建会话）
 4. **界面清晰度**：三卡更大字号/对比；摄像头与 FPS 放在首屏可见区
 

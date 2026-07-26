@@ -99,6 +99,7 @@ public final class MainActivity extends Activity {
     private boolean started;
     private boolean previewSurfaceReady;
     private boolean pendingPreviewBinding;
+    private boolean pendingCameraStart;
     private boolean cameraSpinnerInitializing;
     private int pendingAction = ACTION_NONE;
     private int pendingBleAction = BLE_ACTION_NONE;
@@ -206,7 +207,14 @@ public final class MainActivity extends Activity {
                             SurfaceTexture surfaceTexture, int width, int height) {
                         surfaceTexture.setDefaultBufferSize(640, 480);
                         previewSurfaceReady = true;
-                        if (pendingPreviewBinding || started) {
+                        // TextureView only gets a Surface after the container is visible.
+                        // Bind + start must wait for this callback; binding while running is rejected.
+                        if (pendingCameraStart) {
+                            bindPreviewSurface(surfaceTexture);
+                            finishStartCamera();
+                            return;
+                        }
+                        if (pendingPreviewBinding && !started) {
                             bindPreviewSurface(surfaceTexture);
                         }
                     }
@@ -219,7 +227,9 @@ public final class MainActivity extends Activity {
                     public boolean onSurfaceTextureDestroyed(SurfaceTexture surfaceTexture) {
                         previewSurfaceReady = false;
                         pendingPreviewBinding = false;
-                        releasePreviewSurface();
+                        if (!started && !pendingCameraStart) {
+                            releasePreviewSurface();
+                        }
                         return true;
                     }
 
@@ -398,6 +408,10 @@ public final class MainActivity extends Activity {
         if (previewContainer == null) {
             return;
         }
+        if (pendingCameraStart) {
+            showPreviewContainerForBinding();
+            return;
+        }
         if (!started || nativeHandle == 0) {
             previewContainer.setVisibility(View.GONE);
             previewPlaceholder.setVisibility(View.GONE);
@@ -413,6 +427,16 @@ public final class MainActivity extends Activity {
         }
         previewSurface.setVisibility(previewEnabled ? View.VISIBLE : View.GONE);
         previewPlaceholder.setVisibility(previewEnabled ? View.GONE : View.VISIBLE);
+        if (!previewEnabled) {
+            previewPlaceholder.setText(R.string.preview_placeholder);
+        }
+    }
+
+    private void showPreviewContainerForBinding() {
+        previewContainer.setVisibility(View.VISIBLE);
+        previewSurface.setVisibility(View.VISIBLE);
+        previewPlaceholder.setVisibility(View.GONE);
+        updatePreviewMirror();
     }
 
     private void updatePreviewMirror() {
@@ -462,7 +486,7 @@ public final class MainActivity extends Activity {
 
     private void preparePreviewSurfaceBinding() {
         pendingPreviewBinding = true;
-        updatePreviewMirror();
+        showPreviewContainerForBinding();
         if (previewSurfaceReady && previewSurface.isAvailable()) {
             SurfaceTexture surfaceTexture = previewSurface.getSurfaceTexture();
             if (surfaceTexture != null) {
@@ -803,6 +827,8 @@ public final class MainActivity extends Activity {
     }
 
     private void stopCameraSilently() {
+        pendingCameraStart = false;
+        statusHandler.removeCallbacks(finishStartWhenPreviewReady);
         if (nativeHandle == 0) {
             started = false;
             return;
@@ -823,8 +849,15 @@ public final class MainActivity extends Activity {
         }
     }
 
+    private final Runnable finishStartWhenPreviewReady =
+            () -> {
+                if (pendingCameraStart && !started) {
+                    finishStartCamera();
+                }
+            };
+
     private void startCamera() {
-        if (started) {
+        if (started || pendingCameraStart) {
             return;
         }
         if (cameraEntries.isEmpty()) {
@@ -866,10 +899,46 @@ public final class MainActivity extends Activity {
                 showUserMessage(configured);
                 return;
             }
-            preparePreviewSurfaceBinding();
             alignmentHistory.clear();
             latestAlignment = null;
             lastAlignedWindowEndSec = null;
+            // Preview Surface must exist before nativeStart; GONE TextureView has none.
+            pendingCameraStart = true;
+            preparePreviewSurfaceBinding();
+            if (previewSurfaceReady && previewSurface.isAvailable()) {
+                finishStartCamera();
+            } else {
+                // Next layout pass often creates the SurfaceTexture; timeout falls back.
+                previewSurface.post(
+                        () -> {
+                            if (pendingCameraStart
+                                    && previewSurface.isAvailable()
+                                    && !started) {
+                                finishStartCamera();
+                            }
+                        });
+                statusHandler.postDelayed(finishStartWhenPreviewReady, 750);
+            }
+        } catch (Throwable error) {
+            pendingCameraStart = false;
+            showUserMessage("CAMERA_START_FAILED: " + error.getMessage());
+        }
+    }
+
+    private void finishStartCamera() {
+        if (!pendingCameraStart || started || nativeHandle == 0) {
+            return;
+        }
+        statusHandler.removeCallbacks(finishStartWhenPreviewReady);
+        pendingCameraStart = false;
+        try {
+            if (previewSurfaceReady && previewSurface.isAvailable()) {
+                SurfaceTexture surfaceTexture = previewSurface.getSurfaceTexture();
+                if (surfaceTexture != null) {
+                    surfaceTexture.setDefaultBufferSize(640, 480);
+                    bindPreviewSurface(surfaceTexture);
+                }
+            }
             sessionStartMonotonicSec = monotonicSec();
             String result = NativeBridge.nativeStart(nativeHandle);
             if (!result.contains("\"state\":\"running\"")) {
@@ -882,12 +951,23 @@ public final class MainActivity extends Activity {
             updatePreviewMirror();
             userMessage = "";
             refreshCombinedStatus();
+            try {
+                if (!new JSONObject(result).optBoolean("preview_enabled", false)) {
+                    showUserMessage(
+                            "预览未接入（仅分析通路）。请看诊断里 preview_enabled / "
+                                    + "preview_unavailable。");
+                }
+            } catch (Exception ignored) {
+                // Status poll will refresh preview_enabled.
+            }
         } catch (Throwable error) {
             showUserMessage("CAMERA_START_FAILED: " + error.getMessage());
         }
     }
 
     private void stopCamera() {
+        pendingCameraStart = false;
+        statusHandler.removeCallbacks(finishStartWhenPreviewReady);
         if (nativeHandle == 0) {
             started = false;
             return;
