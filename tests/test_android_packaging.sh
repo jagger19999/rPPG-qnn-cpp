@@ -151,6 +151,7 @@ android/app/src/main/cpp/android_onnx_model_contract.hpp
 android/app/src/main/cpp/android_qnn_preflight_stub.cpp
 android/app/src/main/cpp/native_bridge.cpp
 android/app/src/main/java/com/jagger/rppgbench/CameraStartGeneration.java
+android/app/src/main/java/com/jagger/rppgbench/DeepModelSelection.java
 android/app/src/main/java/com/jagger/rppgbench/MainActivity.java
 android/app/src/main/java/com/jagger/rppgbench/ModelIntegrity.java
 android/app/src/main/java/com/jagger/rppgbench/NativeBridge.java
@@ -237,13 +238,17 @@ for field_mapping in \
   fi
 done
 
-if [[ $(grep -Fc 'deepCard.bind("深度 TSCAN"' "$activity_java" || true) -ne 2 ]] ||
-   ! grep -Fq '<string name="deep_selector_label">使用 ONNX Runtime CPU 运行 TSCAN</string>' "$strings_xml" ||
-   ! grep -Fq '<string name="camera_smoke_boundary">Camera2 + GREEN/POS/CHROM + 可选 TSCAN ONNX Runtime CPU；不使用 QNN/Adreno。</string>' "$strings_xml" ||
-   grep -F 'deepCard.bind(' "$activity_java" | grep -Fq 'EfficientPhys' ||
-   grep -E '<string name="(deep_selector_label|camera_smoke_boundary)">' "$strings_xml" |
-     grep -Fq 'EfficientPhys'; then
-  echo "android packaging check: active deep-model UI must label the runtime as TSCAN" >&2
+deep_selection_java="$root/android/app/src/main/java/com/jagger/rppgbench/DeepModelSelection.java"
+activity_layout="$root/android/app/src/main/res/layout/activity_main.xml"
+if ! grep -Fq '<string name="deep_selector_label">深度模型</string>' "$strings_xml" ||
+   ! grep -Fq 'TSCAN (UBFC)' "$deep_selection_java" ||
+   ! grep -Fq 'EfficientPhys (PURE)' "$deep_selection_java" ||
+   ! grep -Fq 'DeepModelSelection.fromSpinnerPosition' "$activity_java" ||
+   ! grep -Fq 'private Spinner deepSelector;' "$activity_java" ||
+   grep -Fq 'CheckBox' "$activity_java" ||
+   grep -A4 'android:id="@+id/deep_selector"' "$activity_layout" |
+     grep -Fq '<CheckBox'; then
+  echo "android packaging check: selectable deep-model spinner contract is missing" >&2
   exit 1
 fi
 
@@ -364,6 +369,7 @@ android/app/src/main/cpp/android_onnx_model_contract.hpp
 android/app/src/main/cpp/android_qnn_preflight_stub.cpp
 android/app/src/main/cpp/native_bridge.cpp
 android/app/src/main/java/com/jagger/rppgbench/CameraStartGeneration.java
+android/app/src/main/java/com/jagger/rppgbench/DeepModelSelection.java
 android/app/src/main/java/com/jagger/rppgbench/MainActivity.java
 android/app/src/main/java/com/jagger/rppgbench/ModelIntegrity.java
 android/app/src/main/java/com/jagger/rppgbench/NativeBridge.java
@@ -404,6 +410,7 @@ android/app/src/main/res/mipmap-xxxhdpi/ic_launcher_round.png
 android/app/src/main/res/values/colors.xml
 android/app/src/main/res/values/strings.xml
 android/app/src/test/java/com/jagger/rppgbench/CameraStartGenerationTest.java
+android/app/src/test/java/com/jagger/rppgbench/DeepModelSelectionTest.java
 android/app/src/test/java/com/jagger/rppgbench/ModelIntegrityTest.java
 android/app/src/test/java/com/jagger/rppgbench/PreviewRotationTest.java
 android/app/src/test/java/com/jagger/rppgbench/ui/HrStatusFormatterTest.java

@@ -60,6 +60,14 @@ public final class ModelIntegrityTest {
     @Test
     public void disabledNeedsNoModelSpec() {
         assertEquals(null, ModelIntegrity.specFor("disabled"));
+        assertEquals(
+                null,
+                ModelIntegrity.specFor(DeepModelSelection.fromSpinnerPosition(0)));
+        assertEquals(
+                "efficientphys_pure.onnx",
+                ModelIntegrity.specFor(
+                                DeepModelSelection.fromCanonicalName("efficientphys"))
+                        .filename);
     }
 
     @Test

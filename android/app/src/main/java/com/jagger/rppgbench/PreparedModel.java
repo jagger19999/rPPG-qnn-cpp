@@ -15,8 +15,9 @@ public final class PreparedModel implements AutoCloseable {
         this.nativePath = nativePath;
     }
 
-    public static PreparedModel prepare(String deepModel, File model) throws IOException {
-        ModelIntegrity.Spec spec = ModelIntegrity.specFor(deepModel);
+    public static PreparedModel prepare(DeepModelSelection selection, File model)
+            throws IOException {
+        ModelIntegrity.Spec spec = ModelIntegrity.specFor(selection);
         if (spec == null) {
             if (model != null) {
                 throw new IllegalArgumentException("disabled deep model must not have a model file");

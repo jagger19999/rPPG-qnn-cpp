@@ -33,6 +33,42 @@ public class HrStatusFormatterTest {
     }
 
     @Test
+    public void deepShowsStabilizedAndRawBpmWithAllTimingStages() throws Exception {
+        JSONObject json = new JSONObject(
+                "{\"deep_enabled\":true,\"deep_result_available\":true,"
+                        + "\"deep_result_valid\":true,\"deep_stability_valid\":true,"
+                        + "\"deep_display_bpm\":71.6,\"deep_raw_bpm\":143.2,"
+                        + "\"deep_confidence\":0.82,"
+                        + "\"deep_window_materialization_ms\":18.2,"
+                        + "\"deep_preprocess_ms\":41.1,\"deep_runtime_ms\":912.4,"
+                        + "\"deep_postprocess_ms\":7.3,\"deep_inference_ms\":960.8}");
+
+        HrStatusFormatter.CardView card = HrStatusFormatter.deep(json);
+
+        assertEquals("72", card.primary);
+        assertEquals(
+                "可信 · 原始 143 · 置信 0.82 · 窗口 18ms · 预处理 41ms · "
+                        + "运行 912ms · 后处理 7ms · 总计 961ms",
+                card.secondary);
+    }
+
+    @Test
+    public void deepNeverPresentsUnstableOrLowConfidenceResultAsTrusted() throws Exception {
+        JSONObject json = new JSONObject(
+                "{\"deep_enabled\":true,\"deep_result_available\":true,"
+                        + "\"deep_result_valid\":true,\"deep_stability_valid\":false,"
+                        + "\"deep_display_bpm\":72,\"deep_raw_bpm\":144,"
+                        + "\"deep_confidence\":0.12,"
+                        + "\"deep_correction_reason\":\"low_confidence\","
+                        + "\"deep_inference_ms\":900}");
+
+        HrStatusFormatter.CardView card = HrStatusFormatter.deep(json);
+
+        assertEquals("--", card.primary);
+        assertEquals("low_confidence · 原始 144 · 置信 0.12 · 总计 900ms", card.secondary);
+    }
+
+    @Test
     public void watchShowsBpmAndStatus() {
         HrStatusFormatter.CardView watch =
                 HrStatusFormatter.watch("STREAMING", 70, null);

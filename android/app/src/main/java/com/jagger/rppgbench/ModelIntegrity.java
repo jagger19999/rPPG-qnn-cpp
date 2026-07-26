@@ -41,9 +41,25 @@ public final class ModelIntegrity {
         }
     }
 
+    public static Spec specFor(DeepModelSelection selection) {
+        if (selection == null) {
+            throw new IllegalArgumentException("deep model selection is required");
+        }
+        Spec spec = specFor(selection.canonicalName);
+        if (spec != null && !spec.filename.equals(selection.filename)) {
+            throw new IllegalStateException("deep model selection filename is inconsistent");
+        }
+        return spec;
+    }
+
     public static File modelFile(File modelDirectory, String deepModel) {
         Spec spec = specFor(deepModel);
         return spec == null ? null : new File(modelDirectory, spec.filename);
+    }
+
+    public static File modelFile(File modelDirectory, DeepModelSelection selection) {
+        specFor(selection);
+        return selection.modelFile(modelDirectory);
     }
 
     static void requireExpectedFilename(Spec spec, File model) {

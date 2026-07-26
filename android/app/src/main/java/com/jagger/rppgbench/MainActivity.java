@@ -20,7 +20,6 @@ import android.view.ViewGroup;
 import android.widget.AdapterView;
 import android.widget.ArrayAdapter;
 import android.widget.Button;
-import android.widget.CheckBox;
 import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
@@ -100,7 +99,7 @@ public final class MainActivity extends Activity {
     private Spinner methodSelector;
     private Spinner cameraSelector;
     private Spinner watchDeviceSelector;
-    private CheckBox deepSelector;
+    private Spinner deepSelector;
     private Button listCamerasButton;
     private Button startCameraButton;
     private Button stopCameraButton;
@@ -115,6 +114,8 @@ public final class MainActivity extends Activity {
     private boolean diagnosticExpanded = false;
     private String userMessage = "";
     private String lastCameraJson = "{}";
+    private DeepModelSelection activeDeepSelection =
+            DeepModelSelection.fromSpinnerPosition(0);
 
     private String cameraId;
     private long nativeHandle;
@@ -176,6 +177,15 @@ public final class MainActivity extends Activity {
         methodSelector.setAdapter(methodAdapter);
 
         deepSelector = findViewById(R.id.deep_selector);
+        ArrayAdapter<String> deepModelAdapter =
+                new ArrayAdapter<>(
+                        this,
+                        android.R.layout.simple_spinner_item,
+                        DeepModelSelection.spinnerLabels());
+        deepModelAdapter.setDropDownViewResource(
+                android.R.layout.simple_spinner_dropdown_item);
+        deepSelector.setAdapter(deepModelAdapter);
+        deepSelector.setSelection(0);
 
         cameraAdapter =
                 new ArrayAdapter<>(this, android.R.layout.simple_spinner_item, new ArrayList<>());
@@ -336,7 +346,7 @@ public final class MainActivity extends Activity {
     }
 
     private void refreshCombinedStatus() {
-        String cameraJson = "{}";
+        String cameraJson = lastCameraJson;
         if (started && nativeHandle != 0) {
             try {
                 cameraJson = NativeBridge.nativeGetStatus(nativeHandle);
@@ -353,13 +363,15 @@ public final class MainActivity extends Activity {
         try {
             JSONObject json = new JSONObject(cameraJson);
             traditionalCard.bind("传统 rPPG", HrStatusFormatter.traditional(json));
-            deepCard.bind("深度 TSCAN", HrStatusFormatter.deep(json));
+            deepCard.bind(deepCardTitle(activeDeepSelection), HrStatusFormatter.deep(json));
             if (started && nativeHandle != 0) {
                 updateWaveformCards(json);
             }
         } catch (Exception error) {
             traditionalCard.bind("传统 rPPG", new HrStatusFormatter.CardView("--", "不可用"));
-            deepCard.bind("深度 TSCAN", new HrStatusFormatter.CardView("--", "不可用"));
+            deepCard.bind(
+                    deepCardTitle(activeDeepSelection),
+                    new HrStatusFormatter.CardView("--", "不可用"));
         }
 
         WatchContracts.WatchHeartRateSnapshot snapshot =
@@ -457,11 +469,21 @@ public final class MainActivity extends Activity {
         int collected = status.optInt("deep_frames_collected", 0);
         int required = status.optInt("deep_frames_required", 180);
         boolean available = status.optBoolean("deep_result_available", false);
-        boolean valid = status.optBoolean("deep_result_valid", false);
-        String reason = status.optString("deep_invalid_reason", "");
-        String deepState = PpgWaveformState.deep(deepEnabled, collected, required,
-                available, valid, reason);
-        deepWaveformCard.bind(getString(R.string.waveform_deep_title), deepState, deepWaveform);
+        boolean waveformValid = status.optBoolean("deep_result_valid", false);
+        boolean stabilityValid = status.optBoolean("deep_stability_valid", false);
+        String reason = waveformValid
+                ? status.optString("deep_correction_reason", "")
+                : status.optString("deep_invalid_reason", "");
+        String deepState = PpgWaveformState.deep(
+                activeDeepSelection.modelLabel,
+                deepEnabled,
+                collected,
+                required,
+                available,
+                waveformValid && stabilityValid,
+                reason);
+        deepWaveformCard.bind(
+                deepWaveformTitle(activeDeepSelection), deepState, deepWaveform);
     }
 
     private PpgWaveformSnapshot loadWaveform(boolean deep) {
@@ -496,7 +518,7 @@ public final class MainActivity extends Activity {
                     getString(R.string.waveform_traditional_sampling));
         }
         if (deepWaveformCard != null) {
-            deepWaveformCard.clear(getString(R.string.waveform_deep_title),
+            deepWaveformCard.clear(deepWaveformTitle(activeDeepSelection),
                     getString(R.string.waveform_deep_disabled));
         }
     }
@@ -1115,13 +1137,15 @@ public final class MainActivity extends Activity {
             nativeHandle = 0;
         }
         File filesDirectory = getFilesDir();
-        String deepModel = deepSelector.isChecked() ? "tscan" : "disabled";
+        DeepModelSelection deepSelection = DeepModelSelection.fromSpinnerPosition(
+                deepSelector.getSelectedItemPosition());
         pendingStartRequest =
                 new CameraStartRequest(
                         cameraId,
                         methodSelector.getSelectedItem().toString(),
-                        deepModel,
-                        ModelIntegrity.modelFile(new File(filesDirectory, "models"), deepModel),
+                        deepSelection,
+                        ModelIntegrity.modelFile(
+                                new File(filesDirectory, "models"), deepSelection),
                         filesDirectory,
                         getAssets(),
                         new File(
@@ -1182,7 +1206,8 @@ public final class MainActivity extends Activity {
             long generation, CameraStartRequest request, Surface preview) {
         long handle = 0;
         boolean transferredToActivity = false;
-        try (PreparedModel prepared = PreparedModel.prepare(request.deepModel, request.modelFile)) {
+        try (PreparedModel prepared = PreparedModel.prepare(
+                request.deepSelection, request.modelFile)) {
             if (!cameraStartGeneration.isCurrent(generation)) {
                 return;
             }
@@ -1199,7 +1224,7 @@ public final class MainActivity extends Activity {
                             request.method,
                             cascade.getAbsolutePath(),
                             request.sessionDirectory.getAbsolutePath(),
-                            request.deepModel,
+                            request.deepSelection.canonicalName,
                             prepared.nativePath());
             if (!configured.startsWith("{")) {
                 throw new IllegalStateException(configured);
@@ -1273,6 +1298,7 @@ public final class MainActivity extends Activity {
     private void acceptStartedCamera(
             CameraStartRequest request, long handle, String result, double startMonotonicSec) {
         nativeHandle = handle;
+        activeDeepSelection = request.deepSelection;
         sessionOutputDirectory = request.sessionDirectory;
         sessionStartMonotonicSec = startMonotonicSec;
         pendingCameraStart = false;
@@ -1340,6 +1366,7 @@ public final class MainActivity extends Activity {
             return;
         }
         try {
+            retainLatestCameraResult();
             String stopped = NativeBridge.nativeStop(nativeHandle);
             exportWatchCsv();
             showUserMessage(stopped + "\n" + formatWatchStatusLine());
@@ -1353,6 +1380,20 @@ public final class MainActivity extends Activity {
             previewContainer.setVisibility(View.GONE);
             faceBoxOverlay.clearFaceRect();
             setCameraControlsLocked(false);
+        }
+    }
+
+    private void retainLatestCameraResult() {
+        try {
+            String statusJson = NativeBridge.nativeGetStatus(nativeHandle);
+            JSONObject status = new JSONObject(statusJson);
+            lastCameraJson = statusJson;
+            traditionalCard.bind("传统 rPPG", HrStatusFormatter.traditional(status));
+            deepCard.bind(
+                    deepCardTitle(activeDeepSelection), HrStatusFormatter.deep(status));
+            updateWaveformCards(status);
+        } catch (Throwable ignored) {
+            // Preserve the most recently polled result when the final status read fails.
         }
     }
 
@@ -1455,7 +1496,7 @@ public final class MainActivity extends Activity {
     private static final class CameraStartRequest {
         private final String cameraId;
         private final String method;
-        private final String deepModel;
+        private final DeepModelSelection deepSelection;
         private final File modelFile;
         private final File filesDirectory;
         private final AssetManager assets;
@@ -1465,7 +1506,7 @@ public final class MainActivity extends Activity {
         private CameraStartRequest(
                 String cameraId,
                 String method,
-                String deepModel,
+                DeepModelSelection deepSelection,
                 File modelFile,
                 File filesDirectory,
                 AssetManager assets,
@@ -1473,13 +1514,23 @@ public final class MainActivity extends Activity {
                 int displayRotationDegrees) {
             this.cameraId = cameraId;
             this.method = method;
-            this.deepModel = deepModel;
+            this.deepSelection = deepSelection;
             this.modelFile = modelFile;
             this.filesDirectory = filesDirectory;
             this.assets = assets;
             this.sessionDirectory = sessionDirectory;
             this.displayRotationDegrees = displayRotationDegrees;
         }
+    }
+
+    private static String deepCardTitle(DeepModelSelection selection) {
+        return selection.enabled() ? "深度 " + selection.displayLabel() : "深度模型";
+    }
+
+    private String deepWaveformTitle(DeepModelSelection selection) {
+        return selection.enabled()
+                ? getString(R.string.waveform_deep_title, selection.displayLabel())
+                : getString(R.string.waveform_deep_disabled_title);
     }
 
     private static String formatDouble(double value) {
