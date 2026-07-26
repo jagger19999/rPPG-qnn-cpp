@@ -7,6 +7,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <numeric>
 #include <string>
 #include <vector>
 
@@ -51,6 +52,17 @@ void expect_preprocess_error(const rppg_qnn::DeepInput& input,
   }
 }
 
+void expect_preprocess_success(const rppg_qnn::DeepInput& input) {
+  try {
+    const auto output = rppg_qnn::preprocess_tscan_rgb(input);
+    EXPECT_TRUE(std::isfinite(output.values.front()));
+  } catch (const rppg_qnn::AppError&) {
+    EXPECT_TRUE(false);
+  }
+}
+
+double reference_population_std(const std::vector<float>& values);
+
 void validates_shape_length_finiteness_and_variance() {
   auto wrong_shape = input_with(1.0F);
   wrong_shape.shape = {180, 72, 72, 1};
@@ -67,6 +79,64 @@ void validates_shape_length_finiteness_and_variance() {
   expect_preprocess_error(input_with(7.0F), "TSCAN_PREPROCESS_VARIANCE");
 }
 
+void accepts_positive_scales_below_the_previous_guard() {
+  auto low_appearance_scale = input_with(0.0F);
+  for (std::size_t frame = 0; frame < kFrames; ++frame) {
+    for (std::size_t pixel = 0; pixel < kPixels; ++pixel) {
+      for (std::size_t channel = 0; channel < kRgbChannels; ++channel) {
+        low_appearance_scale.tensor[input_offset(frame, pixel, channel)] =
+            1e-10F * static_cast<float>(frame + pixel % 5U + channel * 10U);
+      }
+    }
+  }
+  const double appearance_scale =
+      reference_population_std(low_appearance_scale.tensor);
+  EXPECT_TRUE(appearance_scale > 0.0);
+  EXPECT_TRUE(appearance_scale < 1e-7);
+  expect_preprocess_success(low_appearance_scale);
+
+  auto low_diff_scale = input_with(0.0F);
+  for (std::size_t frame = 0; frame < kFrames; ++frame) {
+    for (std::size_t pixel = 0; pixel < kPixels; ++pixel) {
+      for (std::size_t channel = 0; channel < kRgbChannels; ++channel) {
+        low_diff_scale.tensor[input_offset(frame, pixel, channel)] =
+            1.0F + static_cast<float>(pixel % 5U + channel) +
+            1e-7F * static_cast<float>(frame);
+      }
+    }
+  }
+  std::vector<float> differences;
+  differences.reserve((kFrames - 1U) * kPixels * kRgbChannels);
+  for (std::size_t frame = 0; frame + 1U < kFrames; ++frame) {
+    for (std::size_t pixel = 0; pixel < kPixels; ++pixel) {
+      for (std::size_t channel = 0; channel < kRgbChannels; ++channel) {
+        const float previous =
+            low_diff_scale.tensor[input_offset(frame, pixel, channel)];
+        const float next =
+            low_diff_scale.tensor[input_offset(frame + 1U, pixel, channel)];
+        differences.push_back((next - previous) /
+                              (next + previous + 1e-7F));
+      }
+    }
+  }
+  const double difference_scale = reference_population_std(differences);
+  EXPECT_TRUE(difference_scale > 0.0);
+  EXPECT_TRUE(difference_scale < 1e-7);
+  expect_preprocess_success(low_diff_scale);
+}
+
+double reference_population_std(const std::vector<float>& values) {
+  const double mean =
+      std::accumulate(values.begin(), values.end(), 0.0) /
+      static_cast<double>(values.size());
+  double squared_deviations = 0.0;
+  for (float value : values) {
+    const double deviation = static_cast<double>(value) - mean;
+    squared_deviations += deviation * deviation;
+  }
+  return std::sqrt(squared_deviations / static_cast<double>(values.size()));
+}
+
 void matches_a_manually_calculable_layout_and_rgb_order() {
   auto input = input_with(0.0F);
   for (std::size_t frame = 0; frame < kFrames; ++frame) {
@@ -80,6 +150,43 @@ void matches_a_manually_calculable_layout_and_rgb_order() {
   const auto output = rppg_qnn::preprocess_tscan_rgb(input);
   EXPECT_EQ(output.shape, (std::vector<std::int64_t>{180, 6, 72, 72}));
   EXPECT_EQ(output.values.size(), kFrames * 6U * kPixels);
+
+  std::vector<float> reference_differences;
+  reference_differences.reserve((kFrames - 1U) * kPixels * kRgbChannels);
+  for (std::size_t frame = 0; frame + 1U < kFrames; ++frame) {
+    for (std::size_t pixel = 0; pixel < kPixels; ++pixel) {
+      for (std::size_t channel = 0; channel < kRgbChannels; ++channel) {
+        const float previous = input.tensor[input_offset(frame, pixel, channel)];
+        const float next = input.tensor[input_offset(frame + 1U, pixel, channel)];
+        reference_differences.push_back(
+            (next - previous) / (next + previous + 1e-7F));
+      }
+    }
+  }
+  const double difference_scale = reference_population_std(reference_differences);
+  const double appearance_mean =
+      std::accumulate(input.tensor.begin(), input.tensor.end(), 0.0) /
+      static_cast<double>(input.tensor.size());
+  const double appearance_scale = reference_population_std(input.tensor);
+  constexpr std::size_t checked_frame = 37;
+  constexpr std::size_t checked_pixel = 73;
+  for (std::size_t channel = 0; channel < kRgbChannels; ++channel) {
+    const float previous =
+        input.tensor[input_offset(checked_frame, checked_pixel, channel)];
+    const float next =
+        input.tensor[input_offset(checked_frame + 1U, checked_pixel, channel)];
+    const float raw_difference =
+        (next - previous) / (next + previous + 1e-7F);
+    expect_near(output.values[output_offset(checked_frame, channel,
+                                            checked_pixel)],
+                static_cast<float>(raw_difference / difference_scale), 1e-5F);
+    expect_near(output.values[output_offset(checked_frame, channel + 3U,
+                                            checked_pixel)],
+                static_cast<float>((static_cast<double>(previous) -
+                                    appearance_mean) /
+                                   appearance_scale),
+                1e-5F);
+  }
 
   for (std::size_t channel = 0; channel < 3; ++channel) {
     const float early = output.values[output_offset(0, channel, 0)];
@@ -102,6 +209,20 @@ void matches_a_manually_calculable_layout_and_rgb_order() {
 
   const auto repeated = rppg_qnn::preprocess_tscan_rgb(input);
   EXPECT_EQ(output.values, repeated.values);
+}
+
+void distinguishes_zero_diff_from_the_unreachable_appearance_only_case() {
+  auto identical_frames = input_with(0.0F);
+  for (std::size_t frame = 0; frame < kFrames; ++frame) {
+    for (std::size_t pixel = 0; pixel < kPixels; ++pixel) {
+      for (std::size_t channel = 0; channel < kRgbChannels; ++channel) {
+        identical_frames.tensor[input_offset(frame, pixel, channel)] =
+            static_cast<float>(pixel % 5U + channel * 10U);
+      }
+    }
+  }
+  expect_preprocess_error(identical_frames, "TSCAN_PREPROCESS_VARIANCE_DIFF");
+  expect_preprocess_error(input_with(7.0F), "TSCAN_PREPROCESS_VARIANCE_DIFF");
 }
 
 struct Checkpoint {
@@ -158,7 +279,9 @@ void matches_python_reference_checkpoints() {
 
 int main() {
   validates_shape_length_finiteness_and_variance();
+  accepts_positive_scales_below_the_previous_guard();
   matches_a_manually_calculable_layout_and_rgb_order();
+  distinguishes_zero_diff_from_the_unreachable_appearance_only_case();
   matches_python_reference_checkpoints();
   return test_support::finish();
 }

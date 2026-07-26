@@ -78,8 +78,11 @@ TscanTensor preprocess_tscan_rgb(const DeepInput& input) {
 
   const double difference_scale = population_std(differences);
   const double appearance_scale = population_std(input.tensor);
-  if (!(difference_scale > 1e-7) || !(appearance_scale > 1e-7)) {
-    fail("TSCAN_PREPROCESS_VARIANCE input has zero variance");
+  if (!std::isfinite(difference_scale) || difference_scale == 0.0) {
+    fail("TSCAN_PREPROCESS_VARIANCE_DIFF diff scale is zero or nonfinite");
+  }
+  if (!std::isfinite(appearance_scale) || appearance_scale == 0.0) {
+    fail("TSCAN_PREPROCESS_VARIANCE_APPEARANCE appearance scale is zero or nonfinite");
   }
   double appearance_sum = 0.0;
   for (float value : input.tensor) {
