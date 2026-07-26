@@ -4,6 +4,7 @@
 
 #include <cmath>
 #include <limits>
+#include <iostream>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -13,6 +14,7 @@ namespace {
 constexpr std::size_t kSamples = 180;
 constexpr double kFps = 30.0;
 constexpr double kPi = 3.14159265358979323846;
+double max_confidence_error = 0.0;
 
 std::vector<float> waveform(double dc, double frequency_hz,
                             double amplitude = 1.0,
@@ -30,12 +32,18 @@ void expect_near(double actual, double expected, double tolerance) {
   EXPECT_TRUE(std::abs(actual - expected) < tolerance);
 }
 
+void expect_confidence_near(double actual, double expected) {
+  max_confidence_error =
+      std::max(max_confidence_error, std::abs(actual - expected));
+  expect_near(actual, expected, 1e-4);
+}
+
 void matches_numpy_for_a_dc_offset_sinusoid() {
   const auto result = rppg_qnn::postprocess_tscan_waveform(waveform(3.0, 1.2));
   EXPECT_TRUE(result.is_valid);
   EXPECT_EQ(result.invalid_reason, std::string{});
   expect_near(result.bpm, 70.0, 1e-10);
-  expect_near(result.confidence, 0.6299490739274951, 1e-4);
+  expect_confidence_near(result.confidence, 0.6299490739274951);
 }
 
 void matches_numpy_for_deterministic_mixed_waveforms() {
@@ -56,12 +64,12 @@ void matches_numpy_for_deterministic_mixed_waveforms() {
   const auto first_result = rppg_qnn::postprocess_tscan_waveform(first);
   EXPECT_TRUE(first_result.is_valid);
   expect_near(first_result.bpm, 60.0, 1e-10);
-  expect_near(first_result.confidence, 0.4574092009143706, 1e-4);
+  expect_confidence_near(first_result.confidence, 0.4574092009143706);
 
   const auto second_result = rppg_qnn::postprocess_tscan_waveform(second);
   EXPECT_TRUE(second_result.is_valid);
   expect_near(second_result.bpm, 130.0, 1e-10);
-  expect_near(second_result.confidence, 0.46265211140762463, 1e-4);
+  expect_confidence_near(second_result.confidence, 0.46265211140762463);
 }
 
 void uses_inclusive_band_boundaries_and_ignores_out_of_band_power() {
@@ -70,13 +78,13 @@ void uses_inclusive_band_boundaries_and_ignores_out_of_band_power() {
       waveform(0.0, 0.75, 1.0, boundary_samples));
   EXPECT_TRUE(lower.is_valid);
   expect_near(lower.bpm, 45.0, 1e-10);
-  expect_near(lower.confidence, 0.7979715513176878, 1e-4);
+  expect_confidence_near(lower.confidence, 0.7979715513176878);
 
   const auto upper = rppg_qnn::postprocess_tscan_waveform(
       waveform(0.0, 2.5, 1.0, boundary_samples));
   EXPECT_TRUE(upper.is_valid);
   expect_near(upper.bpm, 150.0, 1e-10);
-  expect_near(upper.confidence, 0.797994505318668, 1e-4);
+  expect_confidence_near(upper.confidence, 0.797994505318668);
 
   std::vector<float> dominated(kSamples);
   for (std::size_t i = 0; i < kSamples; ++i) {
@@ -88,7 +96,7 @@ void uses_inclusive_band_boundaries_and_ignores_out_of_band_power() {
   const auto result = rppg_qnn::postprocess_tscan_waveform(dominated);
   EXPECT_TRUE(result.is_valid);
   expect_near(result.bpm, 90.0, 1e-10);
-  expect_near(result.confidence, 0.6645100102850933, 1e-4);
+  expect_confidence_near(result.confidence, 0.6645100102850933);
 }
 
 void rejects_structurally_invalid_waveforms() {
@@ -144,5 +152,7 @@ int main() {
   rejects_structurally_invalid_waveforms();
   preserves_python_constant_and_threshold_semantics();
   rejects_invalid_thresholds();
+  std::cout << "TSCAN postprocessing confidence max_abs="
+            << max_confidence_error << '\n';
   return test_support::finish();
 }
