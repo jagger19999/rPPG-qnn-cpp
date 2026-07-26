@@ -16,7 +16,14 @@
 
 - 预处理：独立解析公式覆盖完整 `[180,6,72,72]` tensor 的 5,598,720 个值，实测最大绝对误差 `2.38419e-07`，通过 `<1e-5` 门限；低方差成功路径的全部输出均验证为 finite。
 - 后处理：六个 NumPy 固定波形（含 `0.75 Hz`、`2.5 Hz` 边界）与 C++ 的最大 confidence 绝对误差为 `1.69533e-08`，通过 `<1e-4` 门限；BPM 固定值也通过测试。Android runtime 对 ONNX `[180,1]` 原始输出不作波形重写，因此波形保持是代码结构结论，不是 Android 真机上的 Python/C++ Pearson 实测。
-- Python：本机验证时先设置 `RPPG_PYTHON=/Users/wangjie/Documents/keti/rPPG/.venv/bin/python`，再执行 `RPPG_TSCAN_ONNX=/Users/wangjie/Documents/keti/rPPG/ubfc_tscan_full_lr3e-5_Epoch10.onnx "$RPPG_PYTHON" -m pytest tests/test_tscan_reference_vector.py -q`，通过 `7/7`。这些是本机绝对路径，不是可移植默认值；其他机器应把两个路径替换为对应 checkout 的 Python 3.12 环境和模型。未设置模型时 ONNX 用例可跳过；显式设置不存在路径时会清楚失败，不再静默 skip。
+- Python：本机执行下面的精确命令通过 `7/7`。这些是本机绝对路径，不是可移植默认值；其他机器应替换 worktree、Python 3.12 环境和模型路径。未设置模型时 ONNX 用例可跳过；显式设置不存在路径时会清楚失败，不再静默 skip。
+
+```bash
+cd /Users/wangjie/.config/superpowers/worktrees/rPPG/tscan-reference
+RPPG_PYTHON=/Users/wangjie/Documents/keti/rPPG/.venv/bin/python
+RPPG_TSCAN_ONNX=/Users/wangjie/Documents/keti/rPPG/ubfc_tscan_full_lr3e-5_Epoch10.onnx \
+  "$RPPG_PYTHON" -m pytest tests/test_tscan_reference_vector.py -q
+```
 - C++ host：`cmake -S . -B build-task7-parity -DBUILD_TESTING=ON -DCMAKE_PREFIX_PATH=/opt/homebrew/opt/opencv@4 && cmake --build build-task7-parity -j4 && ctest --test-dir build-task7-parity --output-on-failure` 通过 `21/21`。
 - APK：本机使用下面的精确绝对路径调用成功；这些路径只记录本机验证环境，不是其他机器的安装约定。`app-debug.apk` SHA-256 为 `0f70687a9104771e6b055c3dd2d57e2aa36af128c958a25819bb81b967016919`，包含 `lib/arm64-v8a/librppg_qnn_android.so` 与 `libonnxruntime.so`，不包含 `.onnx` 模型。
 
