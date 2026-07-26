@@ -170,13 +170,15 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="4dp"
+                android:labelFor="@id/deep_selector"
                 android:text="@string/deep_selector_label"
                 android:textSize="14sp" />
 
             <Spinner
                 android:id="@+id/deep_selector"
                 android:layout_width="match_parent"
-                android:layout_height="wrap_content" />
+                android:layout_height="wrap_content"
+                android:prompt="@string/deep_selector_prompt" />
 
             <TextView
                 android:layout_width="match_parent"

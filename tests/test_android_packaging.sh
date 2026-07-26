@@ -254,16 +254,57 @@ if ! grep -Fq '<string name="deep_selector_label">深度模型</string>' "$strin
 fi
 
 camera_ui_policy_java="$root/android/app/src/main/java/com/jagger/rppgbench/CameraUiSessionPolicy.java"
+apply_ui_contract=$(sed -n '/private void applyCameraUiDecision(/,/^    }/p' "$activity_java")
+explicit_stop_contract=$(sed -n '/private void stopCamera() {/,/private void retainLatestCameraResult/p' "$activity_java")
+silent_stop_contract=$(sed -n '/private void stopCameraSilently() {/,/private final Runnable finishStartWhenPreviewReady/p' "$activity_java")
 if ! grep -Fq 'cameraUiSessionPolicy.begin()' "$activity_java" ||
    ! grep -Fq 'cameraUiSessionPolicy.accept()' "$activity_java" ||
    ! grep -Fq 'cameraUiSessionPolicy.fail()' "$activity_java" ||
    ! grep -Fq 'cameraUiSessionPolicy.stopRequested()' "$activity_java" ||
-   ! grep -Fq 'decision.requestFinalSnapshot && decision.retainLastResult' "$activity_java" ||
+   ! grep -Fq 'uiDecision.requestFinalSnapshot && uiDecision.retainLastResult' "$activity_java" ||
    ! grep -Fq 'if (decision.clearHistory)' "$activity_java" ||
    [[ $(grep -Fc 'clearWaveformsForNewSession();' "$activity_java" || true) -ne 1 ]] ||
    ! grep -Fq 'setCameraControlsLocked(decision.selectorsLocked)' "$activity_java" ||
-   ! grep -Fq 'public Decision stopRequested()' "$camera_ui_policy_java"; then
+   ! grep -Fq 'public Decision stopRequested()' "$camera_ui_policy_java" ||
+   grep -Fq 'retainLatestCameraResult' <<<"$apply_ui_contract" ||
+   ! grep -Fq 'String stopped = NativeBridge.nativeStop(nativeHandle);' \
+     <<<"$explicit_stop_contract" ||
+   ! grep -Fq 'retainLatestCameraResult(stopped);' <<<"$explicit_stop_contract" ||
+   grep -Fq 'NativeBridge.nativeDestroy(nativeHandle)' <<<"$explicit_stop_contract" ||
+   ! grep -Fq 'String stopped = NativeBridge.nativeStop(nativeHandle);' \
+     <<<"$silent_stop_contract" ||
+   ! grep -Fq 'retainLatestCameraResult(stopped);' <<<"$silent_stop_contract" ||
+   ! grep -Fq 'NativeBridge.nativeDestroy(nativeHandle)' <<<"$silent_stop_contract"; then
   echo "android packaging check: camera UI session policy is not wired to MainActivity" >&2
+  exit 1
+fi
+
+native_stop_line=$(grep -n 'String stopped = NativeBridge.nativeStop(nativeHandle);' \
+  <<<"$silent_stop_contract" | head -1 | cut -d: -f1)
+retain_line=$(grep -n 'retainLatestCameraResult(stopped);' \
+  <<<"$silent_stop_contract" | head -1 | cut -d: -f1)
+destroy_line=$(grep -n 'NativeBridge.nativeDestroy(nativeHandle)' \
+  <<<"$silent_stop_contract" | head -1 | cut -d: -f1)
+if [[ -z "$native_stop_line" || -z "$retain_line" || -z "$destroy_line" ]] ||
+   (( native_stop_line >= retain_line || retain_line >= destroy_line )); then
+  echo "android packaging check: silent stop must stop, retain final result, then destroy" >&2
+  exit 1
+fi
+
+explicit_native_stop_line=$(grep -n 'String stopped = NativeBridge.nativeStop(nativeHandle);' \
+  <<<"$explicit_stop_contract" | head -1 | cut -d: -f1)
+explicit_retain_line=$(grep -n 'retainLatestCameraResult(stopped);' \
+  <<<"$explicit_stop_contract" | head -1 | cut -d: -f1)
+if [[ -z "$explicit_native_stop_line" || -z "$explicit_retain_line" ]] ||
+   (( explicit_native_stop_line >= explicit_retain_line )); then
+  echo "android packaging check: explicit stop must stop before retaining final result" >&2
+  exit 1
+fi
+
+if ! grep -Fq 'android:labelFor="@id/deep_selector"' "$activity_layout" ||
+   ! grep -Fq 'android:prompt="@string/deep_selector_prompt"' "$activity_layout" ||
+   ! grep -Fq '<string name="deep_selector_prompt">选择深度模型</string>' "$strings_xml"; then
+  echo "android packaging check: deep-model spinner must have an accessible label and prompt" >&2
   exit 1
 fi
 

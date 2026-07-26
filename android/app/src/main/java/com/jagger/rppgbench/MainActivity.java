@@ -758,9 +758,6 @@ public final class MainActivity extends Activity {
     }
 
     private void applyCameraUiDecision(CameraUiSessionPolicy.Decision decision) {
-        if (decision.requestFinalSnapshot && decision.retainLastResult) {
-            retainLatestCameraResult();
-        }
         if (decision.clearHistory) {
             clearWaveformsForNewSession();
         }
@@ -1109,18 +1106,22 @@ public final class MainActivity extends Activity {
         pendingStartRequest = null;
         statusHandler.removeCallbacks(finishStartWhenPreviewReady);
         pendingPreviewBinding = false;
-        applyCameraUiDecision(uiDecision);
         if (nativeHandle == 0) {
             started = false;
+            applyCameraUiDecision(uiDecision);
             return;
         }
         try {
-            NativeBridge.nativeStop(nativeHandle);
+            String stopped = NativeBridge.nativeStop(nativeHandle);
+            if (uiDecision.requestFinalSnapshot && uiDecision.retainLastResult) {
+                retainLatestCameraResult(stopped);
+            }
             exportWatchCsv();
         } catch (Throwable ignored) {
             // Best effort before switching cameras.
         } finally {
             started = false;
+            applyCameraUiDecision(uiDecision);
             NativeBridge.nativeDestroy(nativeHandle);
             nativeHandle = 0;
             roiImage.setVisibility(View.GONE);
@@ -1378,20 +1379,24 @@ public final class MainActivity extends Activity {
         pendingStartRequest = null;
         statusHandler.removeCallbacks(finishStartWhenPreviewReady);
         pendingPreviewBinding = false;
-        applyCameraUiDecision(uiDecision);
         if (nativeHandle == 0) {
             started = false;
+            applyCameraUiDecision(uiDecision);
             previewContainer.setVisibility(View.GONE);
             return;
         }
         try {
             String stopped = NativeBridge.nativeStop(nativeHandle);
+            if (uiDecision.requestFinalSnapshot && uiDecision.retainLastResult) {
+                retainLatestCameraResult(stopped);
+            }
             exportWatchCsv();
             showUserMessage(stopped + "\n" + formatWatchStatusLine());
         } catch (Throwable error) {
             showUserMessage("CAMERA_STOP_FAILED: " + error.getMessage());
         } finally {
             started = false;
+            applyCameraUiDecision(uiDecision);
             releasePreviewSurface();
             roiImage.setVisibility(View.GONE);
             roiPlaceholder.setVisibility(View.VISIBLE);
@@ -1400,9 +1405,8 @@ public final class MainActivity extends Activity {
         }
     }
 
-    private void retainLatestCameraResult() {
+    private void retainLatestCameraResult(String statusJson) {
         try {
-            String statusJson = NativeBridge.nativeGetStatus(nativeHandle);
             JSONObject status = new JSONObject(statusJson);
             lastCameraJson = statusJson;
             traditionalCard.bind("传统 rPPG", HrStatusFormatter.traditional(status));
