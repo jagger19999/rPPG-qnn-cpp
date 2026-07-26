@@ -9,6 +9,7 @@
 #include <exception>
 #include <functional>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -37,15 +38,16 @@ jstring string_result(JNIEnv* env, Callable&& callable) noexcept {
   }
 }
 
-std::string from_jstring(JNIEnv* env, jstring value) {
+std::string from_jstring(JNIEnv* env, jstring value,
+                         std::string_view field_name) {
   if (value == nullptr) {
     throw rppg_qnn::AppError(rppg_qnn::ErrorCode::ConfigInvalid,
-                             "camera ID must not be null");
+                             std::string(field_name) + " must not be null");
   }
   const char* utf = env->GetStringUTFChars(value, nullptr);
   if (utf == nullptr) {
     throw rppg_qnn::AppError(rppg_qnn::ErrorCode::ConfigInvalid,
-                             "camera ID conversion failed");
+                             std::string(field_name) + " conversion failed");
   }
   std::string result(utf);
   env->ReleaseStringUTFChars(value, utf);
@@ -73,7 +75,7 @@ Java_com_jagger_rppgbench_NativeBridge_nativeCreate(
     jint fps) noexcept {
   try {
     return static_cast<jlong>(rppg_qnn::android::create_camera_session(
-        from_jstring(env, camera_id), width, height, fps));
+        from_jstring(env, camera_id, "camera ID"), width, height, fps));
   } catch (const std::exception& error) {
     const std::string message = error_text(error);
     jclass exception_class = env->FindClass("java/lang/IllegalStateException");
@@ -97,11 +99,16 @@ Java_com_jagger_rppgbench_NativeBridge_nativeConfigureProcessing(
     jstring model_path) noexcept {
   return string_result(env, [env, handle, method, cascade_path,
                              output_directory, deep_model, model_path] {
-    const std::string native_method = from_jstring(env, method);
-    const std::string native_cascade = from_jstring(env, cascade_path);
-    const std::string native_output = from_jstring(env, output_directory);
-    const std::string native_deep_model = from_jstring(env, deep_model);
-    const std::string native_model = from_jstring(env, model_path);
+    const std::string native_method =
+        from_jstring(env, method, "traditional method");
+    const std::string native_cascade =
+        from_jstring(env, cascade_path, "cascade path");
+    const std::string native_output =
+        from_jstring(env, output_directory, "output directory");
+    const std::string native_deep_model =
+        from_jstring(env, deep_model, "deep model");
+    const std::string native_model =
+        from_jstring(env, model_path, "model path");
     return rppg_qnn::android::configure_camera_processing(
         handle, native_method, native_cascade, native_output,
         native_deep_model, native_model);

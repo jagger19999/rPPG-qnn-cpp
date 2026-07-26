@@ -36,10 +36,16 @@ void noncanonical_values_are_rejected() {
   }
 }
 
+void invalid_enum_values_are_rejected() {
+  EXPECT_APP_ERROR(to_string(static_cast<DeepModel>(99)),
+                   ErrorCode::ConfigInvalid);
+}
+
 }  // namespace
 
 int main() {
   canonical_values_parse_and_stringify();
   noncanonical_values_are_rejected();
+  invalid_enum_values_are_rejected();
   return test_support::finish();
 }

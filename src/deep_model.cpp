@@ -21,7 +21,7 @@ DeepModel parse_deep_model(std::string_view value) {
                      std::string(value) + "'");
 }
 
-std::string_view to_string(DeepModel model) noexcept {
+std::string_view to_string(DeepModel model) {
   switch (model) {
     case DeepModel::Disabled:
       return "disabled";
@@ -30,7 +30,9 @@ std::string_view to_string(DeepModel model) noexcept {
     case DeepModel::EfficientPhys:
       return "efficientphys";
   }
-  return "disabled";
+  throw AppError(ErrorCode::ConfigInvalid,
+                 "deep model enum value is invalid: " +
+                     std::to_string(static_cast<int>(model)));
 }
 
 }  // namespace rppg_qnn

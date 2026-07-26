@@ -199,9 +199,25 @@ done
 
 camera_source="$root/android/app/src/main/cpp/android_camera_session.cpp"
 camera_cmake="$root/android/app/src/main/cpp/CMakeLists.txt"
+native_bridge_cpp="$root/android/app/src/main/cpp/native_bridge.cpp"
 native_bridge_java="$root/android/app/src/main/java/com/jagger/rppgbench/NativeBridge.java"
 activity_java="$root/android/app/src/main/java/com/jagger/rppgbench/MainActivity.java"
 strings_xml="$root/android/app/src/main/res/values/strings.xml"
+
+for field_mapping in \
+  'camera_id|camera ID' \
+  'method|traditional method' \
+  'cascade_path|cascade path' \
+  'output_directory|output directory' \
+  'deep_model|deep model' \
+  'model_path|model path'; do
+  field=${field_mapping%%|*}
+  label=${field_mapping#*|}
+  if ! grep -Fq "from_jstring(env, $field, \"$label\")" "$native_bridge_cpp"; then
+    echo "android packaging check: JNI string field $field must report as $label" >&2
+    exit 1
+  fi
+done
 
 if [[ $(grep -Fc 'deepCard.bind("深度 TSCAN"' "$activity_java" || true) -ne 2 ]] ||
    ! grep -Fq '<string name="deep_selector_label">使用 ONNX Runtime CPU 运行 TSCAN</string>' "$strings_xml" ||
