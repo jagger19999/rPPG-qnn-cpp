@@ -5,6 +5,8 @@
 #include <string>
 #include <vector>
 
+#include "rppg_qnn/waveform_snapshot.hpp"
+
 struct ANativeWindow;
 
 namespace rppg_qnn::android {
@@ -71,6 +73,10 @@ struct CameraSessionStatus {
   double deep_inference_ms{0.0};
   bool deep_result_valid{false};
   std::string deep_invalid_reason;
+  std::uint64_t traditional_waveform_revision{0};
+  std::uint64_t deep_waveform_revision{0};
+  std::size_t deep_frames_collected{0};
+  std::size_t deep_frames_required{180};
   std::string error_code;
   std::string error_message;
 };
@@ -93,6 +99,7 @@ class AndroidCameraSession {
   void stop() noexcept;
   [[nodiscard]] CameraSessionStatus status() const;
   [[nodiscard]] std::vector<std::uint8_t> latest_roi_jpeg() const;
+  [[nodiscard]] WaveformSnapshot latest_waveform(bool deep) const;
 
  private:
   struct Impl;

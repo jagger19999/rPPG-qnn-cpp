@@ -24,5 +24,9 @@ std::string stop_camera_session(std::int64_t handle);
 void destroy_camera_session(std::int64_t handle) noexcept;
 std::string camera_session_status_json(std::int64_t handle);
 std::vector<std::uint8_t> camera_session_roi_jpeg(std::int64_t handle);
+std::string camera_session_waveform_metadata_json(std::int64_t handle,
+                                                  bool deep);
+std::vector<float> camera_session_waveform_values(std::int64_t handle,
+                                                  bool deep);
 
 }  // namespace rppg_qnn::android

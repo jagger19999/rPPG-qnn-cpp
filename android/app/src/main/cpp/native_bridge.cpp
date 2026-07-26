@@ -213,3 +213,39 @@ Java_com_jagger_rppgbench_NativeBridge_nativeGetRoiJpeg(JNIEnv* env, jclass,
     return env->NewByteArray(0);
   }
 }
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_jagger_rppgbench_NativeBridge_nativeGetWaveformMetadata(
+    JNIEnv* env, jclass, jlong handle, jboolean deep) noexcept {
+  return string_result(env, [handle, deep] {
+    return rppg_qnn::android::camera_session_waveform_metadata_json(
+        handle, deep == JNI_TRUE);
+  });
+}
+
+extern "C" JNIEXPORT jfloatArray JNICALL
+Java_com_jagger_rppgbench_NativeBridge_nativeGetWaveformValues(
+    JNIEnv* env, jclass, jlong handle, jboolean deep) noexcept {
+  try {
+    const std::vector<float> values =
+        rppg_qnn::android::camera_session_waveform_values(handle,
+                                                          deep == JNI_TRUE);
+    jfloatArray result = env->NewFloatArray(static_cast<jsize>(values.size()));
+    if (result == nullptr) {
+      return env->NewFloatArray(0);
+    }
+    if (!values.empty()) {
+      env->SetFloatArrayRegion(result, 0, static_cast<jsize>(values.size()),
+                               values.data());
+    }
+    return result;
+  } catch (const std::exception& error) {
+    jclass exception_class = env->FindClass("java/lang/IllegalStateException");
+    if (exception_class != nullptr) {
+      env->ThrowNew(exception_class, error_text(error).c_str());
+    }
+    return env->NewFloatArray(0);
+  } catch (...) {
+    return env->NewFloatArray(0);
+  }
+}

@@ -50,6 +50,7 @@ add_library(
     "${RPPG_REPOSITORY_ROOT}/src/tscan_postprocessor.cpp"
     "${RPPG_REPOSITORY_ROOT}/src/tscan_preprocessor.cpp"
     "${RPPG_REPOSITORY_ROOT}/src/tscan_runtime.cpp"
+    "${RPPG_REPOSITORY_ROOT}/src/waveform_snapshot.cpp"
     "${RPPG_REPOSITORY_ROOT}/src/yuv420.cpp")
 
 target_include_directories(

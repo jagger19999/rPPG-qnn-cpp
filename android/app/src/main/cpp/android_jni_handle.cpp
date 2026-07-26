@@ -127,7 +127,12 @@ std::string status_json(const CameraSessionStatus& status) {
          << (status.deep_result_valid ? "true" : "false")
          << ",\"deep_invalid_reason\":\""
          << json_escape(status.deep_invalid_reason)
-         << "\",\"error_code\":\"" << json_escape(status.error_code)
+         << "\",\"traditional_waveform_revision\":"
+         << status.traditional_waveform_revision
+         << ",\"deep_waveform_revision\":" << status.deep_waveform_revision
+         << ",\"deep_frames_collected\":" << status.deep_frames_collected
+         << ",\"deep_frames_required\":" << status.deep_frames_required
+         << ",\"error_code\":\"" << json_escape(status.error_code)
          << "\",\"error_message\":\"" << json_escape(status.error_message)
          << "\"}";
   return output.str();
@@ -219,6 +224,27 @@ std::string camera_session_status_json(std::int64_t handle) {
 
 std::vector<std::uint8_t> camera_session_roi_jpeg(std::int64_t handle) {
   return lookup(handle)->latest_roi_jpeg();
+}
+
+std::string camera_session_waveform_metadata_json(std::int64_t handle,
+                                                  bool deep) {
+  const WaveformSnapshot waveform = lookup(handle)->latest_waveform(deep);
+  std::ostringstream output;
+  output << std::setprecision(10)
+         << "{\"available\":" << (waveform.available ? "true" : "false")
+         << ",\"revision\":" << waveform.revision << ",\"method\":\""
+         << json_escape(waveform.method) << "\",\"sample_rate_hz\":"
+         << waveform.sample_rate_hz << ",\"is_valid\":"
+         << (waveform.is_valid ? "true" : "false")
+         << ",\"invalid_reason\":\""
+         << json_escape(waveform.invalid_reason) << "\",\"sample_count\":"
+         << waveform.values.size() << "}";
+  return output.str();
+}
+
+std::vector<float> camera_session_waveform_values(std::int64_t handle,
+                                                  bool deep) {
+  return lookup(handle)->latest_waveform(deep).values;
 }
 
 }  // namespace rppg_qnn::android

@@ -9,6 +9,7 @@
 #include "rppg_qnn/result_sink.hpp"
 #include "rppg_qnn/roi_processor.hpp"
 #include "rppg_qnn/yuv420.hpp"
+#include "rppg_qnn/waveform_snapshot.hpp"
 
 #include <android/log.h>
 #include <android/native_window.h>
@@ -487,6 +488,11 @@ struct AndroidCameraSession::Impl {
           },
           [this](const HeartRateResult& result) {
             std::lock_guard<std::mutex> lock(status_mutex);
+            const double sample_rate =
+                result.source_fps > 0.0 ? result.source_fps : 30.0;
+            WaveformSnapshot waveform = make_waveform_snapshot(
+                result.waveform, result.method, sample_rate, result.is_valid,
+                result.invalid_reason);
             if (result.method == "TSCAN" || result.method == "DEEP") {
               snapshot.deep_result_available = true;
               snapshot.deep_bpm = result.bpm;
@@ -494,6 +500,11 @@ struct AndroidCameraSession::Impl {
               snapshot.deep_inference_ms = result.inference_ms;
               snapshot.deep_result_valid = result.is_valid;
               snapshot.deep_invalid_reason = result.invalid_reason;
+              if (waveform.available) {
+                waveform.revision = ++deep_waveform_revision_;
+                deep_waveform_ = std::move(waveform);
+                snapshot.deep_waveform_revision = deep_waveform_revision_;
+              }
             } else {
               snapshot.heart_rate_available = true;
               snapshot.bpm = result.bpm;
@@ -502,6 +513,12 @@ struct AndroidCameraSession::Impl {
               snapshot.heart_rate_invalid_reason = result.invalid_reason;
               snapshot.window_start_sec = result.window_start_sec;
               snapshot.window_end_sec = result.window_end_sec;
+              if (waveform.available) {
+                waveform.revision = ++traditional_waveform_revision_;
+                traditional_waveform_ = std::move(waveform);
+                snapshot.traditional_waveform_revision =
+                    traditional_waveform_revision_;
+              }
             }
           },
           [this](const std::string& code, const std::string& message) {
@@ -628,6 +645,11 @@ struct AndroidCameraSession::Impl {
     return latest_roi_jpeg_;
   }
 
+  WaveformSnapshot latest_waveform(bool deep) const {
+    std::lock_guard<std::mutex> lock(status_mutex);
+    return deep ? deep_waveform_ : traditional_waveform_;
+  }
+
   void start() {
     if (config.camera_id.empty()) {
       throw AppError(ErrorCode::CameraIdUnavailable,
@@ -672,6 +694,13 @@ struct AndroidCameraSession::Impl {
       snapshot.deep_inference_ms = 0.0;
       snapshot.deep_result_valid = false;
       snapshot.deep_invalid_reason.clear();
+      traditional_waveform_ = {};
+      deep_waveform_ = {};
+      snapshot.traditional_waveform_revision = 0;
+      snapshot.deep_waveform_revision = 0;
+      snapshot.deep_frames_collected = 0;
+      traditional_waveform_revision_ = 0;
+      deep_waveform_revision_ = 0;
       timestamps.clear();
     }
     clear_roi_jpeg();
@@ -1033,6 +1062,10 @@ struct AndroidCameraSession::Impl {
       }
       snapshot.last_timestamp_sec = timestamp_sec;
       frame_id = ++snapshot.accepted_frames;
+      if (snapshot.deep_enabled && !snapshot.deep_result_available) {
+        snapshot.deep_frames_collected = static_cast<std::size_t>(
+            std::min<std::uint64_t>(snapshot.accepted_frames, 180U));
+      }
       timestamps.push_back(timestamp_sec);
       while (timestamps.size() > kFpsWindow) {
         timestamps.pop_front();
@@ -1089,6 +1122,10 @@ struct AndroidCameraSession::Impl {
   int frame_rotation_degrees_{0};
   mutable std::mutex status_mutex;
   CameraSessionStatus snapshot;
+  WaveformSnapshot traditional_waveform_;
+  WaveformSnapshot deep_waveform_;
+  std::uint64_t traditional_waveform_revision_{0};
+  std::uint64_t deep_waveform_revision_{0};
   std::deque<double> timestamps;
   std::shared_ptr<LatestFrameQueue> frame_queue;
   std::atomic<bool> processing_stop{false};
@@ -1203,6 +1240,10 @@ CameraSessionStatus AndroidCameraSession::status() const {
 
 std::vector<std::uint8_t> AndroidCameraSession::latest_roi_jpeg() const {
   return impl_->latest_roi_jpeg();
+}
+
+WaveformSnapshot AndroidCameraSession::latest_waveform(bool deep) const {
+  return impl_->latest_waveform(deep);
 }
 
 }  // namespace rppg_qnn::android
