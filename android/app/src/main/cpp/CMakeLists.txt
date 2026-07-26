@@ -2,6 +2,19 @@ cmake_minimum_required(VERSION 3.22.1)
 
 project(rppg_qnn_android LANGUAGES CXX)
 
+set(RPPG_TSCAN_ORT_INTRA_OP_THREADS "2" CACHE STRING
+    "TSCAN ORT intra-op threads (benchmark-supported: 2, 4, 6)")
+set(RPPG_EFFICIENTPHYS_ORT_INTRA_OP_THREADS "2" CACHE STRING
+    "EfficientPhys ORT intra-op threads (benchmark-supported: 2, 4, 6)")
+set_property(CACHE RPPG_TSCAN_ORT_INTRA_OP_THREADS PROPERTY STRINGS 2 4 6)
+set_property(CACHE RPPG_EFFICIENTPHYS_ORT_INTRA_OP_THREADS PROPERTY STRINGS 2 4 6)
+foreach(thread_var RPPG_TSCAN_ORT_INTRA_OP_THREADS
+                   RPPG_EFFICIENTPHYS_ORT_INTRA_OP_THREADS)
+    if(NOT ${${thread_var}} MATCHES "^(2|4|6)$")
+        message(FATAL_ERROR "${thread_var} must be 2, 4, or 6")
+    endif()
+endforeach()
+
 get_filename_component(
     RPPG_REPOSITORY_ROOT
     "${CMAKE_CURRENT_LIST_DIR}/../../../../.."
@@ -68,7 +81,9 @@ target_compile_definitions(
     rppg_qnn_android
     PRIVATE
     RPPG_ANDROID_CAMERA2=1
-    RPPG_ANDROID_ONNX_CPU=1)
+    RPPG_ANDROID_ONNX_CPU=1
+    RPPG_TSCAN_ORT_INTRA_OP_THREADS=${RPPG_TSCAN_ORT_INTRA_OP_THREADS}
+    RPPG_EFFICIENTPHYS_ORT_INTRA_OP_THREADS=${RPPG_EFFICIENTPHYS_ORT_INTRA_OP_THREADS})
 target_compile_options(
     rppg_qnn_android
     PRIVATE

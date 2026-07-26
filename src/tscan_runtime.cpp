@@ -55,7 +55,7 @@ class TscanRuntime final : public IDeepRuntime {
     const auto inference_started = Clock::now();
     HeartRateResult result = base_result(input, backend_);
     const auto preprocess_started = Clock::now();
-    TscanTensor tensor = preprocess_tscan_rgb(input);
+    const TscanTensor& tensor = preprocessor_.preprocess(input);
     result.preprocess_ms = elapsed_ms(preprocess_started);
     TscanModelOutput output;
     try {
@@ -101,6 +101,7 @@ class TscanRuntime final : public IDeepRuntime {
  private:
   std::unique_ptr<ITscanSession> session_;
   std::string backend_;
+  TscanPreprocessor preprocessor_;
   DeepStabilizer stabilizer_;
 };
 

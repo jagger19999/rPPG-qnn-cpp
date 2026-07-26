@@ -126,7 +126,9 @@ class EfficientPhysRuntime final : public IDeepRuntime {
  public:
   EfficientPhysRuntime(std::unique_ptr<IEfficientPhysSession> session,
                        std::string backend)
-      : session_(std::move(session)), backend_(std::move(backend)) {}
+      : session_(std::move(session)),
+        backend_(std::move(backend)),
+        model_input_(kModelValues, 0.0F) {}
 
   [[nodiscard]] std::string backend_name() const override { return backend_; }
 
@@ -161,7 +163,6 @@ class EfficientPhysRuntime final : public IDeepRuntime {
       return result;
     }
 
-    std::vector<float> model_input(kModelValues);
     if (standard_deviation != 0.0) {
       for (std::size_t frame = 0; frame < kSourceFrames; ++frame) {
         for (std::size_t pixel = 0; pixel < kPixels; ++pixel) {
@@ -171,23 +172,25 @@ class EfficientPhysRuntime final : public IDeepRuntime {
                      input.tensor[source_offset(frame, pixel, channel)]) -
                  mean) /
                 standard_deviation;
-            model_input[model_offset(frame, channel, pixel)] =
+            model_input_[model_offset(frame, channel, pixel)] =
                 static_cast<float>(normalized);
           }
         }
       }
+    } else {
+      std::fill(model_input_.begin(), model_input_.end(), 0.0F);
     }
-    std::copy_n(model_input.begin() +
+    std::copy_n(model_input_.begin() +
                     static_cast<std::ptrdiff_t>((kSourceFrames - 1U) *
                                                 kFrameValues),
                 kFrameValues,
-                model_input.begin() +
+                model_input_.begin() +
                     static_cast<std::ptrdiff_t>(kSourceFrames * kFrameValues));
     result.preprocess_ms = elapsed_ms(preprocess_started);
 
     EfficientPhysModelOutput output;
     try {
-      output = session_->run(model_input, {181, 3, 72, 72});
+      output = session_->run(model_input_, {181, 3, 72, 72});
     } catch (...) {
       result.invalid_reason = "deep_runtime_exception";
       set_inference_elapsed(&result, inference_started);
@@ -235,6 +238,7 @@ class EfficientPhysRuntime final : public IDeepRuntime {
  private:
   std::unique_ptr<IEfficientPhysSession> session_;
   std::string backend_;
+  std::vector<float> model_input_;
   DeepStabilizer stabilizer_;
 };
 

@@ -22,6 +22,14 @@
 namespace rppg_qnn::android {
 namespace {
 
+#ifndef RPPG_TSCAN_ORT_INTRA_OP_THREADS
+#define RPPG_TSCAN_ORT_INTRA_OP_THREADS 2
+#endif
+
+#ifndef RPPG_EFFICIENTPHYS_ORT_INTRA_OP_THREADS
+#define RPPG_EFFICIENTPHYS_ORT_INTRA_OP_THREADS 2
+#endif
+
 std::size_t element_count(const std::vector<std::int64_t>& shape) {
   return std::accumulate(
       shape.begin(), shape.end(), std::size_t{1},
@@ -37,19 +45,25 @@ struct OnnxRunOutput {
 
 class OnnxCpuSession final {
  public:
-  OnnxCpuSession(DeepModel model, const std::string& model_path) try
+  OnnxCpuSession(DeepModel model, const std::string& model_path,
+                 OrtThreadOptions thread_options) try
       : model_(model),
         contract_(onnx_model_contract(model)),
         environment_(ORT_LOGGING_LEVEL_WARNING, "rppg-deep"),
         session_options_(),
         session_(nullptr) {
+    if (!valid_ort_thread_options(thread_options)) {
+      throw AppError(
+          ErrorCode::ConfigInvalid,
+          "ORT threads require intra-op 2, 4, or 6 and inter-op exactly 1");
+    }
     if (!std::filesystem::is_regular_file(model_path)) {
       throw AppError(ErrorCode::ModelLoadFailed,
                      std::string(to_string(model)) +
                          " ONNX model is missing: " + model_path);
     }
-    session_options_.SetIntraOpNumThreads(2);
-    session_options_.SetInterOpNumThreads(1);
+    session_options_.SetIntraOpNumThreads(thread_options.intra_op_threads);
+    session_options_.SetInterOpNumThreads(thread_options.inter_op_threads);
     session_options_.SetGraphOptimizationLevel(
         GraphOptimizationLevel::ORT_ENABLE_ALL);
     session_ = Ort::Session(environment_, model_path.c_str(), session_options_);
@@ -161,8 +175,8 @@ class OnnxCpuSession final {
 
 class TscanOnnxSession final : public ITscanSession {
  public:
-  explicit TscanOnnxSession(const std::string& model_path)
-      : session_(DeepModel::Tscan, model_path) {}
+  TscanOnnxSession(const std::string& model_path, OrtThreadOptions options)
+      : session_(DeepModel::Tscan, model_path, options) {}
 
   [[nodiscard]] std::string backend_name() const override {
     return "ONNX_RUNTIME_CPU";
@@ -182,8 +196,9 @@ class TscanOnnxSession final : public ITscanSession {
 
 class EfficientPhysOnnxSession final : public IEfficientPhysSession {
  public:
-  explicit EfficientPhysOnnxSession(const std::string& model_path)
-      : session_(DeepModel::EfficientPhys, model_path) {}
+  EfficientPhysOnnxSession(const std::string& model_path,
+                           OrtThreadOptions options)
+      : session_(DeepModel::EfficientPhys, model_path, options) {}
 
   [[nodiscard]] std::string backend_name() const override {
     return "onnxruntime_cpu";
@@ -206,12 +221,22 @@ class EfficientPhysOnnxSession final : public IEfficientPhysSession {
 
 std::unique_ptr<IDeepRuntime> make_onnx_cpu_runtime(
     DeepModel model, const std::string& model_path) {
+  const int model_threads =
+      model == DeepModel::EfficientPhys
+          ? RPPG_EFFICIENTPHYS_ORT_INTRA_OP_THREADS
+          : RPPG_TSCAN_ORT_INTRA_OP_THREADS;
+  return make_onnx_cpu_runtime(model, model_path, {model_threads, 1});
+}
+
+std::unique_ptr<IDeepRuntime> make_onnx_cpu_runtime(
+    DeepModel model, const std::string& model_path, OrtThreadOptions options) {
   switch (model) {
     case DeepModel::Tscan:
-      return make_tscan_runtime(std::make_unique<TscanOnnxSession>(model_path));
+      return make_tscan_runtime(
+          std::make_unique<TscanOnnxSession>(model_path, options));
     case DeepModel::EfficientPhys:
       return make_onnxruntime_efficientphys_runtime(
-          std::make_unique<EfficientPhysOnnxSession>(model_path));
+          std::make_unique<EfficientPhysOnnxSession>(model_path, options));
     case DeepModel::Disabled:
       throw AppError(ErrorCode::ConfigInvalid,
                      "disabled deep model cannot create an ONNX runtime");

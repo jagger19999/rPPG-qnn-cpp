@@ -383,6 +383,38 @@ void matches_the_full_analytic_python_tensor() {
   EXPECT_TRUE(max_abs < 1e-5);
 }
 
+void worker_local_preprocessor_has_no_cross_call_contamination() {
+  auto first_input = input_with(0.0F);
+  auto second_input = input_with(0.0F);
+  for (std::size_t frame = 0; frame < kFrames; ++frame) {
+    for (std::size_t pixel = 0; pixel < kPixels; ++pixel) {
+      for (std::size_t channel = 0; channel < kRgbChannels; ++channel) {
+        const std::size_t offset = input_offset(frame, pixel, channel);
+        first_input.tensor[offset] =
+            40.0F + static_cast<float>(frame) * 0.17F +
+            static_cast<float>(pixel % 13U) * 0.11F +
+            static_cast<float>(channel) * 3.0F;
+        second_input.tensor[offset] =
+            90.0F + static_cast<float>((frame * frame + pixel) % 97U) * 0.07F +
+            static_cast<float>(channel) * 5.0F;
+      }
+    }
+  }
+
+  rppg_qnn::TscanPreprocessor preprocessor;
+  const auto first = preprocessor.preprocess(first_input);
+  const std::vector<float> first_values = first.values;
+  const auto second = preprocessor.preprocess(second_input);
+  const std::vector<float> second_values = second.values;
+  const auto repeated = preprocessor.preprocess(first_input);
+
+  EXPECT_EQ(first.shape, (std::vector<std::int64_t>{180, 6, 72, 72}));
+  EXPECT_EQ(second.shape, first.shape);
+  EXPECT_TRUE(first_values != second_values);
+  EXPECT_EQ(repeated.values, first_values);
+  EXPECT_EQ(rppg_qnn::preprocess_tscan_rgb(first_input).values, first_values);
+}
+
 }  // namespace
 
 int main() {
@@ -393,5 +425,6 @@ int main() {
   distinguishes_zero_diff_from_the_unreachable_appearance_only_case();
   matches_python_reference_checkpoints();
   matches_the_full_analytic_python_tensor();
+  worker_local_preprocessor_has_no_cross_call_contamination();
   return test_support::finish();
 }

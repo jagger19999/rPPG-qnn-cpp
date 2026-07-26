@@ -39,6 +39,7 @@ struct SessionState {
   int calls{0};
   std::vector<std::int64_t> input_shape;
   std::vector<float> input;
+  std::vector<std::vector<float>> input_history;
   std::vector<std::int64_t> output_shape{180, 1};
   std::size_t output_count{180U};
   bool constant_output{false};
@@ -65,6 +66,7 @@ class RecordingSession final : public rppg_qnn::IEfficientPhysSession {
       throw std::runtime_error("session failed");
     }
     state_->input = input;
+    state_->input_history.push_back(input);
     state_->input_shape = shape;
     std::vector<float> output(state_->output_count);
     for (std::size_t index = 0; index < output.size(); ++index) {
@@ -276,6 +278,31 @@ void backend_mismatch_is_rejected_without_fallback() {
   EXPECT_TRUE(threw);
 }
 
+void repeated_inference_has_no_preprocessing_cross_call_contamination() {
+  auto state = std::make_shared<SessionState>();
+  auto runtime = rppg_qnn::make_onnxruntime_efficientphys_runtime(
+      std::make_unique<RecordingSession>(state));
+  auto first_input = valid_input();
+  auto second_input = valid_input();
+  for (std::size_t index = 0; index < second_input.tensor.size(); ++index) {
+    second_input.tensor[index] =
+        static_cast<float>((index * index + 17U * index + 3U) % 251U);
+  }
+
+  const auto first_result = runtime->infer(first_input);
+  const auto second_result = runtime->infer(second_input);
+  const auto repeated_result = runtime->infer(first_input);
+
+  EXPECT_EQ(state->calls, 3);
+  EXPECT_EQ(state->input_history.size(), 3U);
+  EXPECT_TRUE(state->input_history[0] != state->input_history[1]);
+  EXPECT_EQ(state->input_history[0], state->input_history[2]);
+  EXPECT_EQ(first_result.waveform, repeated_result.waveform);
+  EXPECT_EQ(first_result.raw_bpm, repeated_result.raw_bpm);
+  EXPECT_EQ(first_result.confidence, repeated_result.confidence);
+  EXPECT_TRUE(second_result.is_valid);
+}
+
 }  // namespace
 
 int main() {
@@ -285,5 +312,6 @@ int main() {
   zero_variance_input_matches_reference();
   invalid_model_output_is_concrete_and_finite();
   backend_mismatch_is_rejected_without_fallback();
+  repeated_inference_has_no_preprocessing_cross_call_contamination();
   return test_support::finish();
 }

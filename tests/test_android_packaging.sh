@@ -35,7 +35,9 @@ done
 
 constructor_contract=$(sed -n \
   '/OnnxCpuSession(DeepModel model/,/^  }$/p' "$onnx_runtime")
-if ! grep -Fq 'OnnxCpuSession(DeepModel model, const std::string& model_path) try' \
+if ! grep -Fq 'OnnxCpuSession(DeepModel model, const std::string& model_path,' \
+       <<<"$constructor_contract" ||
+   ! grep -Fq 'OrtThreadOptions thread_options) try' \
        <<<"$constructor_contract" ||
    ! grep -Fq 'catch (const AppError&) {' <<<"$constructor_contract" ||
    ! grep -Fq 'catch (const Ort::Exception& error) {' <<<"$constructor_contract" ||
@@ -44,6 +46,16 @@ if ! grep -Fq 'OnnxCpuSession(DeepModel model, const std::string& model_path) tr
   echo "android packaging check: ONNX constructor must use a function-try-block and translate Ort initialization errors" >&2
   exit 1
 fi
+
+for required_thread_contract in \
+  'SetIntraOpNumThreads(thread_options.intra_op_threads)' \
+  'SetInterOpNumThreads(thread_options.inter_op_threads)' \
+  'valid_ort_thread_options(thread_options)'; do
+  if ! grep -Fq "$required_thread_contract" "$onnx_runtime"; then
+    echo "android packaging check: missing validated ORT thread contract: $required_thread_contract" >&2
+    exit 1
+  fi
+done
 
 if ! grep -Fq '<opencv_storage>' "$haar_asset" ||
    ! grep -Fq 'type_id="opencv-cascade-classifier"' "$haar_asset" ||

@@ -50,7 +50,12 @@ double population_std(const std::vector<float>& values) {
 
 }  // namespace
 
-TscanTensor preprocess_tscan_rgb(const DeepInput& input) {
+TscanPreprocessor::TscanPreprocessor()
+    : differences_(kDiffSize),
+      output_{std::vector<float>(kFrames * kOutputChannels * kPixels, 0.0F),
+              {180, 6, 72, 72}} {}
+
+const TscanTensor& TscanPreprocessor::preprocess(const DeepInput& input) {
   if (input.shape != std::vector<std::int64_t>{180, 72, 72, 3}) {
     fail("TSCAN_PREPROCESS_SHAPE expected [180,72,72,3]");
   }
@@ -63,20 +68,19 @@ TscanTensor preprocess_tscan_rgb(const DeepInput& input) {
     }
   }
 
-  std::vector<float> differences(kDiffSize);
   std::size_t difference_index = 0;
   for (std::size_t frame = 0; frame + 1U < kFrames; ++frame) {
     for (std::size_t pixel = 0; pixel < kPixels; ++pixel) {
       for (std::size_t channel = 0; channel < kRgbChannels; ++channel) {
         const float previous = input.tensor[input_offset(frame, pixel, channel)];
         const float next = input.tensor[input_offset(frame + 1U, pixel, channel)];
-        differences[difference_index++] =
+        differences_[difference_index++] =
             (next - previous) / (next + previous + 1e-7F);
       }
     }
   }
 
-  const double difference_scale = population_std(differences);
+  const double difference_scale = population_std(differences_);
   const double appearance_scale = population_std(input.tensor);
   if (!std::isfinite(difference_scale) || difference_scale == 0.0) {
     fail("TSCAN_PREPROCESS_VARIANCE_DIFF diff scale is zero or nonfinite");
@@ -91,19 +95,16 @@ TscanTensor preprocess_tscan_rgb(const DeepInput& input) {
   const double appearance_mean =
       appearance_sum / static_cast<double>(input.tensor.size());
 
-  TscanTensor output;
-  output.shape = {180, 6, 72, 72};
-  output.values.assign(kFrames * kOutputChannels * kPixels, 0.0F);
   difference_index = 0;
   for (std::size_t frame = 0; frame < kFrames; ++frame) {
     for (std::size_t pixel = 0; pixel < kPixels; ++pixel) {
       for (std::size_t channel = 0; channel < kRgbChannels; ++channel) {
         if (frame + 1U < kFrames) {
-          output.values[output_offset(frame, channel, pixel)] =
-              static_cast<float>(static_cast<double>(differences[difference_index++]) /
+          output_.values[output_offset(frame, channel, pixel)] =
+              static_cast<float>(static_cast<double>(differences_[difference_index++]) /
                                  difference_scale);
         }
-        output.values[output_offset(frame, channel + 3U, pixel)] =
+        output_.values[output_offset(frame, channel + 3U, pixel)] =
             static_cast<float>((static_cast<double>(
                                     input.tensor[input_offset(frame, pixel, channel)]) -
                                 appearance_mean) /
@@ -111,7 +112,12 @@ TscanTensor preprocess_tscan_rgb(const DeepInput& input) {
       }
     }
   }
-  return output;
+  return output_;
+}
+
+TscanTensor preprocess_tscan_rgb(const DeepInput& input) {
+  TscanPreprocessor preprocessor;
+  return preprocessor.preprocess(input);
 }
 
 }  // namespace rppg_qnn

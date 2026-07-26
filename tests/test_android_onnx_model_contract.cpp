@@ -1,4 +1,5 @@
 #include "android_onnx_model_contract.hpp"
+#include "android_onnx_cpu_runtime.hpp"
 
 #include "rppg_qnn/error.hpp"
 #include "test_support.hpp"
@@ -8,6 +9,17 @@
 #include <vector>
 
 namespace {
+
+void validates_supported_ort_thread_options() {
+  using rppg_qnn::android::OrtThreadOptions;
+  using rppg_qnn::android::valid_ort_thread_options;
+  EXPECT_TRUE(valid_ort_thread_options(OrtThreadOptions{2, 1}));
+  EXPECT_TRUE(valid_ort_thread_options(OrtThreadOptions{4, 1}));
+  EXPECT_TRUE(valid_ort_thread_options(OrtThreadOptions{6, 1}));
+  EXPECT_TRUE(!valid_ort_thread_options(OrtThreadOptions{1, 1}));
+  EXPECT_TRUE(!valid_ort_thread_options(OrtThreadOptions{8, 1}));
+  EXPECT_TRUE(!valid_ort_thread_options(OrtThreadOptions{2, 2}));
+}
 
 using rppg_qnn::DeepModel;
 using rppg_qnn::ErrorCode;
@@ -64,6 +76,7 @@ void disabled_has_no_onnx_contract() {
 }  // namespace
 
 int main() {
+  validates_supported_ort_thread_options();
   contracts_are_exact_and_model_specific();
   mismatched_metadata_is_rejected();
   disabled_has_no_onnx_contract();
