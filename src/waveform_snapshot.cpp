@@ -11,6 +11,10 @@ double waveform_sample_rate_hz(const HeartRateResult& result) {
   if (result.method == "TSCAN" || result.method == "DEEP") {
     return 30.0;
   }
+  const double span = result.window_end_sec - result.window_start_sec;
+  if (result.waveform.size() >= 2U && std::isfinite(span) && span > 0.0) {
+    return static_cast<double>(result.waveform.size() - 1U) / span;
+  }
   return result.source_fps > 0.0 ? result.source_fps : 30.0;
 }
 

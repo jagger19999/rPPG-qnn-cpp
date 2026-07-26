@@ -36,7 +36,10 @@ void selects_python_compatible_sample_rates() {
   rppg_qnn::HeartRateResult traditional;
   traditional.method = "CHROM";
   traditional.source_fps = 21.5;
-  EXPECT_EQ(rppg_qnn::waveform_sample_rate_hz(traditional), 21.5);
+  traditional.window_start_sec = 100.0;
+  traditional.window_end_sec = 110.0;
+  traditional.waveform.resize(301);
+  EXPECT_EQ(rppg_qnn::waveform_sample_rate_hz(traditional), 30.0);
 
   rppg_qnn::HeartRateResult deep;
   deep.method = "TSCAN";
