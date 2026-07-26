@@ -506,7 +506,8 @@ public final class MainActivity extends Activity {
         }
 
         matrix.postScale(scaleX, scaleY, centerX, centerY);
-        matrix.postRotate(relative, centerX, centerY);
+        matrix.postRotate(
+                PreviewRotation.textureTransformDegrees(relative), centerX, centerY);
         previewSurface.setTransform(matrix);
         updatePreviewMirror();
     }
