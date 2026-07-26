@@ -570,13 +570,17 @@ git commit -m "docs: note Live HR UI phase-1 device gates"
 - Add: `face_rect` to status JSON (`x,y,w,h` normalized 0–1)
 - Overlay: custom `FaceBoxOverlay` View
 
-- [ ] **Step 1: Prefer Camera2 dual targets** (preview Surface + ImageReader); if session config blocked on device, fall back to 5–10 FPS JPEG full-frame push separate from ROI.
+- [x] **Step 1: Prefer Camera2 dual targets** (preview Surface + ImageReader); if session config blocked on device, fall back to ImageReader-only (`preview_enabled:false`).
 
-- [ ] **Step 2: Publish `face_rect` when face present; overlay draws stroke rect.
+- [x] **Step 2: Publish `face_rect` when face present; overlay draws stroke rect.
 
-- [ ] **Step 3: Keep ROI ImageView; preview failure hides preview only.
+- [x] **Step 3: Keep ROI ImageView; preview failure shows placeholder only.
 
-- [ ] **Step 4: Device gate — FPS not collapsed; commit `feat: add camera preview with face box overlay`.
+- [x] **Step 4: Commit `feat: add camera preview with face box overlay` (`0d3914c`).
+
+- [x] **Step 5: Fix start ordering** — show TextureView → wait Surface → `nativeSetPreviewSurface` → `nativeStart` (avoids GONE Surface race →「预览不可用」).
+
+- [ ] **Step 6: Device gate** — unlock phone, Start, confirm live preview + `preview_enabled:true` + measured_fps ≈ 30.
 
 Do not start Task 7 until Phase 1 device checklist in Task 6 is acknowledged.
 
