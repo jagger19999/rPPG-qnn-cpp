@@ -12,6 +12,7 @@ namespace rppg_qnn {
 struct EfficientPhysModelOutput {
   std::vector<float> waveform;
   std::vector<std::int64_t> shape;
+  double runtime_ms{0.0};
 };
 
 class IEfficientPhysSession {

@@ -72,6 +72,10 @@ struct CameraSessionStatus {
   bool deep_result_available{false};
   double deep_bpm{0.0};
   double deep_confidence{0.0};
+  double deep_window_materialization_ms{0.0};
+  double deep_preprocess_ms{0.0};
+  double deep_runtime_ms{0.0};
+  double deep_postprocess_ms{0.0};
   double deep_inference_ms{0.0};
   bool deep_result_valid{false};
   std::string deep_invalid_reason;

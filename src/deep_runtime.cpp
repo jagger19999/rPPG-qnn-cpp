@@ -31,8 +31,21 @@ HeartRateResult invalid_result(const DeepInput& input, const char* reason) {
   result.source_frame_count = input.source_frame_count;
   result.max_frame_gap_sec =
       std::isfinite(input.max_frame_gap_sec) ? input.max_frame_gap_sec : 0.0;
+  result.window_materialization_ms =
+      std::isfinite(input.window_materialization_ms) &&
+              input.window_materialization_ms >= 0.0
+          ? input.window_materialization_ms
+          : 0.0;
   result.invalid_reason = reason;
   return result;
+}
+
+void set_fake_elapsed(HeartRateResult* result,
+                      std::chrono::steady_clock::time_point started) {
+  result->postprocess_ms = std::chrono::duration<double, std::milli>(
+                               std::chrono::steady_clock::now() - started)
+                               .count();
+  result->inference_ms = result->postprocess_ms;
 }
 
 bool valid_shape(const DeepInput& input, std::size_t* frame_pixels) {
@@ -72,9 +85,7 @@ class FakeDeepRuntime final : public IDeepRuntime {
         !std::all_of(input.tensor.begin(), input.tensor.end(),
                      [](float value) { return std::isfinite(value); })) {
       HeartRateResult result = invalid_result(input, "model_input_invalid");
-      result.inference_ms = std::chrono::duration<double, std::milli>(
-                              std::chrono::steady_clock::now() - started)
-                              .count();
+      set_fake_elapsed(&result, started);
       return result;
     }
 
@@ -122,9 +133,7 @@ class FakeDeepRuntime final : public IDeepRuntime {
       }
       const double power = real * real + imaginary * imaginary;
       if (!std::isfinite(power)) {
-        result.inference_ms = std::chrono::duration<double, std::milli>(
-                                std::chrono::steady_clock::now() - started)
-                                .count();
+        set_fake_elapsed(&result, started);
         return result;
       }
       total_power += power;
@@ -146,9 +155,7 @@ class FakeDeepRuntime final : public IDeepRuntime {
         }
       }
     }
-    result.inference_ms = std::chrono::duration<double, std::milli>(
-                            std::chrono::steady_clock::now() - started)
-                            .count();
+    set_fake_elapsed(&result, started);
     return result;
   }
 

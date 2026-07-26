@@ -253,6 +253,8 @@ void ingests_many_frames_without_materializing_until_requested() {
   EXPECT_EQ(builder.materialization_count(), static_cast<std::size_t>(0));
   const auto output = builder.build_latest();
   EXPECT_TRUE(output.has_value());
+  EXPECT_TRUE(std::isfinite(output->window_materialization_ms));
+  EXPECT_TRUE(output->window_materialization_ms >= 0.0);
   EXPECT_EQ(builder.materialization_count(), static_cast<std::size_t>(1));
 }
 

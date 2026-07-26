@@ -24,6 +24,7 @@ rppg_qnn::DeepInput valid_input() {
   input.source_fps = 30.0;
   input.max_frame_gap_sec = 1.0 / 30.0;
   input.source_frame_count = 181U;
+  input.window_materialization_ms = 2.25;
   input.shape = {180, 72, 72, 3};
   input.tensor.resize(kSourceValues);
   for (std::size_t index = 0; index < input.tensor.size(); ++index) {
@@ -67,7 +68,7 @@ class RecordingSession final : public rppg_qnn::IEfficientPhysSession {
     if (state_->nonfinite_output) {
       output[7] = std::numeric_limits<float>::quiet_NaN();
     }
-    return {std::move(output), state_->output_shape};
+    return {std::move(output), state_->output_shape, 8.5};
   }
 
  private:
@@ -106,6 +107,15 @@ void exact_preprocessing_and_result_contract() {
   EXPECT_EQ(result.source_frame_count, 181U);
   EXPECT_TRUE(std::isfinite(result.confidence));
   EXPECT_TRUE(std::isfinite(result.inference_ms));
+  EXPECT_EQ(result.window_materialization_ms, 2.25);
+  EXPECT_TRUE(std::isfinite(result.preprocess_ms));
+  EXPECT_TRUE(result.preprocess_ms >= 0.0);
+  EXPECT_EQ(result.runtime_ms, 8.5);
+  EXPECT_TRUE(std::isfinite(result.postprocess_ms));
+  EXPECT_TRUE(result.postprocess_ms >= 0.0);
+  EXPECT_TRUE(std::abs(result.inference_ms -
+                       (result.preprocess_ms + result.runtime_ms +
+                        result.postprocess_ms)) < 1e-9);
 }
 
 void malformed_input_never_reaches_session() {
@@ -123,6 +133,9 @@ void malformed_input_never_reaches_session() {
     EXPECT_EQ(result.backend, std::string("onnxruntime_cpu"));
     EXPECT_EQ(result.method, std::string("EFFICIENTPHYS"));
     EXPECT_TRUE(std::isfinite(result.inference_ms));
+    EXPECT_EQ(result.window_materialization_ms, 2.25);
+    EXPECT_EQ(result.runtime_ms, 0.0);
+    EXPECT_EQ(result.postprocess_ms, 0.0);
   };
 
   auto wrong_frames = valid_input();

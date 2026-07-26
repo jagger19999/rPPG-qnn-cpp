@@ -58,6 +58,10 @@ struct HeartRateResult {
   double source_fps{0.0};
   std::size_t source_frame_count{0};
   double max_frame_gap_sec{0.0};
+  double window_materialization_ms{0.0};
+  double preprocess_ms{0.0};
+  double runtime_ms{0.0};
+  double postprocess_ms{0.0};
   double inference_ms{0.0};
   std::string backend;
   std::string model_sha256;

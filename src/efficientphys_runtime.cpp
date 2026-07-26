@@ -52,12 +52,22 @@ HeartRateResult base_result(const DeepInput& input, const std::string& backend) 
   result.source_fps = input.source_fps;
   result.source_frame_count = input.source_frame_count;
   result.max_frame_gap_sec = input.max_frame_gap_sec;
+  result.window_materialization_ms =
+      std::isfinite(input.window_materialization_ms) &&
+              input.window_materialization_ms >= 0.0
+          ? input.window_materialization_ms
+          : 0.0;
   return result;
 }
 
-void set_elapsed(HeartRateResult* result, Clock::time_point started) {
+double elapsed_ms(Clock::time_point started) {
+  return std::chrono::duration<double, std::milli>(Clock::now() - started)
+      .count();
+}
+
+void set_total(HeartRateResult* result) {
   result->inference_ms =
-      std::chrono::duration<double, std::milli>(Clock::now() - started).count();
+      result->preprocess_ms + result->runtime_ms + result->postprocess_ms;
 }
 
 bool input_contract_is_valid(const DeepInput& input) {
@@ -121,11 +131,12 @@ class EfficientPhysRuntime final : public IDeepRuntime {
   [[nodiscard]] std::string backend_name() const override { return backend_; }
 
   HeartRateResult infer(const DeepInput& input) override {
-    const auto started = Clock::now();
     HeartRateResult result = base_result(input, backend_);
+    const auto preprocess_started = Clock::now();
     if (!input_contract_is_valid(input)) {
       result.invalid_reason = "efficientphys_input_invalid";
-      set_elapsed(&result, started);
+      result.preprocess_ms = elapsed_ms(preprocess_started);
+      set_total(&result);
       return result;
     }
 
@@ -144,7 +155,8 @@ class EfficientPhysRuntime final : public IDeepRuntime {
                   static_cast<double>(input.tensor.size()));
     if (!std::isfinite(standard_deviation)) {
       result.invalid_reason = "efficientphys_input_invalid";
-      set_elapsed(&result, started);
+      result.preprocess_ms = elapsed_ms(preprocess_started);
+      set_total(&result);
       return result;
     }
 
@@ -170,15 +182,22 @@ class EfficientPhysRuntime final : public IDeepRuntime {
                 kFrameValues,
                 model_input.begin() +
                     static_cast<std::ptrdiff_t>(kSourceFrames * kFrameValues));
+    result.preprocess_ms = elapsed_ms(preprocess_started);
 
     EfficientPhysModelOutput output =
         session_->run(model_input, {181, 3, 72, 72});
+    result.runtime_ms =
+        std::isfinite(output.runtime_ms) && output.runtime_ms >= 0.0
+            ? output.runtime_ms
+            : 0.0;
+    const auto postprocess_started = Clock::now();
     if (output.shape != std::vector<std::int64_t>{180, 1} ||
         output.waveform.size() != kSourceFrames ||
         !std::all_of(output.waveform.begin(), output.waveform.end(),
                      [](float value) { return std::isfinite(value); })) {
       result.invalid_reason = "efficientphys_output_invalid";
-      set_elapsed(&result, started);
+      result.postprocess_ms = elapsed_ms(postprocess_started);
+      set_total(&result);
       return result;
     }
 
@@ -194,7 +213,8 @@ class EfficientPhysRuntime final : public IDeepRuntime {
     result.is_valid = post.is_valid;
     result.invalid_reason = post.invalid_reason;
     result.waveform = std::move(output.waveform);
-    set_elapsed(&result, started);
+    result.postprocess_ms = elapsed_ms(postprocess_started);
+    set_total(&result);
     return result;
   }
 

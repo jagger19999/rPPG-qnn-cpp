@@ -27,9 +27,24 @@ class TscanRuntime final : public IDeepRuntime {
   [[nodiscard]] std::string backend_name() const override { return backend_; }
 
   HeartRateResult infer(const DeepInput& input) override {
-    const auto started = std::chrono::steady_clock::now();
+    HeartRateResult result;
+    result.window_materialization_ms =
+        std::isfinite(input.window_materialization_ms) &&
+                input.window_materialization_ms >= 0.0
+            ? input.window_materialization_ms
+            : 0.0;
+    const auto preprocess_started = std::chrono::steady_clock::now();
     TscanTensor tensor = preprocess_tscan_rgb(input);
+    result.preprocess_ms =
+        std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - preprocess_started)
+            .count();
     TscanModelOutput output = session_->run(tensor.values, tensor.shape);
+    result.runtime_ms =
+        std::isfinite(output.runtime_ms) && output.runtime_ms >= 0.0
+            ? output.runtime_ms
+            : 0.0;
+    const auto postprocess_started = std::chrono::steady_clock::now();
     if (output.shape != std::vector<std::int64_t>{180, 1} ||
         output.waveform.size() != 180U) {
       fail("TSCAN_OUTPUT_SHAPE expected float32 [180,1]");
@@ -41,7 +56,6 @@ class TscanRuntime final : public IDeepRuntime {
 
     const TscanPostprocessResult post =
         postprocess_tscan_waveform(output.waveform);
-    HeartRateResult result;
     result.method = "TSCAN";
     result.backend = backend_;
     result.window_start_sec = input.start_sec;
@@ -54,10 +68,12 @@ class TscanRuntime final : public IDeepRuntime {
     result.is_valid = post.is_valid;
     result.invalid_reason = post.invalid_reason;
     result.waveform = std::move(output.waveform);
-    result.inference_ms =
+    result.postprocess_ms =
         std::chrono::duration<double, std::milli>(
-            std::chrono::steady_clock::now() - started)
+            std::chrono::steady_clock::now() - postprocess_started)
             .count();
+    result.inference_ms =
+        result.preprocess_ms + result.runtime_ms + result.postprocess_ms;
     return result;
   }
 

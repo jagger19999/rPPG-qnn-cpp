@@ -512,6 +512,11 @@ struct AndroidCameraSession::Impl {
               snapshot.deep_result_available = true;
               snapshot.deep_bpm = result.bpm;
               snapshot.deep_confidence = result.confidence;
+              snapshot.deep_window_materialization_ms =
+                  result.window_materialization_ms;
+              snapshot.deep_preprocess_ms = result.preprocess_ms;
+              snapshot.deep_runtime_ms = result.runtime_ms;
+              snapshot.deep_postprocess_ms = result.postprocess_ms;
               snapshot.deep_inference_ms = result.inference_ms;
               snapshot.deep_result_valid = result.is_valid;
               snapshot.deep_invalid_reason = result.invalid_reason;
@@ -706,6 +711,10 @@ struct AndroidCameraSession::Impl {
       snapshot.deep_result_available = false;
       snapshot.deep_bpm = 0.0;
       snapshot.deep_confidence = 0.0;
+      snapshot.deep_window_materialization_ms = 0.0;
+      snapshot.deep_preprocess_ms = 0.0;
+      snapshot.deep_runtime_ms = 0.0;
+      snapshot.deep_postprocess_ms = 0.0;
       snapshot.deep_inference_ms = 0.0;
       snapshot.deep_result_valid = false;
       snapshot.deep_invalid_reason.clear();

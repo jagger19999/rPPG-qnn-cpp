@@ -9,6 +9,7 @@
 #include <onnxruntime_cxx_api.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
@@ -28,6 +29,11 @@ std::size_t element_count(const std::vector<std::int64_t>& shape) {
         return product * static_cast<std::size_t>(dimension);
       });
 }
+
+struct OnnxRunOutput {
+  std::vector<float> values;
+  double runtime_ms{0.0};
+};
 
 class OnnxCpuSession final {
  public:
@@ -56,8 +62,8 @@ class OnnxCpuSession final {
                        error.what());
   }
 
-  std::vector<float> run(const std::vector<float>& values,
-                         const std::vector<std::int64_t>& shape) {
+  OnnxRunOutput run(const std::vector<float>& values,
+                    const std::vector<std::int64_t>& shape) {
     if (shape != contract_.input.shape ||
         values.size() != element_count(contract_.input.shape)) {
       throw AppError(ErrorCode::InferenceFailed,
@@ -72,9 +78,14 @@ class OnnxCpuSession final {
           shape.size());
       const char* input_names[] = {contract_.input.name.c_str()};
       const char* output_names[] = {contract_.output.name.c_str()};
+      const auto runtime_started = std::chrono::steady_clock::now();
       std::vector<Ort::Value> outputs = session_.Run(
           Ort::RunOptions{nullptr}, input_names, &input_tensor, 1U, output_names,
           1U);
+      const double runtime_ms =
+          std::chrono::duration<double, std::milli>(
+              std::chrono::steady_clock::now() - runtime_started)
+              .count();
       if (outputs.size() != 1U || !outputs.front().IsTensor()) {
         throw AppError(ErrorCode::InferenceFailed,
                        std::string(to_string(model_)) +
@@ -97,7 +108,7 @@ class OnnxCpuSession final {
                        std::string(to_string(model_)) +
                            " output contains non-finite values");
       }
-      return waveform;
+      return {std::move(waveform), runtime_ms};
     } catch (const AppError&) {
       throw;
     } catch (const Ort::Exception& error) {
@@ -159,8 +170,10 @@ class TscanOnnxSession final : public ITscanSession {
 
   TscanModelOutput run(const std::vector<float>& values,
                        const std::vector<std::int64_t>& shape) override {
-    return {session_.run(values, shape),
-            onnx_model_contract(DeepModel::Tscan).output.shape};
+    OnnxRunOutput output = session_.run(values, shape);
+    return {std::move(output.values),
+            onnx_model_contract(DeepModel::Tscan).output.shape,
+            output.runtime_ms};
   }
 
  private:
@@ -179,8 +192,10 @@ class EfficientPhysOnnxSession final : public IEfficientPhysSession {
   EfficientPhysModelOutput run(
       const std::vector<float>& values,
       const std::vector<std::int64_t>& shape) override {
-    return {session_.run(values, shape),
-            onnx_model_contract(DeepModel::EfficientPhys).output.shape};
+    OnnxRunOutput output = session_.run(values, shape);
+    return {std::move(output.values),
+            onnx_model_contract(DeepModel::EfficientPhys).output.shape,
+            output.runtime_ms};
   }
 
  private:

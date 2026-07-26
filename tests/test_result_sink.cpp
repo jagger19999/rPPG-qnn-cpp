@@ -375,6 +375,10 @@ rppg_qnn::HeartRateResult make_heart_rate(bool valid) {
   result.source_fps = 30.0;
   result.source_frame_count = 300;
   result.max_frame_gap_sec = 0.04;
+  result.window_materialization_ms = 1.25;
+  result.preprocess_ms = 0.5;
+  result.runtime_ms = 1.75;
+  result.postprocess_ms = 0.25;
   result.inference_ms = 2.5;
   result.backend = "qnn\"gpu";
   result.model_sha256 = "abc123";
@@ -417,6 +421,14 @@ void test_persisted_events_csv_and_summary() {
     EXPECT_TRUE(events[0].find("\\t") != std::string::npos);
     EXPECT_TRUE(events[0].find("\\u0001") != std::string::npos);
     EXPECT_TRUE(events[1].find("\\\"quoted\\\"") != std::string::npos);
+    EXPECT_TRUE(events[1].find("\"window_materialization_ms\":1.25") !=
+                std::string::npos);
+    EXPECT_TRUE(events[1].find("\"preprocess_ms\":0.5") !=
+                std::string::npos);
+    EXPECT_TRUE(events[1].find("\"runtime_ms\":1.75") !=
+                std::string::npos);
+    EXPECT_TRUE(events[1].find("\"postprocess_ms\":0.25") !=
+                std::string::npos);
     EXPECT_TRUE(events[2].find("\"bpm\":null") != std::string::npos);
     EXPECT_TRUE(events[2].find("\"confidence\":null") != std::string::npos);
   }
@@ -426,15 +438,16 @@ void test_persisted_events_csv_and_summary() {
   const std::string csv_contents = read_file(directory.path() / "heart_rate.csv");
   const std::string expected_header =
       "schema_version,method,window_start_sec,window_end_sec,bpm,confidence,is_valid,"
-      "invalid_reason,source_fps,source_frame_count,max_frame_gap_sec,inference_ms,"
+      "invalid_reason,source_fps,source_frame_count,max_frame_gap_sec,"
+      "window_materialization_ms,preprocess_ms,runtime_ms,postprocess_ms,inference_ms,"
       "backend,model_sha256";
   EXPECT_EQ(records.size(), static_cast<std::size_t>(3));
   EXPECT_TRUE(csv_contents.find("\r\n") != std::string::npos);
   EXPECT_TRUE(!has_non_rfc4180_record_ending(csv_contents));
   if (records.size() == 3) {
-    EXPECT_EQ(records[0].size(), static_cast<std::size_t>(14));
-    EXPECT_EQ(records[1].size(), static_cast<std::size_t>(14));
-    EXPECT_EQ(records[2].size(), static_cast<std::size_t>(14));
+    EXPECT_EQ(records[0].size(), static_cast<std::size_t>(18));
+    EXPECT_EQ(records[1].size(), static_cast<std::size_t>(18));
+    EXPECT_EQ(records[2].size(), static_cast<std::size_t>(18));
     std::string header;
     for (std::size_t index = 0; index < records[0].size(); ++index) {
       if (index != 0) {
@@ -557,7 +570,7 @@ void test_machine_output_ignores_global_comma_locale() {
   EXPECT_TRUE(events.find("\"bpm\":72.5") != std::string::npos);
   EXPECT_TRUE(events.find("72,5") == std::string::npos);
   EXPECT_TRUE(csv.find("72.5") != std::string::npos);
-  EXPECT_EQ(csv_records(csv)[1].size(), static_cast<std::size_t>(14));
+  EXPECT_EQ(csv_records(csv)[1].size(), static_cast<std::size_t>(18));
   EXPECT_TRUE(terminal.str().find("capture_fps=72.5") != std::string::npos);
 }
 

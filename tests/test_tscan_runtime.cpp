@@ -23,6 +23,7 @@ rppg_qnn::DeepInput valid_input() {
   input.source_fps = 30.0;
   input.max_frame_gap_sec = 0.04;
   input.source_frame_count = 180U;
+  input.window_materialization_ms = 1.25;
   input.shape = {180, 72, 72, 3};
   input.tensor.resize(kInputValues);
   for (std::size_t index = 0; index < input.tensor.size(); ++index) {
@@ -69,7 +70,7 @@ class RecordingSession final : public rppg_qnn::ITscanSession {
     if (state_->nonfinite) {
       waveform[12] = std::numeric_limits<float>::infinity();
     }
-    return {std::move(waveform), state_->output_shape};
+    return {std::move(waveform), state_->output_shape, 7.5};
   }
 
  private:
@@ -119,6 +120,15 @@ void composes_preprocess_session_and_postprocess() {
   EXPECT_TRUE(std::abs(result.bpm - 60.0) < 0.01);
   EXPECT_TRUE(std::isfinite(result.confidence));
   EXPECT_TRUE(std::isfinite(result.inference_ms));
+  EXPECT_EQ(result.window_materialization_ms, 1.25);
+  EXPECT_TRUE(std::isfinite(result.preprocess_ms));
+  EXPECT_TRUE(result.preprocess_ms >= 0.0);
+  EXPECT_EQ(result.runtime_ms, 7.5);
+  EXPECT_TRUE(std::isfinite(result.postprocess_ms));
+  EXPECT_TRUE(result.postprocess_ms >= 0.0);
+  EXPECT_TRUE(std::abs(result.inference_ms -
+                       (result.preprocess_ms + result.runtime_ms +
+                        result.postprocess_ms)) < 1e-9);
 }
 
 void malformed_input_never_reaches_session() {
