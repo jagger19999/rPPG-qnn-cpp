@@ -34,8 +34,8 @@ for required_file in \
 done
 
 constructor_contract=$(sed -n \
-  '/explicit OnnxCpuSession/,/std::string backend_name/p' "$onnx_runtime")
-if ! grep -Fq 'explicit OnnxCpuSession(const std::string& model_path) try' \
+  '/OnnxCpuSession(DeepModel model/,/^  }$/p' "$onnx_runtime")
+if ! grep -Fq 'OnnxCpuSession(DeepModel model, const std::string& model_path) try' \
        <<<"$constructor_contract" ||
    ! grep -Fq 'catch (const AppError&) {' <<<"$constructor_contract" ||
    ! grep -Fq 'catch (const Ort::Exception& error) {' <<<"$constructor_contract" ||
@@ -146,9 +146,12 @@ android/app/src/main/cpp/android_jni_handle.cpp
 android/app/src/main/cpp/android_jni_handle.hpp
 android/app/src/main/cpp/android_onnx_cpu_runtime.cpp
 android/app/src/main/cpp/android_onnx_cpu_runtime.hpp
+android/app/src/main/cpp/android_onnx_model_contract.cpp
+android/app/src/main/cpp/android_onnx_model_contract.hpp
 android/app/src/main/cpp/android_qnn_preflight_stub.cpp
 android/app/src/main/cpp/native_bridge.cpp
 android/app/src/main/java/com/jagger/rppgbench/MainActivity.java
+android/app/src/main/java/com/jagger/rppgbench/ModelIntegrity.java
 android/app/src/main/java/com/jagger/rppgbench/NativeBridge.java
 android/app/src/main/java/com/jagger/rppgbench/PreviewRotation.java
 android/app/src/main/java/com/jagger/rppgbench/ui/FaceBoxOverlay.java
@@ -341,9 +344,12 @@ android/app/src/main/cpp/android_jni_handle.cpp
 android/app/src/main/cpp/android_jni_handle.hpp
 android/app/src/main/cpp/android_onnx_cpu_runtime.cpp
 android/app/src/main/cpp/android_onnx_cpu_runtime.hpp
+android/app/src/main/cpp/android_onnx_model_contract.cpp
+android/app/src/main/cpp/android_onnx_model_contract.hpp
 android/app/src/main/cpp/android_qnn_preflight_stub.cpp
 android/app/src/main/cpp/native_bridge.cpp
 android/app/src/main/java/com/jagger/rppgbench/MainActivity.java
+android/app/src/main/java/com/jagger/rppgbench/ModelIntegrity.java
 android/app/src/main/java/com/jagger/rppgbench/NativeBridge.java
 android/app/src/main/java/com/jagger/rppgbench/PreviewRotation.java
 android/app/src/main/java/com/jagger/rppgbench/ui/FaceBoxOverlay.java
@@ -380,6 +386,7 @@ android/app/src/main/res/mipmap-xxxhdpi/ic_launcher_foreground.png
 android/app/src/main/res/mipmap-xxxhdpi/ic_launcher_round.png
 android/app/src/main/res/values/colors.xml
 android/app/src/main/res/values/strings.xml
+android/app/src/test/java/com/jagger/rppgbench/ModelIntegrityTest.java
 android/app/src/test/java/com/jagger/rppgbench/PreviewRotationTest.java
 android/app/src/test/java/com/jagger/rppgbench/ui/HrStatusFormatterTest.java
 android/app/src/test/java/com/jagger/rppgbench/ui/PpgWaveformGeometryTest.java

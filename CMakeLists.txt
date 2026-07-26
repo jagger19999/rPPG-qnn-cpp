@@ -73,6 +73,19 @@ if(BUILD_TESTING)
 
   add_test(NAME deep_model COMMAND test_deep_model)
 
+  add_executable(
+    test_android_onnx_model_contract
+    tests/test_android_onnx_model_contract.cpp
+    android/app/src/main/cpp/android_onnx_model_contract.cpp)
+  target_link_libraries(test_android_onnx_model_contract PRIVATE rppg_qnn_core)
+  target_include_directories(
+    test_android_onnx_model_contract
+    PRIVATE tests android/app/src/main/cpp)
+  target_compile_options(
+    test_android_onnx_model_contract PRIVATE -Wall -Wextra -Wpedantic -Werror)
+
+  add_test(NAME android_onnx_model_contract COMMAND test_android_onnx_model_contract)
+
   add_executable(test_build_identity tests/test_build_identity.cpp)
   target_link_libraries(test_build_identity PRIVATE rppg_qnn_core)
   target_include_directories(test_build_identity PRIVATE tests)

@@ -1087,12 +1087,13 @@ public final class MainActivity extends Activity {
                     new File(
                             new File(getFilesDir(), "sessions"),
                             "session-" + System.currentTimeMillis());
+            String deepModel = deepSelector.isChecked() ? "tscan" : "disabled";
             File model =
-                    new File(new File(getFilesDir(), "models"), "ubfc_tscan_full_lr3e-5_Epoch10.onnx");
-            if (deepSelector.isChecked() && !model.isFile()) {
-                showUserMessage(
-                        "MODEL_LOAD_FAILED: import models/ubfc_tscan_full_lr3e-5_Epoch10.onnx "
-                                + "to app-private storage with adb run-as");
+                    ModelIntegrity.modelFile(new File(getFilesDir(), "models"), deepModel);
+            try {
+                ModelIntegrity.verify(deepModel, model);
+            } catch (IOException | IllegalArgumentException error) {
+                showUserMessage("MODEL_LOAD_FAILED: " + error.getMessage());
                 return;
             }
             String configured =
@@ -1101,8 +1102,8 @@ public final class MainActivity extends Activity {
                             methodSelector.getSelectedItem().toString(),
                             cascade.getAbsolutePath(),
                             sessionOutputDirectory.getAbsolutePath(),
-                            deepSelector.isChecked() ? "tscan" : "disabled",
-                            model.getAbsolutePath());
+                            deepModel,
+                            model == null ? "" : model.getAbsolutePath());
             if (!configured.startsWith("{")) {
                 showUserMessage(configured);
                 return;

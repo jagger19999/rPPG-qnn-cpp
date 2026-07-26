@@ -479,14 +479,19 @@ struct AndroidCameraSession::Impl {
       case DeepModel::Disabled:
         break;
       case DeepModel::Tscan:
-        dependencies.make_deep_runtime = [model = requested.model_path] {
-          return make_onnx_cpu_runtime(model);
-        };
-        break;
       case DeepModel::EfficientPhys:
-        throw AppError(
-            ErrorCode::ConfigInvalid,
-            "EfficientPhys runtime is not available in this Android build");
+        // Construct synchronously before Camera2 starts accepting frames. This
+        // makes ORT's name/type/shape inspection a true start-time gate.
+        {
+          auto runtime_holder =
+              std::make_shared<std::unique_ptr<IDeepRuntime>>(
+                  make_onnx_cpu_runtime(requested.deep_model,
+                                        requested.model_path));
+          dependencies.make_deep_runtime = [runtime_holder] {
+            return std::move(*runtime_holder);
+          };
+        }
+        break;
     }
     dependencies.make_sink = [this](
                                  const std::filesystem::path& output_directory) {
@@ -502,7 +507,8 @@ struct AndroidCameraSession::Impl {
             WaveformSnapshot waveform = make_waveform_snapshot(
                 result.waveform, result.method, sample_rate, result.is_valid,
                 result.invalid_reason);
-            if (result.method == "TSCAN" || result.method == "DEEP") {
+            if (result.method == "TSCAN" ||
+                result.method == "EFFICIENTPHYS" || result.method == "DEEP") {
               snapshot.deep_result_available = true;
               snapshot.deep_bpm = result.bpm;
               snapshot.deep_confidence = result.confidence;

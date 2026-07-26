@@ -34,6 +34,7 @@ add_library(
     SHARED
     android_camera_session.cpp
     android_jni_handle.cpp
+    android_onnx_model_contract.cpp
     android_onnx_cpu_runtime.cpp
     android_qnn_preflight_stub.cpp
     native_bridge.cpp
