@@ -995,10 +995,10 @@ public final class MainActivity extends Activity {
                             new File(getFilesDir(), "sessions"),
                             "session-" + System.currentTimeMillis());
             File model =
-                    new File(new File(getFilesDir(), "models"), "efficientphys_pure.onnx");
+                    new File(new File(getFilesDir(), "models"), "ubfc_tscan_full_lr3e-5_Epoch10.onnx");
             if (deepSelector.isChecked() && !model.isFile()) {
                 showUserMessage(
-                        "MODEL_LOAD_FAILED: import models/efficientphys_pure.onnx "
+                        "MODEL_LOAD_FAILED: import models/ubfc_tscan_full_lr3e-5_Epoch10.onnx "
                                 + "to app-private storage with adb run-as");
                 return;
             }

@@ -410,7 +410,7 @@ struct AndroidCameraSession::Impl {
         (requested_config.model_path.empty() ||
          !std::filesystem::is_regular_file(requested_config.model_path))) {
       throw AppError(ErrorCode::ModelLoadFailed,
-                     "EfficientPhys ONNX model is missing from app storage");
+                     "TSCAN ONNX model is missing from app storage");
     }
     {
       RoiProcessor cascade_validator(requested_config.cascade_path);
@@ -487,7 +487,7 @@ struct AndroidCameraSession::Impl {
           },
           [this](const HeartRateResult& result) {
             std::lock_guard<std::mutex> lock(status_mutex);
-            if (result.method == "EFFICIENTPHYS" || result.method == "DEEP") {
+            if (result.method == "TSCAN" || result.method == "DEEP") {
               snapshot.deep_result_available = true;
               snapshot.deep_bpm = result.bpm;
               snapshot.deep_confidence = result.confidence;

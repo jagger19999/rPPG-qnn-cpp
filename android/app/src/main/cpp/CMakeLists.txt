@@ -47,6 +47,9 @@ add_library(
     "${RPPG_REPOSITORY_ROOT}/src/result_sink.cpp"
     "${RPPG_REPOSITORY_ROOT}/src/roi_processor.cpp"
     "${RPPG_REPOSITORY_ROOT}/src/traditional_predictor.cpp"
+    "${RPPG_REPOSITORY_ROOT}/src/tscan_postprocessor.cpp"
+    "${RPPG_REPOSITORY_ROOT}/src/tscan_preprocessor.cpp"
+    "${RPPG_REPOSITORY_ROOT}/src/tscan_runtime.cpp"
     "${RPPG_REPOSITORY_ROOT}/src/yuv420.cpp")
 
 target_include_directories(
