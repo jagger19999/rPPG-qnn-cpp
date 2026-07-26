@@ -319,10 +319,10 @@ public final class MainActivity extends Activity {
         try {
             JSONObject json = new JSONObject(cameraJson);
             traditionalCard.bind("传统 rPPG", HrStatusFormatter.traditional(json));
-            deepCard.bind("深度 EfficientPhys", HrStatusFormatter.deep(json));
+            deepCard.bind("深度 TSCAN", HrStatusFormatter.deep(json));
         } catch (Exception error) {
             traditionalCard.bind("传统 rPPG", new HrStatusFormatter.CardView("--", "不可用"));
-            deepCard.bind("深度 EfficientPhys", new HrStatusFormatter.CardView("--", "不可用"));
+            deepCard.bind("深度 TSCAN", new HrStatusFormatter.CardView("--", "不可用"));
         }
 
         WatchContracts.WatchHeartRateSnapshot snapshot =

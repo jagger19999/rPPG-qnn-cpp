@@ -2,7 +2,7 @@
 <resources>
     <string name="app_name">rPPG Bench</string>
     <string name="app_title">rPPG Android NDK Traditional Runtime</string>
-    <string name="camera_smoke_boundary">Camera2 + GREEN/POS/CHROM + optional EfficientPhys ONNX Runtime CPU. QNN/Adreno is not used.</string>
+    <string name="camera_smoke_boundary">Camera2 + GREEN/POS/CHROM + 可选 TSCAN ONNX Runtime CPU；不使用 QNN/Adreno。</string>
     <string name="list_cameras">列出摄像头</string>
     <string name="start_camera">开始采集</string>
     <string name="stop_camera">停止采集</string>
@@ -15,7 +15,7 @@
     <string name="toggle_camera">相机配置</string>
     <string name="toggle_watch">手表</string>
     <string name="toggle_diagnostic">诊断</string>
-    <string name="deep_selector_label">Run EfficientPhys with ONNX Runtime CPU</string>
+    <string name="deep_selector_label">使用 ONNX Runtime CPU 运行 TSCAN</string>
     <string name="roi_placeholder">未检测到人脸</string>
     <string name="preview_placeholder">预览不可用</string>
     <string name="roi_image_description">Face ROI thumbnail</string>

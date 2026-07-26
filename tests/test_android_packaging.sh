@@ -195,6 +195,18 @@ camera_source="$root/android/app/src/main/cpp/android_camera_session.cpp"
 camera_cmake="$root/android/app/src/main/cpp/CMakeLists.txt"
 native_bridge_java="$root/android/app/src/main/java/com/jagger/rppgbench/NativeBridge.java"
 activity_java="$root/android/app/src/main/java/com/jagger/rppgbench/MainActivity.java"
+strings_xml="$root/android/app/src/main/res/values/strings.xml"
+
+if [[ $(grep -Fc 'deepCard.bind("深度 TSCAN"' "$activity_java" || true) -ne 2 ]] ||
+   ! grep -Fq '<string name="deep_selector_label">使用 ONNX Runtime CPU 运行 TSCAN</string>' "$strings_xml" ||
+   ! grep -Fq '<string name="camera_smoke_boundary">Camera2 + GREEN/POS/CHROM + 可选 TSCAN ONNX Runtime CPU；不使用 QNN/Adreno。</string>' "$strings_xml" ||
+   grep -F 'deepCard.bind(' "$activity_java" | grep -Fq 'EfficientPhys' ||
+   grep -E '<string name="(deep_selector_label|camera_smoke_boundary)">' "$strings_xml" |
+     grep -Fq 'EfficientPhys'; then
+  echo "android packaging check: active deep-model UI must label the runtime as TSCAN" >&2
+  exit 1
+fi
+
 for required_symbol in \
   ACameraManager_getCameraIdList \
   AImageReader_new \
