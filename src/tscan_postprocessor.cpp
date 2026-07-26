@@ -29,8 +29,6 @@ TscanPostprocessResult postprocess_tscan_waveform(
       confidence_threshold > 1.0) {
     throw std::invalid_argument("confidence_threshold must be finite and in [0, 1]");
   }
-  (void)confidence_threshold;
-
   if (waveform.size() < 8U ||
       !std::all_of(waveform.begin(), waveform.end(),
                    [](float value) { return std::isfinite(value); })) {
@@ -81,9 +79,21 @@ TscanPostprocessResult postprocess_tscan_waveform(
       static_cast<std::size_t>(std::distance(band_power.begin(), peak));
   const double total_power =
       std::accumulate(band_power.begin(), band_power.end(), 0.0);
+  if (total_power == 0.0 || !std::isfinite(total_power)) {
+    return invalid_waveform();
+  }
+
+  const double confidence = *peak / total_power;
+  if (confidence < confidence_threshold) {
+    TscanPostprocessResult result;
+    result.confidence = confidence;
+    result.invalid_reason = "TSCAN_LOW_CONFIDENCE";
+    return result;
+  }
+
   TscanPostprocessResult result;
   result.bpm = band_frequency[peak_index] * 60.0;
-  result.confidence = *peak / std::max(total_power, 1e-9);
+  result.confidence = confidence;
   result.is_valid = true;
   return result;
 }

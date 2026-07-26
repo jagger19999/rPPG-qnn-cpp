@@ -160,16 +160,17 @@ void invalid_sessions_are_rejected() {
   EXPECT_EQ(state->backend_calls, 1);
 }
 
-void constant_structurally_valid_output_is_not_rejected() {
+void constant_output_returns_waveform_invalid_result() {
   auto state = std::make_shared<SessionState>();
   state->constant = true;
   auto runtime = rppg_qnn::make_tscan_runtime(
       std::make_unique<RecordingSession>(state));
   const auto result = runtime->infer(valid_input());
-  EXPECT_TRUE(result.is_valid);
+  EXPECT_TRUE(!result.is_valid);
+  EXPECT_EQ(result.invalid_reason, std::string{"TSCAN_WAVEFORM_INVALID"});
+  EXPECT_EQ(result.bpm, 0.0);
+  EXPECT_EQ(result.confidence, 0.0);
   EXPECT_EQ(result.waveform, std::vector<float>(180U, 4.0F));
-  EXPECT_TRUE(std::isfinite(result.bpm));
-  EXPECT_TRUE(std::isfinite(result.confidence));
 }
 
 }  // namespace
@@ -179,6 +180,6 @@ int main() {
   malformed_input_never_reaches_session();
   malformed_outputs_throw();
   invalid_sessions_are_rejected();
-  constant_structurally_valid_output_is_not_rejected();
+  constant_output_returns_waveform_invalid_result();
   return test_support::finish();
 }

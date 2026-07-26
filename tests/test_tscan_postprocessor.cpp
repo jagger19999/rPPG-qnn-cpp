@@ -116,17 +116,51 @@ void rejects_structurally_invalid_waveforms() {
   EXPECT_EQ(result.invalid_reason, std::string{"TSCAN_WAVEFORM_INVALID"});
 }
 
-void preserves_python_constant_and_threshold_semantics() {
+void rejects_zero_power_and_low_confidence_waveforms() {
   const auto constant =
       rppg_qnn::postprocess_tscan_waveform(std::vector<float>(kSamples, 7.0F));
-  EXPECT_TRUE(constant.is_valid);
-  expect_near(constant.bpm, 50.0, 1e-10);
+  EXPECT_TRUE(!constant.is_valid);
+  EXPECT_EQ(constant.invalid_reason,
+            std::string{"TSCAN_WAVEFORM_INVALID"});
+  EXPECT_EQ(constant.bpm, 0.0);
   EXPECT_EQ(constant.confidence, 0.0);
 
-  const auto high_threshold =
-      rppg_qnn::postprocess_tscan_waveform(waveform(3.0, 1.2), 1.0);
-  EXPECT_TRUE(high_threshold.is_valid);
-  expect_near(high_threshold.bpm, 70.0, 1e-10);
+  std::vector<float> mixed(kSamples, 0.0F);
+  for (std::size_t i = 0; i < mixed.size(); ++i) {
+    const double t = static_cast<double>(i) / kFps;
+    for (double frequency : {0.8, 1.0, 1.2, 1.4, 1.6}) {
+      mixed[i] += static_cast<float>(std::sin(2.0 * kPi * frequency * t));
+    }
+  }
+  const auto low_confidence =
+      rppg_qnn::postprocess_tscan_waveform(mixed, 0.9);
+  EXPECT_TRUE(!low_confidence.is_valid);
+  EXPECT_EQ(low_confidence.invalid_reason,
+            std::string{"TSCAN_LOW_CONFIDENCE"});
+  EXPECT_EQ(low_confidence.bpm, 0.0);
+  EXPECT_TRUE(low_confidence.confidence > 0.0);
+  EXPECT_TRUE(low_confidence.confidence < 0.9);
+}
+
+void accepts_exact_threshold_and_preserves_scale_invariance() {
+  const auto signal = waveform(0.0, 1.2, 1e-8);
+  const auto baseline = rppg_qnn::postprocess_tscan_waveform(signal, 0.0);
+  EXPECT_TRUE(baseline.is_valid);
+  const auto exact =
+      rppg_qnn::postprocess_tscan_waveform(signal, baseline.confidence);
+  EXPECT_TRUE(exact.is_valid);
+  EXPECT_EQ(exact.bpm, baseline.bpm);
+  EXPECT_EQ(exact.confidence, baseline.confidence);
+
+  auto scaled = signal;
+  for (float& value : scaled) {
+    value *= 1e-6F;
+  }
+  const auto scaled_result =
+      rppg_qnn::postprocess_tscan_waveform(scaled, 0.0);
+  EXPECT_TRUE(scaled_result.is_valid);
+  EXPECT_EQ(scaled_result.bpm, baseline.bpm);
+  expect_near(scaled_result.confidence, baseline.confidence, 1e-9);
 }
 
 void rejects_invalid_thresholds() {
@@ -150,7 +184,8 @@ int main() {
   matches_numpy_for_deterministic_mixed_waveforms();
   uses_inclusive_band_boundaries_and_ignores_out_of_band_power();
   rejects_structurally_invalid_waveforms();
-  preserves_python_constant_and_threshold_semantics();
+  rejects_zero_power_and_low_confidence_waveforms();
+  accepts_exact_threshold_and_preserves_scale_invariance();
   rejects_invalid_thresholds();
   std::cout << "TSCAN postprocessing confidence max_abs="
             << max_confidence_error << '\n';
