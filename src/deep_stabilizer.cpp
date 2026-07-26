@@ -3,7 +3,6 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
-#include <limits>
 #include <numeric>
 #include <utility>
 #include <vector>
@@ -80,23 +79,13 @@ DeepStabilityResult DeepStabilizer::stabilize(
                    [](float value) { return std::isfinite(value); })) {
     return rejected("rejected_nonfinite_waveform");
   }
-  const double mean =
-      std::accumulate(waveform.begin(), waveform.end(), 0.0) /
-      static_cast<double>(waveform.size());
-  double centered_energy = 0.0;
-  double total_energy = 0.0;
-  for (float value : waveform) {
-    const double sample = static_cast<double>(value);
-    const double centered = sample - mean;
-    centered_energy += centered * centered;
-    total_energy += sample * sample;
-  }
-  // Relative energy keeps this structural test invariant under amplitude
-  // scaling. The common spectral postprocessor remains responsible for
-  // deciding whether non-constant energy is sufficient for a valid BPM.
-  if (centered_energy <= std::numeric_limits<double>::epsilon() *
-                             total_energy *
-                             static_cast<double>(waveform.size())) {
+  const auto [minimum, maximum] =
+      std::minmax_element(waveform.begin(), waveform.end());
+  // Only an exactly constant float sequence is structurally constant. Signal
+  // sufficiency remains the common spectral postprocessor's responsibility;
+  // adding a DC offset or scaling a non-constant waveform must not change this
+  // gate.
+  if (*minimum == *maximum) {
     return rejected("rejected_constant_waveform");
   }
   if (!std::isfinite(confidence) || confidence < kMinimumConfidence) {

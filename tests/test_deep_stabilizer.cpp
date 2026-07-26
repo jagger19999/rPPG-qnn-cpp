@@ -2,6 +2,7 @@
 
 #include "test_support.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <limits>
 #include <string>
@@ -85,6 +86,30 @@ void waveform_validation_is_scale_invariant() {
   EXPECT_EQ(scaled.stability_valid, baseline.stability_valid);
   EXPECT_EQ(scaled.display_bpm, baseline.display_bpm);
   EXPECT_EQ(scaled.correction_reason, baseline.correction_reason);
+}
+
+void waveform_validation_is_offset_invariant() {
+  const auto baseline_waveform = waveform({{70.0, 1.0}});
+  rppg_qnn::DeepStabilizer baseline_stabilizer;
+  const auto baseline =
+      baseline_stabilizer.stabilize(baseline_waveform, 70.0, 0.8);
+
+  for (double offset : {1e5, 1e7}) {
+    auto offset_waveform = baseline_waveform;
+    for (float& value : offset_waveform) {
+      value += static_cast<float>(offset);
+    }
+    const auto [minimum, maximum] =
+        std::minmax_element(offset_waveform.begin(), offset_waveform.end());
+    EXPECT_TRUE(*minimum != *maximum);
+
+    rppg_qnn::DeepStabilizer offset_stabilizer;
+    const auto shifted =
+        offset_stabilizer.stabilize(offset_waveform, 70.0, 0.8);
+    EXPECT_EQ(shifted.stability_valid, baseline.stability_valid);
+    EXPECT_EQ(shifted.display_bpm, baseline.display_bpm);
+    EXPECT_EQ(shifted.correction_reason, baseline.correction_reason);
+  }
 }
 
 void corrects_half_and_double_only_with_spectral_support() {
@@ -203,6 +228,7 @@ int main() {
   rejects_nonfinite_and_constant_waveforms();
   rejects_nonfinite_raw_bpm();
   waveform_validation_is_scale_invariant();
+  waveform_validation_is_offset_invariant();
   corrects_half_and_double_only_with_spectral_support();
   rejects_unsupported_large_jump();
   allows_supported_large_jump_and_clears_history();
