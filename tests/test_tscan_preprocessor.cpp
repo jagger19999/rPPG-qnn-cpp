@@ -7,6 +7,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <iostream>
 #include <numeric>
 #include <string>
 #include <vector>
@@ -55,7 +56,9 @@ void expect_preprocess_error(const rppg_qnn::DeepInput& input,
 void expect_preprocess_success(const rppg_qnn::DeepInput& input) {
   try {
     const auto output = rppg_qnn::preprocess_tscan_rgb(input);
-    EXPECT_TRUE(std::isfinite(output.values.front()));
+    for (float value : output.values) {
+      EXPECT_TRUE(std::isfinite(value));
+    }
   } catch (const rppg_qnn::AppError&) {
     EXPECT_TRUE(false);
   }
@@ -275,6 +278,88 @@ void matches_python_reference_checkpoints() {
   }
 }
 
+void matches_the_full_analytic_python_tensor() {
+  auto input = input_with(0.0F);
+  for (std::size_t frame = 0; frame < kFrames; ++frame) {
+    const float t = static_cast<float>(frame);
+    const float pulse = 2.5F * std::sin(
+        static_cast<float>(2.0 * 3.14159265358979323846 * 1.2) * t / 30.0F);
+    for (std::size_t y = 0; y < kHeight; ++y) {
+      for (std::size_t x = 0; x < kWidth; ++x) {
+        const std::size_t pixel = y * kWidth + x;
+        for (std::size_t channel = 0; channel < kRgbChannels; ++channel) {
+          input.tensor[input_offset(frame, pixel, channel)] =
+              80.0F + 0.31F * static_cast<float>(x) +
+              0.17F * static_cast<float>(y) +
+              11.0F * static_cast<float>(channel) +
+              pulse * static_cast<float>(channel + 1U);
+        }
+      }
+    }
+  }
+
+  std::vector<float> raw_diff((kFrames - 1U) * kPixels * kRgbChannels);
+  double appearance_sum = 0.0;
+  double appearance_square_sum = 0.0;
+  double diff_sum = 0.0;
+  double diff_square_sum = 0.0;
+  std::size_t diff_index = 0;
+  for (std::size_t index = 0; index < input.tensor.size(); ++index) {
+    const double value = input.tensor[index];
+    appearance_sum += value;
+    appearance_square_sum += value * value;
+  }
+  for (std::size_t frame = 0; frame + 1U < kFrames; ++frame) {
+    for (std::size_t pixel = 0; pixel < kPixels; ++pixel) {
+      for (std::size_t channel = 0; channel < kRgbChannels; ++channel) {
+        const float before = input.tensor[input_offset(frame, pixel, channel)];
+        const float after = input.tensor[input_offset(frame + 1U, pixel, channel)];
+        const float value = (after - before) / (after + before + 1e-7F);
+        raw_diff[diff_index++] = value;
+        diff_sum += value;
+        diff_square_sum += static_cast<double>(value) * value;
+      }
+    }
+  }
+  const double appearance_count = static_cast<double>(input.tensor.size());
+  const double appearance_mean = appearance_sum / appearance_count;
+  const double appearance_scale = std::sqrt(
+      appearance_square_sum / appearance_count - appearance_mean * appearance_mean);
+  const double diff_count = static_cast<double>(raw_diff.size());
+  const double diff_mean = diff_sum / diff_count;
+  const double diff_scale =
+      std::sqrt(diff_square_sum / diff_count - diff_mean * diff_mean);
+
+  const auto actual = rppg_qnn::preprocess_tscan_rgb(input);
+  double max_abs = 0.0;
+  diff_index = 0;
+  for (std::size_t frame = 0; frame < kFrames; ++frame) {
+    for (std::size_t channel = 0; channel < 6U; ++channel) {
+      for (std::size_t pixel = 0; pixel < kPixels; ++pixel) {
+        float expected = 0.0F;
+        if (channel < kRgbChannels) {
+          if (frame + 1U < kFrames) {
+            const std::size_t index =
+                (frame * kPixels + pixel) * kRgbChannels + channel;
+            expected = static_cast<float>(raw_diff[index] / diff_scale);
+          }
+        } else {
+          const float source = input.tensor[
+              (frame * kPixels + pixel) * kRgbChannels +
+              (channel - kRgbChannels)];
+          expected = static_cast<float>((source - appearance_mean) /
+                                        appearance_scale);
+        }
+        const double error = std::abs(static_cast<double>(
+            actual.values[output_offset(frame, channel, pixel)]) - expected);
+        max_abs = std::max(max_abs, error);
+      }
+    }
+  }
+  std::cout << "TSCAN full preprocessing max_abs=" << max_abs << '\n';
+  EXPECT_TRUE(max_abs < 1e-5);
+}
+
 }  // namespace
 
 int main() {
@@ -283,5 +368,6 @@ int main() {
   matches_a_manually_calculable_layout_and_rgb_order();
   distinguishes_zero_diff_from_the_unreachable_appearance_only_case();
   matches_python_reference_checkpoints();
+  matches_the_full_analytic_python_tensor();
   return test_support::finish();
 }
