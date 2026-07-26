@@ -4,11 +4,14 @@
 #include "rppg_qnn/tscan_preprocessor.hpp"
 #include "test_support.hpp"
 
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <limits>
 #include <memory>
+#include <stdexcept>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -40,6 +43,9 @@ struct SessionState {
   std::vector<std::int64_t> output_shape{180, 1};
   bool nonfinite{false};
   bool constant{false};
+  std::chrono::milliseconds delay{0};
+  double runtime_ms{0.0};
+  bool throws{false};
 };
 
 class RecordingSession final : public rppg_qnn::ITscanSession {
@@ -57,6 +63,10 @@ class RecordingSession final : public rppg_qnn::ITscanSession {
       const std::vector<float>& values,
       const std::vector<std::int64_t>& shape) override {
     ++state_->calls;
+    std::this_thread::sleep_for(state_->delay);
+    if (state_->throws) {
+      throw std::runtime_error("session failed");
+    }
     state_->input = values;
     state_->shape = shape;
     std::vector<float> waveform(180U);
@@ -70,7 +80,7 @@ class RecordingSession final : public rppg_qnn::ITscanSession {
     if (state_->nonfinite) {
       waveform[12] = std::numeric_limits<float>::infinity();
     }
-    return {std::move(waveform), state_->output_shape, 7.5};
+    return {std::move(waveform), state_->output_shape, state_->runtime_ms};
   }
 
  private:
@@ -95,6 +105,8 @@ void composes_preprocess_session_and_postprocess() {
   const auto input = valid_input();
   const auto expected = rppg_qnn::preprocess_tscan_rgb(input);
   auto state = std::make_shared<SessionState>();
+  state->delay = std::chrono::milliseconds(50);
+  state->runtime_ms = 1.0;
   auto runtime = rppg_qnn::make_tscan_runtime(
       std::make_unique<RecordingSession>(state));
 
@@ -123,12 +135,31 @@ void composes_preprocess_session_and_postprocess() {
   EXPECT_EQ(result.window_materialization_ms, 1.25);
   EXPECT_TRUE(std::isfinite(result.preprocess_ms));
   EXPECT_TRUE(result.preprocess_ms >= 0.0);
-  EXPECT_EQ(result.runtime_ms, 7.5);
+  EXPECT_EQ(result.runtime_ms, 1.0);
   EXPECT_TRUE(std::isfinite(result.postprocess_ms));
   EXPECT_TRUE(result.postprocess_ms >= 0.0);
-  EXPECT_TRUE(std::abs(result.inference_ms -
-                       (result.preprocess_ms + result.runtime_ms +
-                        result.postprocess_ms)) < 1e-9);
+  const double stage_sum = result.preprocess_ms + result.runtime_ms +
+                           result.postprocess_ms;
+  EXPECT_TRUE(result.inference_ms >= 40.0);
+  EXPECT_TRUE(result.inference_ms > stage_sum);
+}
+
+void session_exception_preserves_completed_timing() {
+  auto state = std::make_shared<SessionState>();
+  state->delay = std::chrono::milliseconds(50);
+  state->runtime_ms = 99.0;
+  state->throws = true;
+  auto runtime = rppg_qnn::make_tscan_runtime(
+      std::make_unique<RecordingSession>(state));
+
+  const auto result = runtime->infer(valid_input());
+
+  EXPECT_TRUE(!result.is_valid);
+  EXPECT_EQ(result.invalid_reason, std::string("deep_runtime_exception"));
+  EXPECT_TRUE(result.preprocess_ms >= 0.0);
+  EXPECT_EQ(result.runtime_ms, 0.0);
+  EXPECT_EQ(result.postprocess_ms, 0.0);
+  EXPECT_TRUE(result.inference_ms >= 40.0);
 }
 
 void malformed_input_never_reaches_session() {
@@ -187,6 +218,7 @@ void constant_output_returns_waveform_invalid_result() {
 
 int main() {
   composes_preprocess_session_and_postprocess();
+  session_exception_preserves_completed_timing();
   malformed_input_never_reaches_session();
   malformed_outputs_throw();
   invalid_sessions_are_rejected();

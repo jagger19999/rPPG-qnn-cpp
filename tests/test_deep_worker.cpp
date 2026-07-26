@@ -97,6 +97,7 @@ class ThrowingRuntime final : public rppg_qnn::IDeepRuntime {
  public:
   std::string backend_name() const override { return "throwing"; }
   rppg_qnn::HeartRateResult infer(const rppg_qnn::DeepInput&) override {
+    std::this_thread::sleep_for(50ms);
     throw std::runtime_error("inference failed");
   }
 };
@@ -334,9 +335,10 @@ void worker_converts_runtime_exceptions_into_safe_invalid_results() {
     EXPECT_EQ(result->preprocess_ms, 0.0);
     EXPECT_EQ(result->runtime_ms, 0.0);
     EXPECT_EQ(result->postprocess_ms, 0.0);
-    EXPECT_EQ(result->inference_ms, result->preprocess_ms +
-                                        result->runtime_ms +
-                                        result->postprocess_ms);
+    EXPECT_TRUE(result->inference_ms >= 40.0);
+    EXPECT_TRUE(result->inference_ms > result->preprocess_ms +
+                                           result->runtime_ms +
+                                           result->postprocess_ms);
   }
 }
 

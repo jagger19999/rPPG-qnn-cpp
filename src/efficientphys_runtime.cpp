@@ -65,9 +65,8 @@ double elapsed_ms(Clock::time_point started) {
       .count();
 }
 
-void set_total(HeartRateResult* result) {
-  result->inference_ms =
-      result->preprocess_ms + result->runtime_ms + result->postprocess_ms;
+void set_inference_elapsed(HeartRateResult* result, Clock::time_point started) {
+  result->inference_ms = elapsed_ms(started);
 }
 
 bool input_contract_is_valid(const DeepInput& input) {
@@ -131,12 +130,13 @@ class EfficientPhysRuntime final : public IDeepRuntime {
   [[nodiscard]] std::string backend_name() const override { return backend_; }
 
   HeartRateResult infer(const DeepInput& input) override {
+    const auto inference_started = Clock::now();
     HeartRateResult result = base_result(input, backend_);
     const auto preprocess_started = Clock::now();
     if (!input_contract_is_valid(input)) {
       result.invalid_reason = "efficientphys_input_invalid";
       result.preprocess_ms = elapsed_ms(preprocess_started);
-      set_total(&result);
+      set_inference_elapsed(&result, inference_started);
       return result;
     }
 
@@ -156,7 +156,7 @@ class EfficientPhysRuntime final : public IDeepRuntime {
     if (!std::isfinite(standard_deviation)) {
       result.invalid_reason = "efficientphys_input_invalid";
       result.preprocess_ms = elapsed_ms(preprocess_started);
-      set_total(&result);
+      set_inference_elapsed(&result, inference_started);
       return result;
     }
 
@@ -184,8 +184,14 @@ class EfficientPhysRuntime final : public IDeepRuntime {
                     static_cast<std::ptrdiff_t>(kSourceFrames * kFrameValues));
     result.preprocess_ms = elapsed_ms(preprocess_started);
 
-    EfficientPhysModelOutput output =
-        session_->run(model_input, {181, 3, 72, 72});
+    EfficientPhysModelOutput output;
+    try {
+      output = session_->run(model_input, {181, 3, 72, 72});
+    } catch (...) {
+      result.invalid_reason = "deep_runtime_exception";
+      set_inference_elapsed(&result, inference_started);
+      return result;
+    }
     result.runtime_ms =
         std::isfinite(output.runtime_ms) && output.runtime_ms >= 0.0
             ? output.runtime_ms
@@ -197,7 +203,7 @@ class EfficientPhysRuntime final : public IDeepRuntime {
                      [](float value) { return std::isfinite(value); })) {
       result.invalid_reason = "efficientphys_output_invalid";
       result.postprocess_ms = elapsed_ms(postprocess_started);
-      set_total(&result);
+      set_inference_elapsed(&result, inference_started);
       return result;
     }
 
@@ -214,7 +220,7 @@ class EfficientPhysRuntime final : public IDeepRuntime {
     result.invalid_reason = post.invalid_reason;
     result.waveform = std::move(output.waveform);
     result.postprocess_ms = elapsed_ms(postprocess_started);
-    set_total(&result);
+    set_inference_elapsed(&result, inference_started);
     return result;
   }
 

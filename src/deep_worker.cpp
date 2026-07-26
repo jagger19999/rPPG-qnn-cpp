@@ -76,15 +76,24 @@ void DeepWorker::run() {
         return;
       }
     }
+    const auto inference_started = std::chrono::steady_clock::now();
     try {
       publish(runtime_->infer(*input));
     } catch (const std::exception& error) {
       HeartRateResult result =
           worker_failure(*input, runtime_->backend_name(), error.what());
+      result.inference_ms = std::chrono::duration<double, std::milli>(
+                                std::chrono::steady_clock::now() -
+                                inference_started)
+                                .count();
       publish(std::move(result));
     } catch (...) {
       HeartRateResult result =
           worker_failure(*input, runtime_->backend_name(), "unknown exception");
+      result.inference_ms = std::chrono::duration<double, std::milli>(
+                                std::chrono::steady_clock::now() -
+                                inference_started)
+                                .count();
       publish(std::move(result));
     }
   }

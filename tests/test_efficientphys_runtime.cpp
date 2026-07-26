@@ -3,12 +3,14 @@
 #include "test_support.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <limits>
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -41,6 +43,9 @@ struct SessionState {
   std::size_t output_count{180U};
   bool constant_output{false};
   bool nonfinite_output{false};
+  std::chrono::milliseconds delay{0};
+  double runtime_ms{0.0};
+  bool throws{false};
 };
 
 class RecordingSession final : public rppg_qnn::IEfficientPhysSession {
@@ -55,6 +60,10 @@ class RecordingSession final : public rppg_qnn::IEfficientPhysSession {
       const std::vector<float>& input,
       const std::vector<std::int64_t>& shape) override {
     ++state_->calls;
+    std::this_thread::sleep_for(state_->delay);
+    if (state_->throws) {
+      throw std::runtime_error("session failed");
+    }
     state_->input = input;
     state_->input_shape = shape;
     std::vector<float> output(state_->output_count);
@@ -68,7 +77,7 @@ class RecordingSession final : public rppg_qnn::IEfficientPhysSession {
     if (state_->nonfinite_output) {
       output[7] = std::numeric_limits<float>::quiet_NaN();
     }
-    return {std::move(output), state_->output_shape, 8.5};
+    return {std::move(output), state_->output_shape, state_->runtime_ms};
   }
 
  private:
@@ -78,6 +87,8 @@ class RecordingSession final : public rppg_qnn::IEfficientPhysSession {
 
 void exact_preprocessing_and_result_contract() {
   auto state = std::make_shared<SessionState>();
+  state->delay = std::chrono::milliseconds(50);
+  state->runtime_ms = 1.0;
   auto runtime = rppg_qnn::make_onnxruntime_efficientphys_runtime(
       std::make_unique<RecordingSession>(state));
   EXPECT_EQ(runtime->backend_name(), std::string("onnxruntime_cpu"));
@@ -110,12 +121,31 @@ void exact_preprocessing_and_result_contract() {
   EXPECT_EQ(result.window_materialization_ms, 2.25);
   EXPECT_TRUE(std::isfinite(result.preprocess_ms));
   EXPECT_TRUE(result.preprocess_ms >= 0.0);
-  EXPECT_EQ(result.runtime_ms, 8.5);
+  EXPECT_EQ(result.runtime_ms, 1.0);
   EXPECT_TRUE(std::isfinite(result.postprocess_ms));
   EXPECT_TRUE(result.postprocess_ms >= 0.0);
-  EXPECT_TRUE(std::abs(result.inference_ms -
-                       (result.preprocess_ms + result.runtime_ms +
-                        result.postprocess_ms)) < 1e-9);
+  const double stage_sum = result.preprocess_ms + result.runtime_ms +
+                           result.postprocess_ms;
+  EXPECT_TRUE(result.inference_ms >= 40.0);
+  EXPECT_TRUE(result.inference_ms > stage_sum);
+}
+
+void session_exception_preserves_completed_timing() {
+  auto state = std::make_shared<SessionState>();
+  state->delay = std::chrono::milliseconds(50);
+  state->runtime_ms = 99.0;
+  state->throws = true;
+  auto runtime = rppg_qnn::make_onnxruntime_efficientphys_runtime(
+      std::make_unique<RecordingSession>(state));
+
+  const auto result = runtime->infer(valid_input());
+
+  EXPECT_TRUE(!result.is_valid);
+  EXPECT_EQ(result.invalid_reason, std::string("deep_runtime_exception"));
+  EXPECT_TRUE(result.preprocess_ms >= 0.0);
+  EXPECT_EQ(result.runtime_ms, 0.0);
+  EXPECT_EQ(result.postprocess_ms, 0.0);
+  EXPECT_TRUE(result.inference_ms >= 40.0);
 }
 
 void malformed_input_never_reaches_session() {
@@ -136,6 +166,7 @@ void malformed_input_never_reaches_session() {
     EXPECT_EQ(result.window_materialization_ms, 2.25);
     EXPECT_EQ(result.runtime_ms, 0.0);
     EXPECT_EQ(result.postprocess_ms, 0.0);
+    EXPECT_TRUE(result.inference_ms + 1e-6 >= result.preprocess_ms);
   };
 
   auto wrong_frames = valid_input();
@@ -191,6 +222,9 @@ void invalid_model_output_is_concrete_and_finite() {
   EXPECT_EQ(result.invalid_reason,
             std::string("efficientphys_output_invalid"));
   EXPECT_TRUE(std::isfinite(result.inference_ms));
+  EXPECT_TRUE(result.inference_ms + 1e-6 >=
+              result.preprocess_ms + result.runtime_ms +
+                  result.postprocess_ms);
 
   state = std::make_shared<SessionState>();
   state->output_count = 179U;
@@ -237,6 +271,7 @@ void backend_mismatch_is_rejected_without_fallback() {
 
 int main() {
   exact_preprocessing_and_result_contract();
+  session_exception_preserves_completed_timing();
   malformed_input_never_reaches_session();
   zero_variance_input_matches_reference();
   invalid_model_output_is_concrete_and_finite();
