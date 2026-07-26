@@ -21,8 +21,8 @@ namespace {
 
 class TscanRuntime final : public IDeepRuntime {
  public:
-  explicit TscanRuntime(std::unique_ptr<ITscanSession> session)
-      : session_(std::move(session)), backend_(session_->backend_name()) {}
+  TscanRuntime(std::unique_ptr<ITscanSession> session, std::string backend)
+      : session_(std::move(session)), backend_(std::move(backend)) {}
 
   [[nodiscard]] std::string backend_name() const override { return backend_; }
 
@@ -73,10 +73,11 @@ std::unique_ptr<IDeepRuntime> make_tscan_runtime(
   if (!session) {
     fail("TSCAN_SESSION_NULL session must not be null");
   }
-  if (session->backend_name().empty()) {
+  std::string backend = session->backend_name();
+  if (backend.empty()) {
     fail("TSCAN_SESSION_BACKEND backend must not be empty");
   }
-  return std::make_unique<TscanRuntime>(std::move(session));
+  return std::make_unique<TscanRuntime>(std::move(session), std::move(backend));
 }
 
 }  // namespace rppg_qnn

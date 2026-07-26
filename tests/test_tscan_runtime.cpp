@@ -33,6 +33,7 @@ rppg_qnn::DeepInput valid_input() {
 
 struct SessionState {
   int calls{0};
+  mutable int backend_calls{0};
   std::vector<float> input;
   std::vector<std::int64_t> shape;
   std::vector<std::int64_t> output_shape{180, 1};
@@ -46,7 +47,10 @@ class RecordingSession final : public rppg_qnn::ITscanSession {
                             std::string backend = "ONNX_RUNTIME_CPU")
       : state_(std::move(state)), backend_(std::move(backend)) {}
 
-  std::string backend_name() const override { return backend_; }
+  std::string backend_name() const override {
+    ++state_->backend_calls;
+    return backend_;
+  }
 
   rppg_qnn::TscanModelOutput run(
       const std::vector<float>& values,
@@ -74,12 +78,14 @@ class RecordingSession final : public rppg_qnn::ITscanSession {
 };
 
 template <typename Function>
-void expect_app_error(Function function) {
+void expect_inference_error(Function function, const std::string& token) {
   bool threw = false;
   try {
     function();
-  } catch (const rppg_qnn::AppError&) {
+  } catch (const rppg_qnn::AppError& error) {
     threw = true;
+    EXPECT_EQ(error.code(), rppg_qnn::ErrorCode::InferenceFailed);
+    EXPECT_TRUE(std::string(error.what()).find(token) != std::string::npos);
   }
   EXPECT_TRUE(threw);
 }
@@ -94,6 +100,7 @@ void composes_preprocess_session_and_postprocess() {
   const auto result = runtime->infer(input);
 
   EXPECT_EQ(state->calls, 1);
+  EXPECT_EQ(state->backend_calls, 1);
   EXPECT_EQ(state->shape, (std::vector<std::int64_t>{180, 6, 72, 72}));
   EXPECT_EQ(state->input.size(), expected.values.size());
   for (std::size_t index : std::vector<std::size_t>{
@@ -120,7 +127,8 @@ void malformed_input_never_reaches_session() {
       std::make_unique<RecordingSession>(state));
   auto input = valid_input();
   input.shape = {180, 72, 72, 1};
-  expect_app_error([&] { (void)runtime->infer(input); });
+  expect_inference_error([&] { (void)runtime->infer(input); },
+                         "TSCAN_PREPROCESS_SHAPE");
   EXPECT_EQ(state->calls, 0);
 }
 
@@ -129,22 +137,27 @@ void malformed_outputs_throw() {
   state->output_shape = {180};
   auto runtime = rppg_qnn::make_tscan_runtime(
       std::make_unique<RecordingSession>(state));
-  expect_app_error([&] { (void)runtime->infer(valid_input()); });
+  expect_inference_error([&] { (void)runtime->infer(valid_input()); },
+                         "TSCAN_OUTPUT_SHAPE");
 
   state = std::make_shared<SessionState>();
   state->nonfinite = true;
   runtime = rppg_qnn::make_tscan_runtime(
       std::make_unique<RecordingSession>(state));
-  expect_app_error([&] { (void)runtime->infer(valid_input()); });
+  expect_inference_error([&] { (void)runtime->infer(valid_input()); },
+                         "TSCAN_OUTPUT_NONFINITE");
 }
 
 void invalid_sessions_are_rejected() {
-  expect_app_error([] { (void)rppg_qnn::make_tscan_runtime(nullptr); });
+  expect_inference_error(
+      [] { (void)rppg_qnn::make_tscan_runtime(nullptr); },
+      "TSCAN_SESSION_NULL");
   auto state = std::make_shared<SessionState>();
-  expect_app_error([&] {
+  expect_inference_error([&] {
     (void)rppg_qnn::make_tscan_runtime(
         std::make_unique<RecordingSession>(state, ""));
-  });
+  }, "TSCAN_SESSION_BACKEND");
+  EXPECT_EQ(state->backend_calls, 1);
 }
 
 void constant_structurally_valid_output_is_not_rejected() {

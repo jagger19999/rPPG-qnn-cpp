@@ -15,6 +15,7 @@ gradlew="$root/android/gradlew"
 gradle_wrapper_jar="$root/android/gradle/wrapper/gradle-wrapper.jar"
 gradle_wrapper_properties="$root/android/gradle/wrapper/gradle-wrapper.properties"
 haar_asset="$root/android/app/src/main/assets/haarcascade_frontalface_default.xml"
+onnx_runtime="$root/android/app/src/main/cpp/android_onnx_cpu_runtime.cpp"
 
 for required_file in \
   "$manifest" \
@@ -22,6 +23,7 @@ for required_file in \
   "$gitignore" \
   "$gradlew" \
   "$haar_asset" \
+  "$onnx_runtime" \
   "$root/android/gradlew.bat" \
   "$gradle_wrapper_jar" \
   "$gradle_wrapper_properties"; do
@@ -30,6 +32,13 @@ for required_file in \
     exit 1
   fi
 done
+
+if ! grep -Fq 'catch (const Ort::Exception& error)' "$onnx_runtime" ||
+   ! grep -Fq 'ErrorCode::ModelLoadFailed' "$onnx_runtime" ||
+   ! grep -Fq 'ONNX Runtime CPU model load failed:' "$onnx_runtime"; then
+  echo "android packaging check: ONNX model initialization must translate Ort errors to ModelLoadFailed" >&2
+  exit 1
+fi
 
 if ! grep -Fq '<opencv_storage>' "$haar_asset" ||
    ! grep -Fq 'type_id="opencv-cascade-classifier"' "$haar_asset" ||
