@@ -1,5 +1,6 @@
 #include "rppg_qnn/efficientphys_runtime.hpp"
 
+#include "rppg_qnn/deep_stabilizer.hpp"
 #include "rppg_qnn/tscan_postprocessor.hpp"
 
 #include <algorithm>
@@ -215,9 +216,16 @@ class EfficientPhysRuntime final : public IDeepRuntime {
     // established TSCAN numerical contract.
     result.bpm =
         post.is_valid ? refined_bpm(output.waveform, post.bpm) : post.bpm;
+    result.raw_bpm = result.bpm;
     result.confidence = post.confidence;
     result.is_valid = post.is_valid;
     result.invalid_reason = post.invalid_reason;
+    const DeepStabilityResult stability =
+        stabilizer_.stabilize(output.waveform, result.raw_bpm,
+                              result.confidence);
+    result.display_bpm = stability.display_bpm;
+    result.stability_valid = stability.stability_valid;
+    result.correction_reason = stability.correction_reason;
     result.waveform = std::move(output.waveform);
     result.postprocess_ms = elapsed_ms(postprocess_started);
     set_inference_elapsed(&result, inference_started);
@@ -227,6 +235,7 @@ class EfficientPhysRuntime final : public IDeepRuntime {
  private:
   std::unique_ptr<IEfficientPhysSession> session_;
   std::string backend_;
+  DeepStabilizer stabilizer_;
 };
 
 }  // namespace

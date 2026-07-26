@@ -1,6 +1,7 @@
 #include "rppg_qnn/tscan_runtime.hpp"
 
 #include "rppg_qnn/error.hpp"
+#include "rppg_qnn/deep_stabilizer.hpp"
 #include "rppg_qnn/tscan_postprocessor.hpp"
 #include "rppg_qnn/tscan_preprocessor.hpp"
 
@@ -81,9 +82,16 @@ class TscanRuntime final : public IDeepRuntime {
     const TscanPostprocessResult post =
         postprocess_tscan_waveform(output.waveform);
     result.bpm = post.bpm;
+    result.raw_bpm = post.bpm;
     result.confidence = post.confidence;
     result.is_valid = post.is_valid;
     result.invalid_reason = post.invalid_reason;
+    const DeepStabilityResult stability =
+        stabilizer_.stabilize(output.waveform, result.raw_bpm,
+                              result.confidence);
+    result.display_bpm = stability.display_bpm;
+    result.stability_valid = stability.stability_valid;
+    result.correction_reason = stability.correction_reason;
     result.waveform = std::move(output.waveform);
     result.postprocess_ms = elapsed_ms(postprocess_started);
     result.inference_ms = elapsed_ms(inference_started);
@@ -93,6 +101,7 @@ class TscanRuntime final : public IDeepRuntime {
  private:
   std::unique_ptr<ITscanSession> session_;
   std::string backend_;
+  DeepStabilizer stabilizer_;
 };
 
 }  // namespace

@@ -511,6 +511,8 @@ struct AndroidCameraSession::Impl {
                 result.method == "EFFICIENTPHYS" || result.method == "DEEP") {
               snapshot.deep_result_available = true;
               snapshot.deep_bpm = result.bpm;
+              snapshot.deep_raw_bpm = result.raw_bpm;
+              snapshot.deep_display_bpm = result.display_bpm;
               snapshot.deep_confidence = result.confidence;
               snapshot.deep_window_materialization_ms =
                   result.window_materialization_ms;
@@ -519,6 +521,8 @@ struct AndroidCameraSession::Impl {
               snapshot.deep_postprocess_ms = result.postprocess_ms;
               snapshot.deep_inference_ms = result.inference_ms;
               snapshot.deep_result_valid = result.is_valid;
+              snapshot.deep_stability_valid = result.stability_valid;
+              snapshot.deep_correction_reason = result.correction_reason;
               snapshot.deep_invalid_reason = result.invalid_reason;
               if (waveform.available) {
                 waveform.revision = ++deep_waveform_revision_;
@@ -711,12 +715,16 @@ struct AndroidCameraSession::Impl {
       snapshot.deep_result_available = false;
       snapshot.deep_bpm = 0.0;
       snapshot.deep_confidence = 0.0;
+      snapshot.deep_raw_bpm = 0.0;
+      snapshot.deep_display_bpm = 0.0;
       snapshot.deep_window_materialization_ms = 0.0;
       snapshot.deep_preprocess_ms = 0.0;
       snapshot.deep_runtime_ms = 0.0;
       snapshot.deep_postprocess_ms = 0.0;
       snapshot.deep_inference_ms = 0.0;
       snapshot.deep_result_valid = false;
+      snapshot.deep_stability_valid = false;
+      snapshot.deep_correction_reason.clear();
       snapshot.deep_invalid_reason.clear();
       traditional_waveform_ = {};
       deep_waveform_ = {};

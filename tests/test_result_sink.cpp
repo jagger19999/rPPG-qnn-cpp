@@ -369,8 +369,13 @@ rppg_qnn::HeartRateResult make_heart_rate(bool valid) {
   result.window_start_sec = 1.25;
   result.window_end_sec = 11.25;
   result.bpm = 72.5;
+  result.raw_bpm = 72.5;
+  result.display_bpm = 71.0;
   result.confidence = 0.82;
   result.is_valid = valid;
+  result.stability_valid = valid;
+  result.correction_reason =
+      valid ? "accepted_raw" : "rejected_unsupported_jump";
   result.invalid_reason = valid ? "" : "bad,\"quoted\"\nnext";
   result.source_fps = 30.0;
   result.source_frame_count = 300;
@@ -429,6 +434,13 @@ void test_persisted_events_csv_and_summary() {
                 std::string::npos);
     EXPECT_TRUE(events[1].find("\"postprocess_ms\":0.25") !=
                 std::string::npos);
+    EXPECT_TRUE(events[1].find("\"raw_bpm\":72.5") != std::string::npos);
+    EXPECT_TRUE(events[1].find("\"display_bpm\":71") != std::string::npos);
+    EXPECT_TRUE(events[1].find("\"stability_valid\":false") !=
+                std::string::npos);
+    EXPECT_TRUE(events[1].find(
+                    "\"correction_reason\":\"rejected_unsupported_jump\"") !=
+                std::string::npos);
     EXPECT_TRUE(events[2].find("\"bpm\":null") != std::string::npos);
     EXPECT_TRUE(events[2].find("\"confidence\":null") != std::string::npos);
   }
@@ -437,17 +449,18 @@ void test_persisted_events_csv_and_summary() {
       csv_records(read_file(directory.path() / "heart_rate.csv"));
   const std::string csv_contents = read_file(directory.path() / "heart_rate.csv");
   const std::string expected_header =
-      "schema_version,method,window_start_sec,window_end_sec,bpm,confidence,is_valid,"
-      "invalid_reason,source_fps,source_frame_count,max_frame_gap_sec,"
+      "schema_version,method,window_start_sec,window_end_sec,bpm,raw_bpm,display_bpm,"
+      "confidence,is_valid,stability_valid,correction_reason,invalid_reason,"
+      "source_fps,source_frame_count,max_frame_gap_sec,"
       "window_materialization_ms,preprocess_ms,runtime_ms,postprocess_ms,inference_ms,"
       "backend,model_sha256";
   EXPECT_EQ(records.size(), static_cast<std::size_t>(3));
   EXPECT_TRUE(csv_contents.find("\r\n") != std::string::npos);
   EXPECT_TRUE(!has_non_rfc4180_record_ending(csv_contents));
   if (records.size() == 3) {
-    EXPECT_EQ(records[0].size(), static_cast<std::size_t>(18));
-    EXPECT_EQ(records[1].size(), static_cast<std::size_t>(18));
-    EXPECT_EQ(records[2].size(), static_cast<std::size_t>(18));
+    EXPECT_EQ(records[0].size(), static_cast<std::size_t>(22));
+    EXPECT_EQ(records[1].size(), static_cast<std::size_t>(22));
+    EXPECT_EQ(records[2].size(), static_cast<std::size_t>(22));
     std::string header;
     for (std::size_t index = 0; index < records[0].size(); ++index) {
       if (index != 0) {
@@ -457,10 +470,10 @@ void test_persisted_events_csv_and_summary() {
     }
     EXPECT_EQ(header, expected_header);
     EXPECT_EQ(records[1][1], std::string("green,method"));
-    EXPECT_EQ(records[1][7], std::string("bad,\"quoted\"\nnext"));
+    EXPECT_EQ(records[1][11], std::string("bad,\"quoted\"\nnext"));
     EXPECT_EQ(records[2][4], std::string(""));
-    EXPECT_EQ(records[2][5], std::string(""));
-    EXPECT_EQ(records[2][8], std::string(""));
+    EXPECT_EQ(records[2][7], std::string(""));
+    EXPECT_EQ(records[2][12], std::string(""));
   }
 
   const std::string summary = read_file(directory.path() / "session_summary.json");
@@ -570,7 +583,7 @@ void test_machine_output_ignores_global_comma_locale() {
   EXPECT_TRUE(events.find("\"bpm\":72.5") != std::string::npos);
   EXPECT_TRUE(events.find("72,5") == std::string::npos);
   EXPECT_TRUE(csv.find("72.5") != std::string::npos);
-  EXPECT_EQ(csv_records(csv)[1].size(), static_cast<std::size_t>(18));
+  EXPECT_EQ(csv_records(csv)[1].size(), static_cast<std::size_t>(22));
   EXPECT_TRUE(terminal.str().find("capture_fps=72.5") != std::string::npos);
 }
 

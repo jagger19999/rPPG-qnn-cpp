@@ -52,8 +52,12 @@ struct HeartRateResult {
   double window_start_sec{0.0};
   double window_end_sec{0.0};
   double bpm{0.0};
+  double raw_bpm{0.0};
+  double display_bpm{0.0};
   double confidence{0.0};
   bool is_valid{false};
+  bool stability_valid{false};
+  std::string correction_reason;
   std::string invalid_reason;
   double source_fps{0.0};
   std::size_t source_frame_count{0};

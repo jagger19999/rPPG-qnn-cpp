@@ -130,6 +130,10 @@ void composes_preprocess_session_and_postprocess() {
   EXPECT_EQ(result.waveform.size(), 180U);
   EXPECT_TRUE(result.is_valid);
   EXPECT_TRUE(std::abs(result.bpm - 60.0) < 0.01);
+  EXPECT_EQ(result.raw_bpm, result.bpm);
+  EXPECT_EQ(result.display_bpm, result.raw_bpm);
+  EXPECT_TRUE(result.stability_valid);
+  EXPECT_EQ(result.correction_reason, std::string("accepted_raw"));
   EXPECT_TRUE(std::isfinite(result.confidence));
   EXPECT_TRUE(std::isfinite(result.inference_ms));
   EXPECT_EQ(result.window_materialization_ms, 1.25);
@@ -210,6 +214,11 @@ void constant_output_returns_waveform_invalid_result() {
   EXPECT_TRUE(!result.is_valid);
   EXPECT_EQ(result.invalid_reason, std::string{"TSCAN_WAVEFORM_INVALID"});
   EXPECT_EQ(result.bpm, 0.0);
+  EXPECT_EQ(result.raw_bpm, 0.0);
+  EXPECT_EQ(result.display_bpm, 0.0);
+  EXPECT_TRUE(!result.stability_valid);
+  EXPECT_EQ(result.correction_reason,
+            std::string("rejected_constant_waveform"));
   EXPECT_EQ(result.confidence, 0.0);
   EXPECT_EQ(result.waveform, std::vector<float>(180U, 4.0F));
 }

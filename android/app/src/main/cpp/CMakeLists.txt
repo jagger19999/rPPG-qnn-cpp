@@ -42,6 +42,7 @@ add_library(
     "${RPPG_REPOSITORY_ROOT}/src/contracts.cpp"
     "${RPPG_REPOSITORY_ROOT}/src/deep_model.cpp"
     "${RPPG_REPOSITORY_ROOT}/src/deep_runtime.cpp"
+    "${RPPG_REPOSITORY_ROOT}/src/deep_stabilizer.cpp"
     "${RPPG_REPOSITORY_ROOT}/src/deep_window_builder.cpp"
     "${RPPG_REPOSITORY_ROOT}/src/deep_worker.cpp"
     "${RPPG_REPOSITORY_ROOT}/src/efficientphys_runtime.cpp"

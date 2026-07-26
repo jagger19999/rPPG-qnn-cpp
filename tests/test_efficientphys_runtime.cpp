@@ -112,6 +112,10 @@ void exact_preprocessing_and_result_contract() {
   EXPECT_EQ(result.backend, std::string("onnxruntime_cpu"));
   EXPECT_TRUE(result.is_valid);
   EXPECT_TRUE(std::abs(result.bpm - 72.0) <= 0.01);
+  EXPECT_EQ(result.raw_bpm, result.bpm);
+  EXPECT_EQ(result.display_bpm, result.raw_bpm);
+  EXPECT_TRUE(result.stability_valid);
+  EXPECT_EQ(result.correction_reason, std::string("accepted_raw"));
   EXPECT_EQ(result.waveform.size(), 180U);
   EXPECT_EQ(result.window_start_sec, 10.0);
   EXPECT_EQ(result.window_end_sec, 16.0);
@@ -251,6 +255,11 @@ void invalid_model_output_is_concrete_and_finite() {
   result = runtime->infer(valid_input());
   EXPECT_TRUE(!result.is_valid);
   EXPECT_EQ(result.bpm, 0.0);
+  EXPECT_EQ(result.raw_bpm, 0.0);
+  EXPECT_EQ(result.display_bpm, 0.0);
+  EXPECT_TRUE(!result.stability_valid);
+  EXPECT_EQ(result.correction_reason,
+            std::string("rejected_constant_waveform"));
   EXPECT_EQ(result.invalid_reason, std::string("TSCAN_WAVEFORM_INVALID"));
   EXPECT_TRUE(std::isfinite(result.confidence));
 }

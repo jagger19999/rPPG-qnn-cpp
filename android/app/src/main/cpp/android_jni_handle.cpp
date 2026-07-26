@@ -123,6 +123,8 @@ std::string status_json(const CameraSessionStatus& status) {
          << "\",\"deep_result_available\":"
          << (status.deep_result_available ? "true" : "false")
          << ",\"deep_bpm\":" << status.deep_bpm
+         << ",\"deep_raw_bpm\":" << status.deep_raw_bpm
+         << ",\"deep_display_bpm\":" << status.deep_display_bpm
          << ",\"deep_confidence\":" << status.deep_confidence
          << ",\"deep_window_materialization_ms\":"
          << status.deep_window_materialization_ms
@@ -132,6 +134,10 @@ std::string status_json(const CameraSessionStatus& status) {
          << ",\"deep_inference_ms\":" << status.deep_inference_ms
          << ",\"deep_result_valid\":"
          << (status.deep_result_valid ? "true" : "false")
+         << ",\"deep_stability_valid\":"
+         << (status.deep_stability_valid ? "true" : "false")
+         << ",\"deep_correction_reason\":\""
+         << json_escape(status.deep_correction_reason) << "\""
          << ",\"deep_invalid_reason\":\""
          << json_escape(status.deep_invalid_reason)
          << "\",\"traditional_waveform_revision\":"
