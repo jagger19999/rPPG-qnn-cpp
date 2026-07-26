@@ -1,5 +1,6 @@
 #pragma once
 
+#include "rppg_qnn/contracts.hpp"
 #include "rppg_qnn/frame_source.hpp"
 
 #include <filesystem>
@@ -11,25 +12,12 @@
 
 namespace rppg_qnn {
 
-struct FaceBox {
-  int x{0};
-  int y{0};
-  int width{0};
-  int height{0};
-  double confidence{0.0};
-};
-
-struct RoiPacket {
-  std::uint64_t frame_id{0};
-  double timestamp_sec{0.0};
-  cv::Mat roi_bgr;
-  std::optional<FaceBox> face;
-  bool used_fallback{false};
-};
-
 using FaceDetector = std::function<std::vector<FaceBox>(const cv::Mat&)>;
 
 std::optional<cv::Rect> cheek_roi(const FaceBox& face, cv::Size frame_size);
+std::optional<cv::Rect> expanded_face_roi(const FaceBox& face,
+                                          cv::Size frame_size,
+                                          double scale = 1.5);
 
 class IRoiProcessor {
  public:

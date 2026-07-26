@@ -113,7 +113,7 @@ class FixedRoi final : public rppg_qnn::IRoiProcessor {
  public:
   rppg_qnn::RoiPacket process(const rppg_qnn::FramePacket& frame) override {
     return {frame.frame_id, frame.timestamp_sec, frame.bgr(cv::Rect(16, 20, 64, 64)).clone(),
-            rppg_qnn::FaceBox{16, 20, 64, 64, 1.0}, false};
+            rppg_qnn::FaceBox{16, 20, 64, 64, 1.0}, false, {}};
   }
 };
 
@@ -312,7 +312,7 @@ class InvalidRoiAtSevenSeconds final : public rppg_qnn::IRoiProcessor {
     cv::Mat roi(64, 64, frame.frame_id == 210U ? CV_8UC1 : CV_8UC3,
                 cv::Scalar(1, 100, 3));
     return {frame.frame_id, frame.timestamp_sec, std::move(roi),
-            rppg_qnn::FaceBox{16, 20, 64, 64, 1.0}, false};
+            rppg_qnn::FaceBox{16, 20, 64, 64, 1.0}, false, {}};
   }
 };
 
