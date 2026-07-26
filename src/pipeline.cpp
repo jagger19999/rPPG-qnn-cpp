@@ -322,7 +322,11 @@ int Pipeline::run() {
           }
         }
         if (deep_builder.has_value()) {
-          const bool ingested = deep_builder->ingest_roi(roi);
+          // RoiProcessor owns the full-face crop. This shallow Mat handoff avoids
+          // another pipeline copy; DeepWindowBuilder clones once for retention.
+          const RoiPacket deep_roi{roi.frame_id, roi.timestamp_sec, roi.deep_roi_bgr,
+                                   roi.face, roi.used_fallback, {}};
+          const bool ingested = deep_builder->ingest_roi(deep_roi);
           health.status = deep_builder->status();
           if (ingested && (!last_deep_build_sec.has_value() ||
                            roi.timestamp_sec - *last_deep_build_sec >= 1.0)) {

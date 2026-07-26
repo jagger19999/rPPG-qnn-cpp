@@ -112,8 +112,9 @@ void write_pulse_video(const std::filesystem::path& path) {
 class FixedRoi final : public rppg_qnn::IRoiProcessor {
  public:
   rppg_qnn::RoiPacket process(const rppg_qnn::FramePacket& frame) override {
-    return {frame.frame_id, frame.timestamp_sec, frame.bgr(cv::Rect(16, 20, 64, 64)).clone(),
-            rppg_qnn::FaceBox{16, 20, 64, 64, 1.0}, false, {}};
+    cv::Mat roi = frame.bgr(cv::Rect(16, 20, 64, 64)).clone();
+    return {frame.frame_id, frame.timestamp_sec, roi,
+            rppg_qnn::FaceBox{16, 20, 64, 64, 1.0}, false, roi.clone()};
   }
 };
 
@@ -278,6 +279,25 @@ class DeepScheduleSource final : public rppg_qnn::FrameSource {
   bool eof_{false};
 };
 
+class ElevenSecondSource final : public rppg_qnn::FrameSource {
+ public:
+  std::optional<rppg_qnn::FramePacket> read() override {
+    if (index_ == 331) {
+      eof_ = true;
+      return std::nullopt;
+    }
+    return rppg_qnn::FramePacket{static_cast<std::uint64_t>(index_),
+                                  index_++ / 30.0,
+                                  cv::Mat(96, 96, CV_8UC3, cv::Scalar())};
+  }
+  bool eof() const override { return eof_; }
+  double nominal_fps() const override { return 30.0; }
+
+ private:
+  int index_{0};
+  bool eof_{false};
+};
+
 class TraditionalPulseSource final : public rppg_qnn::FrameSource {
  public:
   std::optional<rppg_qnn::FramePacket> read() override {
@@ -311,8 +331,10 @@ class InvalidRoiAtSevenSeconds final : public rppg_qnn::IRoiProcessor {
   rppg_qnn::RoiPacket process(const rppg_qnn::FramePacket& frame) override {
     cv::Mat roi(64, 64, frame.frame_id == 210U ? CV_8UC1 : CV_8UC3,
                 cv::Scalar(1, 100, 3));
+    cv::Mat deep_roi = roi.clone();
     return {frame.frame_id, frame.timestamp_sec, std::move(roi),
-            rppg_qnn::FaceBox{16, 20, 64, 64, 1.0}, false, {}};
+            rppg_qnn::FaceBox{16, 20, 64, 64, 1.0}, false,
+            std::move(deep_roi)};
   }
 };
 
@@ -334,6 +356,48 @@ class RecordingDeepRuntime final : public rppg_qnn::IDeepRuntime {
   }
  private:
   std::vector<double>* input_ends_;
+};
+
+class DistinctTraditionalAndDeepRoi final : public rppg_qnn::IRoiProcessor {
+ public:
+  rppg_qnn::RoiPacket process(const rppg_qnn::FramePacket& frame) override {
+    return {frame.frame_id,
+            frame.timestamp_sec,
+            cv::Mat(64, 64, CV_8UC3, cv::Scalar(1, 2, 3)),
+            rppg_qnn::FaceBox{16, 20, 64, 64, 1.0},
+            false,
+            cv::Mat(96, 96, CV_8UC3, cv::Scalar(20, 40, 80))};
+  }
+};
+
+class TraditionalOnlyRoi final : public rppg_qnn::IRoiProcessor {
+ public:
+  rppg_qnn::RoiPacket process(const rppg_qnn::FramePacket& frame) override {
+    return {frame.frame_id, frame.timestamp_sec,
+            cv::Mat(64, 64, CV_8UC3, cv::Scalar(1, 2, 3)),
+            rppg_qnn::FaceBox{16, 20, 64, 64, 1.0}, false, {}};
+  }
+};
+
+class TensorRecordingDeepRuntime final : public rppg_qnn::IDeepRuntime {
+ public:
+  explicit TensorRecordingDeepRuntime(std::vector<float>* first_rgb)
+      : first_rgb_(first_rgb) {}
+  [[nodiscard]] std::string backend_name() const override { return "tensor-recording"; }
+  rppg_qnn::HeartRateResult infer(const rppg_qnn::DeepInput& input) override {
+    if (first_rgb_->empty() && input.tensor.size() >= 3U) {
+      first_rgb_->assign(input.tensor.begin(), input.tensor.begin() + 3);
+    }
+    rppg_qnn::HeartRateResult result;
+    result.method = "TENSOR_RECORDING";
+    result.backend = backend_name();
+    result.window_start_sec = input.start_sec;
+    result.window_end_sec = input.end_sec;
+    return result;
+  }
+
+ private:
+  std::vector<float>* first_rgb_;
 };
 
 class SlowResultSink final : public rppg_qnn::IResultSink {
@@ -630,6 +694,46 @@ void rejected_roi_does_not_schedule_a_stale_deep_window() {
   }
 }
 
+void deep_windows_use_full_face_pixels_while_traditional_remains_enabled() {
+  ScopedDirectory directory;
+  std::vector<float> first_rgb;
+  rppg_qnn::AppConfig config;
+  config.video = "unused.avi";
+  config.deep = "fake";
+  config.output = directory.path() / "deep-routing";
+  rppg_qnn::Pipeline pipeline(
+      config,
+      {[] { return std::make_unique<ElevenSecondSource>(); },
+       [] { return std::make_unique<DistinctTraditionalAndDeepRoi>(); },
+       [&first_rgb] { return std::make_unique<TensorRecordingDeepRuntime>(&first_rgb); },
+       {}, {}});
+
+  EXPECT_EQ(pipeline.run(), 0);
+  EXPECT_EQ(first_rgb, (std::vector<float>{80.0F, 40.0F, 20.0F}));
+  const std::string events = read_file(config.output / "events.jsonl");
+  EXPECT_TRUE(events.find("\"method\":\"GREEN\"") != std::string::npos);
+}
+
+void empty_deep_crop_is_not_replaced_with_traditional_cheek_pixels() {
+  ScopedDirectory directory;
+  std::vector<float> first_rgb;
+  rppg_qnn::AppConfig config;
+  config.video = "unused.avi";
+  config.deep = "fake";
+  config.output = directory.path() / "empty-deep-routing";
+  rppg_qnn::Pipeline pipeline(
+      config,
+      {[] { return std::make_unique<DeepScheduleSource>(); },
+       [] { return std::make_unique<TraditionalOnlyRoi>(); },
+       [&first_rgb] { return std::make_unique<TensorRecordingDeepRuntime>(&first_rgb); },
+       {}, {}});
+
+  EXPECT_EQ(pipeline.run(), 0);
+  EXPECT_TRUE(first_rgb.empty());
+  EXPECT_TRUE(read_file(config.output / "events.jsonl").find(
+                  "\"status\":\"empty_roi\"") != std::string::npos);
+}
+
 void slow_fake_runtime_keeps_every_capture_frame() {
   ScopedDirectory directory;
   const std::filesystem::path video = directory.path() / "pulse.avi";
@@ -714,6 +818,8 @@ int main() {
   empty_output_exception_never_becomes_a_successful_session();
   a_full_heart_rate_queue_reserves_one_runtime_error_slot();
   rejected_roi_does_not_schedule_a_stale_deep_window();
+  deep_windows_use_full_face_pixels_while_traditional_remains_enabled();
+  empty_deep_crop_is_not_replaced_with_traditional_cheek_pixels();
   slow_fake_runtime_keeps_every_capture_frame();
   roi_runtime_failures_are_reported_and_closed();
   cli_preflight_only_reports_unavailable_qnn_without_a_camera_or_cascade();
