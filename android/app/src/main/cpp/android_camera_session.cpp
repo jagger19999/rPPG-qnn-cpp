@@ -407,11 +407,12 @@ struct AndroidCameraSession::Impl {
       throw AppError(ErrorCode::ConfigInvalid,
                      "cascade path and output directory must not be empty");
     }
-    if (requested_config.deep_enabled &&
+    if (requested_config.deep_model != DeepModel::Disabled &&
         (requested_config.model_path.empty() ||
          !std::filesystem::is_regular_file(requested_config.model_path))) {
       throw AppError(ErrorCode::ModelLoadFailed,
-                     "TSCAN ONNX model is missing from app storage");
+                     std::string(to_string(requested_config.deep_model)) +
+                         " ONNX model is missing from app storage");
     }
     {
       RoiProcessor cascade_validator(requested_config.cascade_path);
@@ -435,9 +436,11 @@ struct AndroidCameraSession::Impl {
     snapshot.processing_enabled = true;
     snapshot.traditional_method = processing_config->method;
     snapshot.output_directory = processing_config->output_directory;
-    snapshot.deep_enabled = processing_config->deep_enabled;
+    snapshot.deep_model = std::string(to_string(processing_config->deep_model));
+    snapshot.deep_enabled =
+        processing_config->deep_model != DeepModel::Disabled;
     snapshot.deep_backend =
-        processing_config->deep_enabled ? "ONNX_RUNTIME_CPU" : "disabled";
+        snapshot.deep_enabled ? "ONNX_RUNTIME_CPU" : "disabled";
   }
 
   void start_processing() {
@@ -455,8 +458,7 @@ struct AndroidCameraSession::Impl {
     pipeline_config.height = config.height;
     pipeline_config.fps = static_cast<double>(config.fps);
     pipeline_config.traditional = requested.method;
-    pipeline_config.deep =
-        requested.deep_enabled ? "onnxruntime_cpu" : "disabled";
+    pipeline_config.deep = std::string(to_string(requested.deep_model));
     pipeline_config.output = requested.output_directory;
 
     PipelineDependencies dependencies;
@@ -473,10 +475,18 @@ struct AndroidCameraSession::Impl {
       return std::make_unique<ThumbnailRoi>(
           std::make_unique<RoiProcessor>(cascade), std::move(publish));
     };
-    if (requested.deep_enabled) {
-      dependencies.make_deep_runtime = [model = requested.model_path] {
-        return make_onnx_cpu_runtime(model);
-      };
+    switch (requested.deep_model) {
+      case DeepModel::Disabled:
+        break;
+      case DeepModel::Tscan:
+        dependencies.make_deep_runtime = [model = requested.model_path] {
+          return make_onnx_cpu_runtime(model);
+        };
+        break;
+      case DeepModel::EfficientPhys:
+        throw AppError(
+            ErrorCode::ConfigInvalid,
+            "EfficientPhys runtime is not available in this Android build");
     }
     dependencies.make_sink = [this](
                                  const std::filesystem::path& output_directory) {

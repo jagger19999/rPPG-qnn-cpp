@@ -1,6 +1,7 @@
 #include "android_jni_handle.hpp"
 
 #include "android_camera_session.hpp"
+#include "rppg_qnn/deep_model.hpp"
 #include "rppg_qnn/error.hpp"
 
 #include <android/native_window.h>
@@ -115,6 +116,7 @@ std::string status_json(const CameraSessionStatus& status) {
          << ",\"processing_exit_code\":" << status.processing_exit_code
          << ",\"output_directory\":\""
          << json_escape(status.output_directory)
+         << "\",\"deep_model\":\"" << json_escape(status.deep_model)
          << "\",\"deep_enabled\":"
          << (status.deep_enabled ? "true" : "false")
          << ",\"deep_backend\":\"" << json_escape(status.deep_backend)
@@ -175,10 +177,11 @@ std::int64_t create_camera_session(const std::string& camera_id, int width,
 std::string configure_camera_processing(
     std::int64_t handle, const std::string& method,
     const std::string& cascade_path, const std::string& output_directory,
-    bool deep_enabled, const std::string& model_path) {
+    const std::string& deep_model, const std::string& model_path) {
   const auto session = lookup(handle);
   session->configure_processing(TraditionalProcessingConfig{
-      method, cascade_path, output_directory, deep_enabled, model_path});
+      method, cascade_path, output_directory, parse_deep_model(deep_model),
+      model_path});
   return status_json(session->status());
 }
 

@@ -13,7 +13,7 @@ public final class NativeBridge {
     public static native long nativeCreate(String cameraId, int width, int height, int fps);
     public static native String nativeConfigureProcessing(
             long handle, String method, String cascadePath, String outputDirectory,
-            boolean deepEnabled, String modelPath);
+            String deepModel, String modelPath);
     public static native void nativeSetPreviewSurface(long handle, android.view.Surface surface);
     public static native void nativeSetDisplayRotation(long handle, int rotationDegrees);
     public static native String nativeStart(long handle);

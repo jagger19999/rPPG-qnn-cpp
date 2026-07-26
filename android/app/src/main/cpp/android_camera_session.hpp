@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 
+#include "rppg_qnn/deep_model.hpp"
 #include "rppg_qnn/waveform_snapshot.hpp"
 
 struct ANativeWindow;
@@ -22,7 +23,7 @@ struct TraditionalProcessingConfig {
   std::string method{"green"};
   std::string cascade_path;
   std::string output_directory;
-  bool deep_enabled{false};
+  DeepModel deep_model{DeepModel::Disabled};
   std::string model_path;
 };
 
@@ -65,6 +66,7 @@ struct CameraSessionStatus {
   double window_end_sec{0.0};
   int processing_exit_code{0};
   std::string output_directory;
+  std::string deep_model{"disabled"};
   bool deep_enabled{false};
   std::string deep_backend{"disabled"};
   bool deep_result_available{false};

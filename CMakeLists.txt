@@ -21,7 +21,7 @@ if(RPPG_ENABLE_SANITIZERS AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
                       -fsanitize=address,undefined)
 endif()
 
-add_library(rppg_qnn_core src/build_identity.cpp src/config.cpp src/contracts.cpp src/deep_runtime.cpp src/deep_window_builder.cpp src/deep_worker.cpp src/error.cpp src/frame_source.cpp src/pipeline.cpp src/qnn_preflight.cpp src/result_sink.cpp src/roi_processor.cpp src/traditional_predictor.cpp src/tscan_postprocessor.cpp src/tscan_preprocessor.cpp src/tscan_runtime.cpp src/waveform_snapshot.cpp src/yuv420.cpp)
+add_library(rppg_qnn_core src/build_identity.cpp src/config.cpp src/contracts.cpp src/deep_model.cpp src/deep_runtime.cpp src/deep_window_builder.cpp src/deep_worker.cpp src/error.cpp src/frame_source.cpp src/pipeline.cpp src/qnn_preflight.cpp src/result_sink.cpp src/roi_processor.cpp src/traditional_predictor.cpp src/tscan_postprocessor.cpp src/tscan_preprocessor.cpp src/tscan_runtime.cpp src/waveform_snapshot.cpp src/yuv420.cpp)
 target_include_directories(rppg_qnn_core PUBLIC include)
 target_link_libraries(rppg_qnn_core PUBLIC ${OpenCV_LIBS} ${CMAKE_DL_LIBS} Threads::Threads)
 target_compile_options(rppg_qnn_core PRIVATE -Wall -Wextra -Wpedantic -Werror)
@@ -65,6 +65,13 @@ if(BUILD_TESTING)
   target_compile_options(test_config PRIVATE -Wall -Wextra -Wpedantic -Werror)
 
   add_test(NAME config COMMAND test_config)
+
+  add_executable(test_deep_model tests/test_deep_model.cpp)
+  target_link_libraries(test_deep_model PRIVATE rppg_qnn_core)
+  target_include_directories(test_deep_model PRIVATE tests)
+  target_compile_options(test_deep_model PRIVATE -Wall -Wextra -Wpedantic -Werror)
+
+  add_test(NAME deep_model COMMAND test_deep_model)
 
   add_executable(test_build_identity tests/test_build_identity.cpp)
   target_link_libraries(test_build_identity PRIVATE rppg_qnn_core)

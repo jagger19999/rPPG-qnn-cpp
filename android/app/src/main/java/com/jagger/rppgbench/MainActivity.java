@@ -1101,7 +1101,7 @@ public final class MainActivity extends Activity {
                             methodSelector.getSelectedItem().toString(),
                             cascade.getAbsolutePath(),
                             sessionOutputDirectory.getAbsolutePath(),
-                            deepSelector.isChecked(),
+                            deepSelector.isChecked() ? "tscan" : "disabled",
                             model.getAbsolutePath());
             if (!configured.startsWith("{")) {
                 showUserMessage(configured);

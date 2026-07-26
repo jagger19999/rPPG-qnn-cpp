@@ -39,6 +39,7 @@ add_library(
     native_bridge.cpp
     "${RPPG_REPOSITORY_ROOT}/src/build_identity.cpp"
     "${RPPG_REPOSITORY_ROOT}/src/contracts.cpp"
+    "${RPPG_REPOSITORY_ROOT}/src/deep_model.cpp"
     "${RPPG_REPOSITORY_ROOT}/src/deep_runtime.cpp"
     "${RPPG_REPOSITORY_ROOT}/src/deep_window_builder.cpp"
     "${RPPG_REPOSITORY_ROOT}/src/deep_worker.cpp"
