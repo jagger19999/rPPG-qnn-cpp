@@ -19,4 +19,9 @@
     <string name="roi_placeholder">未检测到人脸</string>
     <string name="preview_placeholder">预览不可用</string>
     <string name="roi_image_description">Face ROI thumbnail</string>
+    <string name="waveform_section_title">实时 PPG 波形</string>
+    <string name="waveform_traditional_title">传统 rPPG 波形</string>
+    <string name="waveform_deep_title">深度 TSCAN 波形</string>
+    <string name="waveform_traditional_sampling">正在采集传统算法数据</string>
+    <string name="waveform_deep_disabled">未启用深度推理</string>
 </resources>

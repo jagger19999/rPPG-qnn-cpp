@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:background="@color/hr_card_bg"
+    android:orientation="vertical"
+    android:padding="10dp">
+
+    <TextView
+        android:id="@+id/waveform_title"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:textSize="15sp"
+        android:textStyle="bold" />
+
+    <TextView
+        android:id="@+id/waveform_status"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="2dp"
+        android:textColor="@color/hr_muted"
+        android:textSize="12sp" />
+
+    <com.jagger.rppgbench.ui.PpgWaveformView
+        android:id="@+id/waveform_view"
+        android:layout_width="match_parent"
+        android:layout_height="150dp"
+        android:layout_marginTop="4dp"
+        android:background="#FFF9F5EC" />
+
+</LinearLayout>

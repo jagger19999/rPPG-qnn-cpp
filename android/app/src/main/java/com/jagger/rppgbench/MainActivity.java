@@ -29,6 +29,9 @@ import android.widget.TextView;
 import com.jagger.rppgbench.ui.FaceBoxOverlay;
 import com.jagger.rppgbench.ui.HrMetricCard;
 import com.jagger.rppgbench.ui.HrStatusFormatter;
+import com.jagger.rppgbench.ui.PpgWaveformCard;
+import com.jagger.rppgbench.ui.PpgWaveformSnapshot;
+import com.jagger.rppgbench.ui.PpgWaveformState;
 import com.jagger.rppgbench.watch.AndroidBleBackend;
 import com.jagger.rppgbench.watch.WatchAligner;
 import com.jagger.rppgbench.watch.WatchBleWorker;
@@ -71,6 +74,12 @@ public final class MainActivity extends Activity {
     private HrMetricCard traditionalCard;
     private HrMetricCard deepCard;
     private HrMetricCard watchCard;
+    private PpgWaveformCard traditionalWaveformCard;
+    private PpgWaveformCard deepWaveformCard;
+    private PpgWaveformSnapshot traditionalWaveform;
+    private PpgWaveformSnapshot deepWaveform;
+    private long traditionalWaveformRevision;
+    private long deepWaveformRevision;
     private TextView alignmentView;
     private TextView fpsLine;
     private FrameLayout previewContainer;
@@ -121,6 +130,9 @@ public final class MainActivity extends Activity {
         traditionalCard = new HrMetricCard(findViewById(R.id.card_traditional));
         deepCard = new HrMetricCard(findViewById(R.id.card_deep));
         watchCard = new HrMetricCard(findViewById(R.id.card_watch));
+        traditionalWaveformCard = new PpgWaveformCard(findViewById(R.id.waveform_traditional));
+        deepWaveformCard = new PpgWaveformCard(findViewById(R.id.waveform_deep));
+        clearWaveformsForNewSession();
         alignmentView = findViewById(R.id.alignment_line);
         fpsLine = findViewById(R.id.fps_line);
         previewContainer = findViewById(R.id.preview_container);
@@ -320,6 +332,9 @@ public final class MainActivity extends Activity {
             JSONObject json = new JSONObject(cameraJson);
             traditionalCard.bind("传统 rPPG", HrStatusFormatter.traditional(json));
             deepCard.bind("深度 TSCAN", HrStatusFormatter.deep(json));
+            if (started && nativeHandle != 0) {
+                updateWaveformCards(json);
+            }
         } catch (Exception error) {
             traditionalCard.bind("传统 rPPG", new HrStatusFormatter.CardView("--", "不可用"));
             deepCard.bind("深度 TSCAN", new HrStatusFormatter.CardView("--", "不可用"));
@@ -384,6 +399,83 @@ public final class MainActivity extends Activity {
                             dropped));
         } catch (Exception error) {
             fpsLine.setText(getString(R.string.fps_line_idle));
+        }
+    }
+
+    private void updateWaveformCards(JSONObject status) {
+        long traditionalRevision = status.optLong("traditional_waveform_revision", 0);
+        long deepRevision = status.optLong("deep_waveform_revision", 0);
+        if (traditionalRevision > 0 && traditionalRevision != traditionalWaveformRevision) {
+            PpgWaveformSnapshot loaded = loadWaveform(false);
+            if (loaded != null) {
+                traditionalWaveform = loaded;
+                traditionalWaveformRevision = loaded.revision;
+            }
+        }
+        if (deepRevision > 0 && deepRevision != deepWaveformRevision) {
+            PpgWaveformSnapshot loaded = loadWaveform(true);
+            if (loaded != null) {
+                deepWaveform = loaded;
+                deepWaveformRevision = loaded.revision;
+            }
+        }
+
+        String traditionalState = getString(R.string.waveform_traditional_sampling);
+        if (traditionalWaveform != null) {
+            traditionalState = traditionalWaveform.valid
+                    ? traditionalWaveform.method + " · " + traditionalWaveform.sampleCount()
+                            + " 点 · " + String.format(Locale.US, "%.1f 秒",
+                                    -traditionalWaveform.relativeStartSeconds())
+                    : "信号质量低：" + traditionalWaveform.invalidReason;
+        }
+        traditionalWaveformCard.bind(getString(R.string.waveform_traditional_title),
+                traditionalState, traditionalWaveform);
+
+        boolean deepEnabled = status.optBoolean("deep_enabled", false);
+        int collected = status.optInt("deep_frames_collected", 0);
+        int required = status.optInt("deep_frames_required", 180);
+        boolean available = status.optBoolean("deep_result_available", false);
+        boolean valid = status.optBoolean("deep_result_valid", false);
+        String reason = status.optString("deep_invalid_reason", "");
+        String deepState = PpgWaveformState.deep(deepEnabled, collected, required,
+                available, valid, reason);
+        deepWaveformCard.bind(getString(R.string.waveform_deep_title), deepState, deepWaveform);
+    }
+
+    private PpgWaveformSnapshot loadWaveform(boolean deep) {
+        try {
+            JSONObject metadata = new JSONObject(
+                    NativeBridge.nativeGetWaveformMetadata(nativeHandle, deep));
+            if (!metadata.optBoolean("available", false)) {
+                return null;
+            }
+            float[] values = NativeBridge.nativeGetWaveformValues(nativeHandle, deep);
+            int expected = metadata.optInt("sample_count", 0);
+            if (values == null || values.length != expected) {
+                return null;
+            }
+            return new PpgWaveformSnapshot(
+                    metadata.optLong("revision", 0), metadata.optString("method", ""),
+                    metadata.optDouble("sample_rate_hz", 30.0),
+                    metadata.optBoolean("is_valid", false),
+                    metadata.optString("invalid_reason", ""), values);
+        } catch (Throwable error) {
+            return null;
+        }
+    }
+
+    private void clearWaveformsForNewSession() {
+        traditionalWaveform = null;
+        deepWaveform = null;
+        traditionalWaveformRevision = 0;
+        deepWaveformRevision = 0;
+        if (traditionalWaveformCard != null) {
+            traditionalWaveformCard.clear(getString(R.string.waveform_traditional_title),
+                    getString(R.string.waveform_traditional_sampling));
+        }
+        if (deepWaveformCard != null) {
+            deepWaveformCard.clear(getString(R.string.waveform_deep_title),
+                    getString(R.string.waveform_deep_disabled));
         }
     }
 
@@ -1018,6 +1110,7 @@ public final class MainActivity extends Activity {
             alignmentHistory.clear();
             latestAlignment = null;
             lastAlignedWindowEndSec = null;
+            clearWaveformsForNewSession();
             // Preview Surface must exist before nativeStart; GONE TextureView has none.
             pendingCameraStart = true;
             preparePreviewSurfaceBinding();

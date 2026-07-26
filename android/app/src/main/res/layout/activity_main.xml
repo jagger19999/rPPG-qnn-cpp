@@ -73,6 +73,28 @@
             android:textSize="16sp"
             android:textStyle="bold" />
 
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:text="@string/waveform_section_title"
+            android:textSize="17sp"
+            android:textStyle="bold" />
+
+        <include
+            android:id="@+id/waveform_traditional"
+            layout="@layout/view_ppg_waveform_card"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp" />
+
+        <include
+            android:id="@+id/waveform_deep"
+            layout="@layout/view_ppg_waveform_card"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp" />
+
         <FrameLayout
             android:id="@+id/preview_container"
             android:layout_width="match_parent"
