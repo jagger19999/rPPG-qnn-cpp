@@ -15,8 +15,9 @@ constexpr double kFps = 30.0;
 constexpr double kPi = 3.14159265358979323846;
 
 std::vector<float> waveform(double dc, double frequency_hz,
-                            double amplitude = 1.0) {
-  std::vector<float> values(kSamples);
+                            double amplitude = 1.0,
+                            std::size_t sample_count = kSamples) {
+  std::vector<float> values(sample_count);
   for (std::size_t i = 0; i < values.size(); ++i) {
     values[i] = static_cast<float>(
         dc + amplitude * std::sin(2.0 * kPi * frequency_hz *
@@ -64,15 +65,18 @@ void matches_numpy_for_deterministic_mixed_waveforms() {
 }
 
 void uses_inclusive_band_boundaries_and_ignores_out_of_band_power() {
-  const auto lower = rppg_qnn::postprocess_tscan_waveform(waveform(0.0, 0.75));
+  constexpr std::size_t boundary_samples = 240;
+  const auto lower = rppg_qnn::postprocess_tscan_waveform(
+      waveform(0.0, 0.75, 1.0, boundary_samples));
   EXPECT_TRUE(lower.is_valid);
-  expect_near(lower.bpm, 50.0, 1e-10);
-  expect_near(lower.confidence, 0.9590609573247594, 1e-4);
+  expect_near(lower.bpm, 45.0, 1e-10);
+  expect_near(lower.confidence, 0.7979715513176878, 1e-4);
 
-  const auto upper = rppg_qnn::postprocess_tscan_waveform(waveform(0.0, 2.5));
+  const auto upper = rppg_qnn::postprocess_tscan_waveform(
+      waveform(0.0, 2.5, 1.0, boundary_samples));
   EXPECT_TRUE(upper.is_valid);
   expect_near(upper.bpm, 150.0, 1e-10);
-  expect_near(upper.confidence, 0.7973222014562026, 1e-4);
+  expect_near(upper.confidence, 0.797994505318668, 1e-4);
 
   std::vector<float> dominated(kSamples);
   for (std::size_t i = 0; i < kSamples; ++i) {
