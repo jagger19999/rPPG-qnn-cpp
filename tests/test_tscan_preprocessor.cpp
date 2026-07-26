@@ -42,6 +42,24 @@ void expect_near(float actual, float expected, float tolerance) {
   EXPECT_TRUE(std::abs(actual - expected) <= tolerance);
 }
 
+bool finite_absolute_error(float actual, float expected, double& error) {
+  if (!std::isfinite(actual) || !std::isfinite(expected)) {
+    error = std::numeric_limits<double>::quiet_NaN();
+    return false;
+  }
+  error = std::abs(static_cast<double>(actual) -
+                   static_cast<double>(expected));
+  return std::isfinite(error);
+}
+
+void rejects_a_nonfinite_full_tensor_comparison() {
+  double error = 0.0;
+  EXPECT_TRUE(!finite_absolute_error(
+      std::numeric_limits<float>::quiet_NaN(), 0.0F, error));
+  EXPECT_TRUE(!finite_absolute_error(
+      0.0F, std::numeric_limits<float>::infinity(), error));
+}
+
 void expect_preprocess_error(const rppg_qnn::DeepInput& input,
                              const std::string& prefix) {
   try {
@@ -350,8 +368,13 @@ void matches_the_full_analytic_python_tensor() {
           expected = static_cast<float>((source - appearance_mean) /
                                         appearance_scale);
         }
-        const double error = std::abs(static_cast<double>(
-            actual.values[output_offset(frame, channel, pixel)]) - expected);
+        const float actual_value =
+            actual.values[output_offset(frame, channel, pixel)];
+        EXPECT_TRUE(std::isfinite(actual_value));
+        EXPECT_TRUE(std::isfinite(expected));
+        double error = std::numeric_limits<double>::quiet_NaN();
+        EXPECT_TRUE(finite_absolute_error(actual_value, expected, error));
+        EXPECT_TRUE(std::isfinite(error));
         max_abs = std::max(max_abs, error);
       }
     }
@@ -363,6 +386,7 @@ void matches_the_full_analytic_python_tensor() {
 }  // namespace
 
 int main() {
+  rejects_a_nonfinite_full_tensor_comparison();
   validates_shape_length_finiteness_and_variance();
   accepts_positive_scales_below_the_previous_guard();
   matches_a_manually_calculable_layout_and_rgb_order();
