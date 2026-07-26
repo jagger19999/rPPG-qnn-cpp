@@ -5,6 +5,7 @@ import android.app.Activity;
 import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.graphics.Matrix;
 import android.graphics.SurfaceTexture;
 import android.os.Build;
 import android.os.Bundle;
@@ -14,6 +15,7 @@ import android.os.SystemClock;
 import android.view.Surface;
 import android.view.TextureView;
 import android.view.View;
+import android.view.ViewGroup;
 import android.widget.AdapterView;
 import android.widget.ArrayAdapter;
 import android.widget.Button;
@@ -45,6 +47,8 @@ import java.util.List;
 import java.util.Locale;
 
 public final class MainActivity extends Activity {
+    private static final int CAMERA_CAPTURE_WIDTH = 640;
+    private static final int CAMERA_CAPTURE_HEIGHT = 480;
     private static final int CAMERA_PERMISSION_REQUEST = 1001;
     private static final int BLE_PERMISSION_REQUEST = 1002;
     private static final int ACTION_NONE = 0;
@@ -205,8 +209,10 @@ public final class MainActivity extends Activity {
                     @Override
                     public void onSurfaceTextureAvailable(
                             SurfaceTexture surfaceTexture, int width, int height) {
-                        surfaceTexture.setDefaultBufferSize(640, 480);
+                        surfaceTexture.setDefaultBufferSize(
+                                CAMERA_CAPTURE_WIDTH, CAMERA_CAPTURE_HEIGHT);
                         previewSurfaceReady = true;
+                        applyPreviewAspect();
                         // TextureView only gets a Surface after the container is visible.
                         // Bind + start must wait for this callback; binding while running is rejected.
                         if (pendingCameraStart) {
@@ -221,7 +227,9 @@ public final class MainActivity extends Activity {
 
                     @Override
                     public void onSurfaceTextureSizeChanged(
-                            SurfaceTexture surfaceTexture, int width, int height) {}
+                            SurfaceTexture surfaceTexture, int width, int height) {
+                        applyPreviewAspect();
+                    }
 
                     @Override
                     public boolean onSurfaceTextureDestroyed(SurfaceTexture surfaceTexture) {
@@ -436,7 +444,37 @@ public final class MainActivity extends Activity {
         previewContainer.setVisibility(View.VISIBLE);
         previewSurface.setVisibility(View.VISIBLE);
         previewPlaceholder.setVisibility(View.GONE);
+        applyPreviewAspect();
         updatePreviewMirror();
+    }
+
+    /**
+     * Capture buffer is 640×480 (4:3). A full-width × fixed-dp TextureView is wider, so the
+     * default fill stretch flattens faces. Resize the container to the buffer aspect ratio.
+     */
+    private void applyPreviewAspect() {
+        if (previewContainer == null || previewSurface == null) {
+            return;
+        }
+        previewContainer.post(
+                () -> {
+                    int width = previewContainer.getWidth();
+                    if (width <= 0) {
+                        return;
+                    }
+                    int height =
+                            Math.round(
+                                    width
+                                            * (CAMERA_CAPTURE_HEIGHT
+                                                    / (float) CAMERA_CAPTURE_WIDTH));
+                    ViewGroup.LayoutParams layoutParams = previewContainer.getLayoutParams();
+                    if (layoutParams != null && layoutParams.height != height) {
+                        layoutParams.height = height;
+                        previewContainer.setLayoutParams(layoutParams);
+                    }
+                    // Same aspect as buffer → identity transform (no stretch).
+                    previewSurface.setTransform(new Matrix());
+                });
     }
 
     private void updatePreviewMirror() {
@@ -490,7 +528,8 @@ public final class MainActivity extends Activity {
         if (previewSurfaceReady && previewSurface.isAvailable()) {
             SurfaceTexture surfaceTexture = previewSurface.getSurfaceTexture();
             if (surfaceTexture != null) {
-                surfaceTexture.setDefaultBufferSize(640, 480);
+                surfaceTexture.setDefaultBufferSize(
+                        CAMERA_CAPTURE_WIDTH, CAMERA_CAPTURE_HEIGHT);
                 bindPreviewSurface(surfaceTexture);
             }
         }
@@ -873,7 +912,9 @@ public final class MainActivity extends Activity {
                 NativeBridge.nativeDestroy(nativeHandle);
                 nativeHandle = 0;
             }
-            nativeHandle = NativeBridge.nativeCreate(cameraId, 640, 480, 30);
+            nativeHandle =
+                    NativeBridge.nativeCreate(
+                            cameraId, CAMERA_CAPTURE_WIDTH, CAMERA_CAPTURE_HEIGHT, 30);
             File cascade = ensureCascadeAsset();
             sessionOutputDirectory =
                     new File(
@@ -935,7 +976,8 @@ public final class MainActivity extends Activity {
             if (previewSurfaceReady && previewSurface.isAvailable()) {
                 SurfaceTexture surfaceTexture = previewSurface.getSurfaceTexture();
                 if (surfaceTexture != null) {
-                    surfaceTexture.setDefaultBufferSize(640, 480);
+                    surfaceTexture.setDefaultBufferSize(
+                            CAMERA_CAPTURE_WIDTH, CAMERA_CAPTURE_HEIGHT);
                     bindPreviewSurface(surfaceTexture);
                 }
             }
