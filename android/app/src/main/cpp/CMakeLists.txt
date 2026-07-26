@@ -43,6 +43,7 @@ add_library(
     "${RPPG_REPOSITORY_ROOT}/src/deep_runtime.cpp"
     "${RPPG_REPOSITORY_ROOT}/src/deep_window_builder.cpp"
     "${RPPG_REPOSITORY_ROOT}/src/deep_worker.cpp"
+    "${RPPG_REPOSITORY_ROOT}/src/efficientphys_runtime.cpp"
     "${RPPG_REPOSITORY_ROOT}/src/error.cpp"
     "${RPPG_REPOSITORY_ROOT}/src/pipeline.cpp"
     "${RPPG_REPOSITORY_ROOT}/src/result_sink.cpp"

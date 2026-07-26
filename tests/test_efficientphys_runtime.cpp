@@ -2,6 +2,7 @@
 
 #include "test_support.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <limits>
@@ -36,6 +37,8 @@ struct SessionState {
   std::vector<std::int64_t> input_shape;
   std::vector<float> input;
   std::vector<std::int64_t> output_shape{180, 1};
+  std::size_t output_count{180U};
+  bool constant_output{false};
   bool nonfinite_output{false};
 };
 
@@ -53,11 +56,13 @@ class RecordingSession final : public rppg_qnn::IEfficientPhysSession {
     ++state_->calls;
     state_->input = input;
     state_->input_shape = shape;
-    std::vector<float> output(180U);
+    std::vector<float> output(state_->output_count);
     for (std::size_t index = 0; index < output.size(); ++index) {
-      output[index] = static_cast<float>(
-          std::sin(2.0 * 3.14159265358979323846 * 1.2 *
-                   static_cast<double>(index) / 30.0));
+      output[index] = state_->constant_output
+                          ? 1.0F
+                          : static_cast<float>(
+                                std::sin(2.0 * 3.14159265358979323846 * 1.2 *
+                                         static_cast<double>(index) / 30.0));
     }
     if (state_->nonfinite_output) {
       output[7] = std::numeric_limits<float>::quiet_NaN();
@@ -87,6 +92,9 @@ void exact_preprocessing_and_result_contract() {
   const std::size_t last_source_frame = 179U * 3U * 72U * 72U;
   const std::size_t appended_frame = 180U * 3U * 72U * 72U;
   EXPECT_EQ(state->input[appended_frame], state->input[last_source_frame]);
+  EXPECT_TRUE(std::equal(state->input.begin() + last_source_frame,
+                         state->input.begin() + appended_frame,
+                         state->input.begin() + appended_frame));
 
   EXPECT_EQ(result.method, std::string("EFFICIENTPHYS"));
   EXPECT_EQ(result.backend, std::string("onnxruntime_cpu"));
@@ -104,13 +112,46 @@ void malformed_input_never_reaches_session() {
   auto state = std::make_shared<SessionState>();
   auto runtime = rppg_qnn::make_onnxruntime_efficientphys_runtime(
       std::make_unique<RecordingSession>(state));
-  auto input = valid_input();
-  input.shape = {180, 72, 72, 1};
-  const auto result = runtime->infer(input);
-  EXPECT_EQ(state->calls, 0);
-  EXPECT_TRUE(!result.is_valid);
-  EXPECT_EQ(result.invalid_reason, std::string("efficientphys_input_invalid"));
-  EXPECT_EQ(result.backend, std::string("onnxruntime_cpu"));
+
+  const auto expect_rejected = [&](const rppg_qnn::DeepInput& input) {
+    const int calls_before = state->calls;
+    const auto result = runtime->infer(input);
+    EXPECT_EQ(state->calls, calls_before);
+    EXPECT_TRUE(!result.is_valid);
+    EXPECT_EQ(result.invalid_reason,
+              std::string("efficientphys_input_invalid"));
+    EXPECT_EQ(result.backend, std::string("onnxruntime_cpu"));
+    EXPECT_EQ(result.method, std::string("EFFICIENTPHYS"));
+    EXPECT_TRUE(std::isfinite(result.inference_ms));
+  };
+
+  auto wrong_frames = valid_input();
+  wrong_frames.shape = {179, 72, 72, 3};
+  expect_rejected(wrong_frames);
+
+  auto wrong_height = valid_input();
+  wrong_height.shape = {180, 71, 72, 3};
+  expect_rejected(wrong_height);
+
+  auto wrong_width = valid_input();
+  wrong_width.shape = {180, 72, 71, 3};
+  expect_rejected(wrong_width);
+
+  auto wrong_channels = valid_input();
+  wrong_channels.shape = {180, 72, 72, 1};
+  expect_rejected(wrong_channels);
+
+  auto wrong_length = valid_input();
+  wrong_length.tensor.pop_back();
+  expect_rejected(wrong_length);
+
+  auto nonfinite = valid_input();
+  nonfinite.tensor[7] = std::numeric_limits<float>::infinity();
+  expect_rejected(nonfinite);
+
+  auto degenerate = valid_input();
+  std::fill(degenerate.tensor.begin(), degenerate.tensor.end(), 4.0F);
+  expect_rejected(degenerate);
 }
 
 void invalid_model_output_is_concrete_and_finite() {
@@ -125,6 +166,15 @@ void invalid_model_output_is_concrete_and_finite() {
   EXPECT_TRUE(std::isfinite(result.inference_ms));
 
   state = std::make_shared<SessionState>();
+  state->output_count = 179U;
+  runtime = rppg_qnn::make_onnxruntime_efficientphys_runtime(
+      std::make_unique<RecordingSession>(state));
+  result = runtime->infer(valid_input());
+  EXPECT_TRUE(!result.is_valid);
+  EXPECT_EQ(result.invalid_reason,
+            std::string("efficientphys_output_invalid"));
+
+  state = std::make_shared<SessionState>();
   state->nonfinite_output = true;
   runtime = rppg_qnn::make_onnxruntime_efficientphys_runtime(
       std::make_unique<RecordingSession>(state));
@@ -132,6 +182,16 @@ void invalid_model_output_is_concrete_and_finite() {
   EXPECT_TRUE(!result.is_valid);
   EXPECT_EQ(result.invalid_reason,
             std::string("efficientphys_output_invalid"));
+
+  state = std::make_shared<SessionState>();
+  state->constant_output = true;
+  runtime = rppg_qnn::make_onnxruntime_efficientphys_runtime(
+      std::make_unique<RecordingSession>(state));
+  result = runtime->infer(valid_input());
+  EXPECT_TRUE(!result.is_valid);
+  EXPECT_EQ(result.bpm, 0.0);
+  EXPECT_EQ(result.invalid_reason, std::string("TSCAN_WAVEFORM_INVALID"));
+  EXPECT_TRUE(std::isfinite(result.confidence));
 }
 
 void backend_mismatch_is_rejected_without_fallback() {

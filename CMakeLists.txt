@@ -21,7 +21,7 @@ if(RPPG_ENABLE_SANITIZERS AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
                       -fsanitize=address,undefined)
 endif()
 
-add_library(rppg_qnn_core src/build_identity.cpp src/config.cpp src/contracts.cpp src/deep_model.cpp src/deep_runtime.cpp src/deep_window_builder.cpp src/deep_worker.cpp src/error.cpp src/frame_source.cpp src/pipeline.cpp src/qnn_preflight.cpp src/result_sink.cpp src/roi_processor.cpp src/traditional_predictor.cpp src/tscan_postprocessor.cpp src/tscan_preprocessor.cpp src/tscan_runtime.cpp src/waveform_snapshot.cpp src/yuv420.cpp)
+add_library(rppg_qnn_core src/build_identity.cpp src/config.cpp src/contracts.cpp src/deep_model.cpp src/deep_runtime.cpp src/deep_window_builder.cpp src/deep_worker.cpp src/efficientphys_runtime.cpp src/error.cpp src/frame_source.cpp src/pipeline.cpp src/qnn_preflight.cpp src/result_sink.cpp src/roi_processor.cpp src/traditional_predictor.cpp src/tscan_postprocessor.cpp src/tscan_preprocessor.cpp src/tscan_runtime.cpp src/waveform_snapshot.cpp src/yuv420.cpp)
 target_include_directories(rppg_qnn_core PUBLIC include)
 target_link_libraries(rppg_qnn_core PUBLIC ${OpenCV_LIBS} ${CMAKE_DL_LIBS} Threads::Threads)
 target_compile_options(rppg_qnn_core PRIVATE -Wall -Wextra -Wpedantic -Werror)
@@ -155,15 +155,18 @@ if(BUILD_TESTING)
   target_compile_options(test_tscan_runtime PRIVATE -Wall -Wextra -Wpedantic -Werror)
   add_test(NAME tscan_runtime COMMAND test_tscan_runtime)
 
+  add_executable(test_efficientphys_runtime tests/test_efficientphys_runtime.cpp)
+  target_link_libraries(test_efficientphys_runtime PRIVATE rppg_qnn_core)
+  target_include_directories(test_efficientphys_runtime PRIVATE tests)
+  target_compile_options(test_efficientphys_runtime PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  add_test(NAME efficientphys_runtime COMMAND test_efficientphys_runtime)
+
   add_executable(test_deep_worker tests/test_deep_worker.cpp)
   target_link_libraries(test_deep_worker PRIVATE rppg_qnn_core)
   target_include_directories(test_deep_worker PRIVATE tests)
   target_compile_options(test_deep_worker PRIVATE -Wall -Wextra -Wpedantic -Werror)
   add_test(NAME deep_worker COMMAND test_deep_worker)
   set_tests_properties(deep_worker PROPERTIES TIMEOUT 30)
-
-  # Host EfficientPhys session abstraction tests land with shared runtime work.
-  # Android currently uses android/app/.../android_onnx_cpu_runtime.cpp.
 
   add_library(fake_opencl SHARED tests/test_qnn_preflight.cpp)
   target_compile_definitions(fake_opencl PRIVATE RPPG_FAKE_OPENCL_LIBRARY)
