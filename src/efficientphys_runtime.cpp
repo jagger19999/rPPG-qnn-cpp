@@ -142,23 +142,25 @@ class EfficientPhysRuntime final : public IDeepRuntime {
     const double standard_deviation =
         std::sqrt(squared_deviations /
                   static_cast<double>(input.tensor.size()));
-    if (!std::isfinite(standard_deviation) || standard_deviation == 0.0) {
+    if (!std::isfinite(standard_deviation)) {
       result.invalid_reason = "efficientphys_input_invalid";
       set_elapsed(&result, started);
       return result;
     }
 
     std::vector<float> model_input(kModelValues);
-    for (std::size_t frame = 0; frame < kSourceFrames; ++frame) {
-      for (std::size_t pixel = 0; pixel < kPixels; ++pixel) {
-        for (std::size_t channel = 0; channel < kChannels; ++channel) {
-          const double normalized =
-              (static_cast<double>(
-                   input.tensor[source_offset(frame, pixel, channel)]) -
-               mean) /
-              standard_deviation;
-          model_input[model_offset(frame, channel, pixel)] =
-              static_cast<float>(normalized);
+    if (standard_deviation != 0.0) {
+      for (std::size_t frame = 0; frame < kSourceFrames; ++frame) {
+        for (std::size_t pixel = 0; pixel < kPixels; ++pixel) {
+          for (std::size_t channel = 0; channel < kChannels; ++channel) {
+            const double normalized =
+                (static_cast<double>(
+                     input.tensor[source_offset(frame, pixel, channel)]) -
+                 mean) /
+                standard_deviation;
+            model_input[model_offset(frame, channel, pixel)] =
+                static_cast<float>(normalized);
+          }
         }
       }
     }

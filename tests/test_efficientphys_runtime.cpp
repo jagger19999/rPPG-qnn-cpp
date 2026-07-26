@@ -148,10 +148,24 @@ void malformed_input_never_reaches_session() {
   auto nonfinite = valid_input();
   nonfinite.tensor[7] = std::numeric_limits<float>::infinity();
   expect_rejected(nonfinite);
+}
 
+void zero_variance_input_matches_reference() {
+  auto state = std::make_shared<SessionState>();
+  auto runtime = rppg_qnn::make_onnxruntime_efficientphys_runtime(
+      std::make_unique<RecordingSession>(state));
   auto degenerate = valid_input();
   std::fill(degenerate.tensor.begin(), degenerate.tensor.end(), 4.0F);
-  expect_rejected(degenerate);
+  const auto result = runtime->infer(degenerate);
+  EXPECT_EQ(state->calls, 1);
+  EXPECT_EQ(state->input_shape,
+            (std::vector<std::int64_t>{181, 3, 72, 72}));
+  EXPECT_EQ(state->input.size(), kModelValues);
+  EXPECT_TRUE(std::all_of(state->input.begin(), state->input.end(),
+                          [](float value) {
+                            return std::isfinite(value) && value == 0.0F;
+                          }));
+  EXPECT_TRUE(result.is_valid);
 }
 
 void invalid_model_output_is_concrete_and_finite() {
@@ -211,6 +225,7 @@ void backend_mismatch_is_rejected_without_fallback() {
 int main() {
   exact_preprocessing_and_result_contract();
   malformed_input_never_reaches_session();
+  zero_variance_input_matches_reference();
   invalid_model_output_is_concrete_and_finite();
   backend_mismatch_is_rejected_without_fallback();
   return test_support::finish();
