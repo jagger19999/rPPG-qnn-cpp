@@ -68,13 +68,22 @@ class RecordingSession final : public rppg_qnn::IEfficientPhysSession {
     state_->input = input;
     state_->input_history.push_back(input);
     state_->input_shape = shape;
+    // EfficientPhys emits DiffNormalized labels: first differences of the
+    // underlying BVP. Build a 72 BPM sinusoid over 181 samples and expose the
+    // 180-point difference so reconstruction recovers the original rate.
     std::vector<float> output(state_->output_count);
-    for (std::size_t index = 0; index < output.size(); ++index) {
-      output[index] = state_->constant_output
-                          ? 1.0F
-                          : static_cast<float>(
-                                std::sin(2.0 * 3.14159265358979323846 * 1.2 *
-                                         static_cast<double>(index) / 30.0));
+    if (state_->constant_output) {
+      std::fill(output.begin(), output.end(), 1.0F);
+    } else {
+      constexpr double kPi = 3.14159265358979323846;
+      std::vector<double> bvp(state_->output_count + 1U);
+      for (std::size_t index = 0; index < bvp.size(); ++index) {
+        bvp[index] = std::sin(2.0 * kPi * 1.2 *
+                              static_cast<double>(index) / 30.0);
+      }
+      for (std::size_t index = 0; index < output.size(); ++index) {
+        output[index] = static_cast<float>(bvp[index + 1U] - bvp[index]);
+      }
     }
     if (state_->nonfinite_output) {
       output[7] = std::numeric_limits<float>::quiet_NaN();
@@ -113,7 +122,9 @@ void exact_preprocessing_and_result_contract() {
   EXPECT_EQ(result.method, std::string("EFFICIENTPHYS"));
   EXPECT_EQ(result.backend, std::string("onnxruntime_cpu"));
   EXPECT_TRUE(result.is_valid);
-  EXPECT_TRUE(std::abs(result.bpm - 72.0) <= 0.01);
+  // DiffNormalized reconstruction + band-pass leaves a small residual versus an
+  // exact sinusoid; refined BPM must still land on the 72 BPM ground truth.
+  EXPECT_TRUE(std::abs(result.bpm - 72.0) <= 0.05);
   EXPECT_EQ(result.raw_bpm, result.bpm);
   EXPECT_EQ(result.display_bpm, result.raw_bpm);
   EXPECT_TRUE(result.stability_valid);

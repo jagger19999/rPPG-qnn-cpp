@@ -1,6 +1,7 @@
 #include "rppg_qnn/efficientphys_runtime.hpp"
 
 #include "rppg_qnn/deep_stabilizer.hpp"
+#include "rppg_qnn/efficientphys_postprocessor.hpp"
 #include "rppg_qnn/tscan_postprocessor.hpp"
 
 #include <algorithm>
@@ -211,25 +212,42 @@ class EfficientPhysRuntime final : public IDeepRuntime {
       return result;
     }
 
-    const TscanPostprocessResult post =
-        postprocess_tscan_waveform(output.waveform);
-    // The shared postprocessor remains the authority for validity and
-    // confidence. Refine only a valid peak to remove the 6-second FFT-bin
-    // quantization (70 BPM for an exact 72 BPM sinusoid) without changing the
-    // established TSCAN numerical contract.
+    const auto reconstruction =
+        reconstruct_efficientphys_bvp(output.waveform);
+    if (!reconstruction.is_valid) {
+      result.invalid_reason = reconstruction.invalid_reason;
+      result.postprocess_ms = elapsed_ms(postprocess_started);
+      set_inference_elapsed(&result, inference_started);
+      return result;
+    }
+
+    // Use the reconstructed BVP for FFT/confidence, BPM refinement,
+    // stabilizer, and waveform output — matching the Python Toolbox
+    // post-processing pipeline (cumsum + detrend + band-pass filtfilt).
+    // Constant DiffNormalized outputs reconstruct to near-zero float noise;
+    // collapse that to an exact constant so spectral/stabilizer gates match
+    // the historical constant-waveform rejection contract.
+    std::vector<float> bvp = reconstruction.bvp;
+    const auto [bvp_min, bvp_max] =
+        std::minmax_element(bvp.begin(), bvp.end());
+    constexpr float kDegeneratePeakToPeak = 1.0e-6F;
+    if (*bvp_max - *bvp_min < kDegeneratePeakToPeak) {
+      std::fill(bvp.begin(), bvp.end(), 0.0F);
+    }
+
+    const TscanPostprocessResult post = postprocess_tscan_waveform(bvp);
     result.bpm =
-        post.is_valid ? refined_bpm(output.waveform, post.bpm) : post.bpm;
+        post.is_valid ? refined_bpm(bvp, post.bpm) : post.bpm;
     result.raw_bpm = result.bpm;
     result.confidence = post.confidence;
     result.is_valid = post.is_valid;
     result.invalid_reason = post.invalid_reason;
     const DeepStabilityResult stability =
-        stabilizer_.stabilize(output.waveform, result.raw_bpm,
-                              result.confidence);
+        stabilizer_.stabilize(bvp, result.raw_bpm, result.confidence);
     result.display_bpm = stability.display_bpm;
     result.stability_valid = stability.stability_valid;
     result.correction_reason = stability.correction_reason;
-    result.waveform = std::move(output.waveform);
+    result.waveform = std::move(bvp);
     result.postprocess_ms = elapsed_ms(postprocess_started);
     set_inference_elapsed(&result, inference_started);
     return result;
