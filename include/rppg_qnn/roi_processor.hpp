@@ -1,5 +1,6 @@
 #pragma once
 
+#include "rppg_qnn/contracts.hpp"
 #include "rppg_qnn/frame_source.hpp"
 
 #include <filesystem>
@@ -12,42 +13,12 @@
 
 namespace rppg_qnn {
 
-struct FaceBox {
-  int x{0};
-  int y{0};
-  int width{0};
-  int height{0};
-  double confidence{0.0};
-};
-
-struct RoiPacket {
-  RoiPacket() = default;
-  RoiPacket(std::uint64_t requested_frame_id, double requested_timestamp_sec,
-            cv::Mat requested_roi_bgr, std::optional<FaceBox> requested_face,
-            bool requested_used_fallback, int requested_face_count = 0,
-            double requested_motion_px = 0.0,
-            cv::Mat requested_deep_roi_bgr = {})
-      : frame_id(requested_frame_id),
-        timestamp_sec(requested_timestamp_sec),
-        roi_bgr(std::move(requested_roi_bgr)),
-        face(std::move(requested_face)),
-        used_fallback(requested_used_fallback),
-        face_count(requested_face_count),
-        motion_px(requested_motion_px),
-        deep_roi_bgr(std::move(requested_deep_roi_bgr)) {}
-  std::uint64_t frame_id{0};
-  double timestamp_sec{0.0};
-  cv::Mat roi_bgr;
-  std::optional<FaceBox> face;
-  bool used_fallback{false};
-  int face_count{0};
-  double motion_px{0.0};
-  cv::Mat deep_roi_bgr;
-};
-
 using FaceDetector = std::function<std::vector<FaceBox>(const cv::Mat&)>;
 
 std::optional<cv::Rect> cheek_roi(const FaceBox& face, cv::Size frame_size);
+std::optional<cv::Rect> expanded_face_roi(const FaceBox& face,
+                                          cv::Size frame_size,
+                                          double scale = 1.5);
 
 class IRoiProcessor {
  public:

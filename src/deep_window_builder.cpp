@@ -1,6 +1,7 @@
 #include "rppg_qnn/deep_window_builder.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <stdexcept>
 #include <utility>
@@ -113,6 +114,7 @@ std::optional<DeepInput> DeepWindowBuilder::build_latest() {
   }
 
   ++materialization_count_;
+  const auto materialization_started = std::chrono::steady_clock::now();
   DeepInput input;
   input.start_sec = start;
   input.end_sec = end;
@@ -146,6 +148,10 @@ std::optional<DeepInput> DeepWindowBuilder::build_latest() {
       }
     }
   }
+  input.window_materialization_ms =
+      std::chrono::duration<double, std::milli>(
+          std::chrono::steady_clock::now() - materialization_started)
+          .count();
   status_ = "ready";
   return input;
 }

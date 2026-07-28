@@ -435,9 +435,10 @@ int Pipeline::run() {
         }
         if (deep_builder.has_value()) {
           RoiPacket deep_packet = roi;
-          if (!roi.deep_roi_bgr.empty()) {
-            deep_packet.roi_bgr = roi.deep_roi_bgr;
-          }
+          // Never substitute the traditional cheek crop when the dedicated
+          // deep full-face crop is unavailable. That would silently change the
+          // TSCAN/EfficientPhys input contract and invalidate numeric parity.
+          deep_packet.roi_bgr = roi.deep_roi_bgr;
           const bool ingested = deep_builder->ingest_roi(deep_packet);
           health.status = deep_builder->status();
           if (ingested && (!last_deep_build_sec.has_value() ||

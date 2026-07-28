@@ -3,6 +3,7 @@ package com.jagger.rppgbench;
 import android.Manifest;
 import android.app.Activity;
 import android.content.pm.PackageManager;
+import android.content.res.AssetManager;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Matrix;
@@ -22,7 +23,6 @@ import android.webkit.WebSettings;
 import android.widget.AdapterView;
 import android.widget.ArrayAdapter;
 import android.widget.Button;
-import android.widget.CheckBox;
 import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
@@ -32,6 +32,9 @@ import android.widget.TextView;
 import com.jagger.rppgbench.ui.FaceBoxOverlay;
 import com.jagger.rppgbench.ui.HrMetricCard;
 import com.jagger.rppgbench.ui.HrStatusFormatter;
+import com.jagger.rppgbench.ui.PpgWaveformCard;
+import com.jagger.rppgbench.ui.PpgWaveformSnapshot;
+import com.jagger.rppgbench.ui.PpgWaveformState;
 import com.jagger.rppgbench.watch.AndroidBleBackend;
 import com.jagger.rppgbench.watch.WatchAligner;
 import com.jagger.rppgbench.watch.WatchBleWorker;
@@ -48,6 +51,11 @@ import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public final class MainActivity extends Activity {
     private static final int CAMERA_CAPTURE_WIDTH = 640;
@@ -75,6 +83,12 @@ public final class MainActivity extends Activity {
     private HrMetricCard deepCard;
     private HrMetricCard watchCard;
     private WebView hrChart;
+    private PpgWaveformCard traditionalWaveformCard;
+    private PpgWaveformCard deepWaveformCard;
+    private PpgWaveformSnapshot traditionalWaveform;
+    private PpgWaveformSnapshot deepWaveform;
+    private long traditionalWaveformRevision;
+    private long deepWaveformRevision;
     private TextView alignmentView;
     private TextView fpsLine;
     private FrameLayout previewContainer;
@@ -89,7 +103,10 @@ public final class MainActivity extends Activity {
     private Spinner methodSelector;
     private Spinner cameraSelector;
     private Spinner watchDeviceSelector;
-    private CheckBox deepSelector;
+    private Spinner deepSelector;
+    private Button listCamerasButton;
+    private Button startCameraButton;
+    private Button stopCameraButton;
     private ArrayAdapter<String> cameraAdapter;
     private ArrayAdapter<String> watchDeviceAdapter;
     private final List<CameraEntry> cameraEntries = new ArrayList<>();
@@ -102,6 +119,8 @@ public final class MainActivity extends Activity {
     private boolean diagnosticExpanded = false;
     private String userMessage = "";
     private String lastCameraJson = "{}";
+    private DeepModelSelection activeDeepSelection =
+            DeepModelSelection.fromSpinnerPosition(0);
 
     private String cameraId;
     private long nativeHandle;
@@ -109,6 +128,20 @@ public final class MainActivity extends Activity {
     private boolean previewSurfaceReady;
     private boolean pendingPreviewBinding;
     private boolean pendingCameraStart;
+    private boolean lifecycleStopped;
+    private boolean startWorkerSubmitted;
+    private CameraStartRequest pendingStartRequest;
+    private long pendingStartGeneration;
+    private final CameraStartGeneration cameraStartGeneration = new CameraStartGeneration();
+    private final CameraUiSessionPolicy cameraUiSessionPolicy =
+            new CameraUiSessionPolicy();
+    private final ExecutorService cameraStartExecutor =
+            Executors.newSingleThreadExecutor(
+                    runnable -> {
+                        Thread thread = new Thread(runnable, "rppg-camera-start");
+                        thread.setDaemon(true);
+                        return thread;
+                    });
     private boolean cameraSpinnerInitializing;
     private int pendingAction = ACTION_NONE;
     private int pendingBleAction = BLE_ACTION_NONE;
@@ -139,7 +172,9 @@ public final class MainActivity extends Activity {
             }
         });
         hrChart.loadUrl("file:///android_asset/hr_chart.html");
-
+        traditionalWaveformCard = new PpgWaveformCard(findViewById(R.id.waveform_traditional));
+        deepWaveformCard = new PpgWaveformCard(findViewById(R.id.waveform_deep));
+        initializeWaveformCards();
         alignmentView = findViewById(R.id.alignment_line);
         fpsLine = findViewById(R.id.fps_line);
         previewContainer = findViewById(R.id.preview_container);
@@ -162,6 +197,15 @@ public final class MainActivity extends Activity {
         methodSelector.setAdapter(methodAdapter);
 
         deepSelector = findViewById(R.id.deep_selector);
+        ArrayAdapter<String> deepModelAdapter =
+                new ArrayAdapter<>(
+                        this,
+                        android.R.layout.simple_spinner_item,
+                        DeepModelSelection.spinnerLabels());
+        deepModelAdapter.setDropDownViewResource(
+                android.R.layout.simple_spinner_dropdown_item);
+        deepSelector.setAdapter(deepModelAdapter);
+        deepSelector.setSelection(0);
 
         cameraAdapter =
                 new ArrayAdapter<>(this, android.R.layout.simple_spinner_item, new ArrayList<>());
@@ -198,11 +242,13 @@ public final class MainActivity extends Activity {
         watchDeviceSelector = findViewById(R.id.watch_device_selector);
         watchDeviceSelector.setAdapter(watchDeviceAdapter);
 
-        findViewById(R.id.list_cameras)
-                .setOnClickListener(view -> runWithCameraPermission(ACTION_LIST));
-        findViewById(R.id.start_camera)
-                .setOnClickListener(view -> runWithCameraPermission(ACTION_START));
-        findViewById(R.id.stop_camera).setOnClickListener(view -> stopCamera());
+        listCamerasButton = findViewById(R.id.list_cameras);
+        startCameraButton = findViewById(R.id.start_camera);
+        stopCameraButton = findViewById(R.id.stop_camera);
+        listCamerasButton.setOnClickListener(view -> runWithCameraPermission(ACTION_LIST));
+        startCameraButton.setOnClickListener(view -> runWithCameraPermission(ACTION_START));
+        stopCameraButton.setOnClickListener(view -> stopCamera());
+        applyCameraUiDecision(cameraUiSessionPolicy.current());
 
         findViewById(R.id.scan_watch)
                 .setOnClickListener(view -> runWithBlePermission(BLE_ACTION_SCAN));
@@ -235,7 +281,6 @@ public final class MainActivity extends Activity {
                         // TextureView only gets a Surface after the container is visible.
                         // Bind + start must wait for this callback; binding while running is rejected.
                         if (pendingCameraStart) {
-                            bindPreviewSurface(surfaceTexture);
                             finishStartCamera();
                             return;
                         }
@@ -351,7 +396,7 @@ public final class MainActivity extends Activity {
     }
 
     private void refreshCombinedStatus() {
-        String cameraJson = "{}";
+        String cameraJson = lastCameraJson;
         if (started && nativeHandle != 0) {
             try {
                 cameraJson = NativeBridge.nativeGetStatus(nativeHandle);
@@ -368,8 +413,11 @@ public final class MainActivity extends Activity {
         Double tradBpm = null, deepBpm = null, watchBpm = null;
         try {
             JSONObject json = new JSONObject(cameraJson);
-            traditionalCard.bind("传统", HrStatusFormatter.traditional(json));
-            deepCard.bind("深度", HrStatusFormatter.deep(json));
+            traditionalCard.bind("传统 rPPG", HrStatusFormatter.traditional(json));
+            deepCard.bind(deepCardTitle(activeDeepSelection), HrStatusFormatter.deep(json));
+            if (started && nativeHandle != 0) {
+                updateWaveformCards(json);
+            }
             JSONObject measurement = json.optJSONObject("measurement");
             if (json.optBoolean("measurement_available", false) && measurement != null
                     && measurement.optBoolean("accepted_available", false)) {
@@ -384,8 +432,10 @@ public final class MainActivity extends Activity {
                 if (!Double.isFinite(deepBpm)) deepBpm = null;
             }
         } catch (Exception error) {
-            traditionalCard.bind("传统", new HrStatusFormatter.CardView("--", "不可用"));
-            deepCard.bind("深度", new HrStatusFormatter.CardView("--", "不可用"));
+            traditionalCard.bind("传统 rPPG", new HrStatusFormatter.CardView("--", "不可用"));
+            deepCard.bind(
+                    deepCardTitle(activeDeepSelection),
+                    new HrStatusFormatter.CardView("--", "不可用"));
         }
 
         WatchContracts.WatchHeartRateSnapshot snapshot =
@@ -454,6 +504,97 @@ public final class MainActivity extends Activity {
                             dropped));
         } catch (Exception error) {
             fpsLine.setText(getString(R.string.fps_line_idle));
+        }
+    }
+
+    private void updateWaveformCards(JSONObject status) {
+        long traditionalRevision = status.optLong("traditional_waveform_revision", 0);
+        long deepRevision = status.optLong("deep_waveform_revision", 0);
+        if (traditionalRevision > 0 && traditionalRevision != traditionalWaveformRevision) {
+            PpgWaveformSnapshot loaded = loadWaveform(false);
+            if (loaded != null) {
+                traditionalWaveform = loaded;
+                traditionalWaveformRevision = loaded.revision;
+            }
+        }
+        if (deepRevision > 0 && deepRevision != deepWaveformRevision) {
+            PpgWaveformSnapshot loaded = loadWaveform(true);
+            if (loaded != null) {
+                deepWaveform = loaded;
+                deepWaveformRevision = loaded.revision;
+            }
+        }
+
+        String traditionalState = getString(R.string.waveform_traditional_sampling);
+        if (traditionalWaveform != null) {
+            traditionalState = traditionalWaveform.valid
+                    ? traditionalWaveform.method + " · " + traditionalWaveform.sampleCount()
+                            + " 点 · " + String.format(Locale.US, "%.1f 秒",
+                                    -traditionalWaveform.relativeStartSeconds())
+                    : "信号质量低：" + traditionalWaveform.invalidReason;
+        }
+        traditionalWaveformCard.bind(getString(R.string.waveform_traditional_title),
+                traditionalState, traditionalWaveform);
+
+        boolean deepEnabled = status.optBoolean("deep_enabled", false);
+        int collected = status.optInt("deep_frames_collected", 0);
+        int required = status.optInt("deep_frames_required", 180);
+        boolean available = status.optBoolean("deep_result_available", false);
+        boolean waveformValid = status.optBoolean("deep_result_valid", false);
+        boolean stabilityValid = status.optBoolean("deep_stability_valid", false);
+        String reason = waveformValid
+                ? status.optString("deep_correction_reason", "")
+                : status.optString("deep_invalid_reason", "");
+        String deepState = PpgWaveformState.deep(
+                activeDeepSelection.modelLabel,
+                deepEnabled,
+                collected,
+                required,
+                available,
+                waveformValid && stabilityValid,
+                reason);
+        deepWaveformCard.bind(
+                deepWaveformTitle(activeDeepSelection), deepState, deepWaveform);
+    }
+
+    private PpgWaveformSnapshot loadWaveform(boolean deep) {
+        try {
+            JSONObject metadata = new JSONObject(
+                    NativeBridge.nativeGetWaveformMetadata(nativeHandle, deep));
+            if (!metadata.optBoolean("available", false)) {
+                return null;
+            }
+            float[] values = NativeBridge.nativeGetWaveformValues(nativeHandle, deep);
+            int expected = metadata.optInt("sample_count", 0);
+            if (values == null || values.length != expected) {
+                return null;
+            }
+            return new PpgWaveformSnapshot(
+                    metadata.optLong("revision", 0), metadata.optString("method", ""),
+                    metadata.optDouble("sample_rate_hz", 30.0),
+                    metadata.optBoolean("is_valid", false),
+                    metadata.optString("invalid_reason", ""), values);
+        } catch (Throwable error) {
+            return null;
+        }
+    }
+
+    private void clearWaveformsForNewSession() {
+        traditionalWaveform = null;
+        deepWaveform = null;
+        traditionalWaveformRevision = 0;
+        deepWaveformRevision = 0;
+        initializeWaveformCards();
+    }
+
+    private void initializeWaveformCards() {
+        if (traditionalWaveformCard != null) {
+            traditionalWaveformCard.clear(getString(R.string.waveform_traditional_title),
+                    getString(R.string.waveform_traditional_sampling));
+        }
+        if (deepWaveformCard != null) {
+            deepWaveformCard.clear(deepWaveformTitle(activeDeepSelection),
+                    getString(R.string.waveform_deep_disabled));
         }
     }
 
@@ -576,7 +717,8 @@ public final class MainActivity extends Activity {
         }
 
         matrix.postScale(scaleX, scaleY, centerX, centerY);
-        matrix.postRotate(relative, centerX, centerY);
+        matrix.postRotate(
+                PreviewRotation.textureTransformDegrees(relative), centerX, centerY);
         previewSurface.setTransform(matrix);
         updatePreviewMirror();
     }
@@ -671,9 +813,24 @@ public final class MainActivity extends Activity {
             if (surfaceTexture != null) {
                 surfaceTexture.setDefaultBufferSize(
                         CAMERA_CAPTURE_WIDTH, CAMERA_CAPTURE_HEIGHT);
-                bindPreviewSurface(surfaceTexture);
             }
         }
+    }
+
+    private void setCameraControlsLocked(boolean locked) {
+        methodSelector.setEnabled(!locked);
+        deepSelector.setEnabled(!locked);
+        cameraSelector.setEnabled(!locked);
+        listCamerasButton.setEnabled(!locked);
+        startCameraButton.setEnabled(!locked);
+        stopCameraButton.setEnabled(locked);
+    }
+
+    private void applyCameraUiDecision(CameraUiSessionPolicy.Decision decision) {
+        if (decision.clearHistory) {
+            clearWaveformsForNewSession();
+        }
+        setCameraControlsLocked(decision.selectorsLocked);
     }
 
     private void refreshDiagnosticContent(String cameraJson) {
@@ -1010,19 +1167,30 @@ public final class MainActivity extends Activity {
     }
 
     private void stopCameraSilently() {
+        cameraStartGeneration.cancel();
+        CameraUiSessionPolicy.Decision uiDecision =
+                cameraUiSessionPolicy.stopRequested();
         pendingCameraStart = false;
+        startWorkerSubmitted = false;
+        pendingStartRequest = null;
         statusHandler.removeCallbacks(finishStartWhenPreviewReady);
+        pendingPreviewBinding = false;
         if (nativeHandle == 0) {
             started = false;
+            applyCameraUiDecision(uiDecision);
             return;
         }
         try {
-            NativeBridge.nativeStop(nativeHandle);
+            String stopped = NativeBridge.nativeStop(nativeHandle);
+            if (uiDecision.requestFinalSnapshot && uiDecision.retainLastResult) {
+                retainLatestCameraResult(stopped);
+            }
             exportWatchCsv();
         } catch (Throwable ignored) {
             // Best effort before switching cameras.
         } finally {
             started = false;
+            applyCameraUiDecision(uiDecision);
             NativeBridge.nativeDestroy(nativeHandle);
             nativeHandle = 0;
             roiImage.setVisibility(View.GONE);
@@ -1040,7 +1208,7 @@ public final class MainActivity extends Activity {
             };
 
     private void startCamera() {
-        if (started || pendingCameraStart) {
+        if (lifecycleStopped || started || pendingCameraStart) {
             return;
         }
         if (cameraEntries.isEmpty()) {
@@ -1051,128 +1219,271 @@ public final class MainActivity extends Activity {
             showUserMessage("CAMERA_ID_UNAVAILABLE: no Camera2 NDK camera");
             return;
         }
-        try {
-            if (nativeHandle != 0) {
-                NativeBridge.nativeDestroy(nativeHandle);
-                nativeHandle = 0;
-            }
-            nativeHandle =
-                    NativeBridge.nativeCreate(
-                            cameraId, CAMERA_CAPTURE_WIDTH, CAMERA_CAPTURE_HEIGHT, 30);
-            File cascade = ensureCascadeAsset();
-            sessionOutputDirectory =
-                    new File(
-                            new File(getFilesDir(), "sessions"),
-                            "session-" + System.currentTimeMillis());
-            File model =
-                    new File(new File(getFilesDir(), "models"), "ubfc_tscan_full_lr3e-5_Epoch10.onnx");
-            if (deepSelector.isChecked() && !model.isFile()) {
-                showUserMessage(
-                        "MODEL_LOAD_FAILED: import models/ubfc_tscan_full_lr3e-5_Epoch10.onnx "
-                                + "to app-private storage with adb run-as");
-                return;
-            }
-            String configured =
-                    NativeBridge.nativeConfigureProcessing(
-                            nativeHandle,
-                            methodSelector.getSelectedItem().toString(),
-                            cascade.getAbsolutePath(),
-                            sessionOutputDirectory.getAbsolutePath(),
-                            deepSelector.isChecked(),
-                            model.getAbsolutePath());
-            if (!configured.startsWith("{")) {
-                showUserMessage(configured);
-                return;
-            }
-            alignmentHistory.clear();
-            latestAlignment = null;
-            lastAlignedWindowEndSec = null;
-            // Preview Surface must exist before nativeStart; GONE TextureView has none.
-            pendingCameraStart = true;
-            preparePreviewSurfaceBinding();
-            if (previewSurfaceReady && previewSurface.isAvailable()) {
-                finishStartCamera();
-            } else {
-                // Next layout pass often creates the SurfaceTexture; timeout falls back.
-                previewSurface.post(
-                        () -> {
-                            if (pendingCameraStart
-                                    && previewSurface.isAvailable()
-                                    && !started) {
-                                finishStartCamera();
-                            }
-                        });
-                statusHandler.postDelayed(finishStartWhenPreviewReady, 750);
-            }
-        } catch (Throwable error) {
-            pendingCameraStart = false;
-            showUserMessage("CAMERA_START_FAILED: " + error.getMessage());
+        if (nativeHandle != 0) {
+            NativeBridge.nativeDestroy(nativeHandle);
+            nativeHandle = 0;
+        }
+        File filesDirectory = getFilesDir();
+        DeepModelSelection deepSelection = DeepModelSelection.fromSpinnerPosition(
+                deepSelector.getSelectedItemPosition());
+        pendingStartRequest =
+                new CameraStartRequest(
+                        cameraId,
+                        methodSelector.getSelectedItem().toString(),
+                        deepSelection,
+                        ModelIntegrity.modelFile(
+                                new File(filesDirectory, "models"), deepSelection),
+                        filesDirectory,
+                        getAssets(),
+                        new File(
+                                new File(filesDirectory, "sessions"),
+                                "session-" + System.currentTimeMillis()),
+                        displayRotationDegrees());
+        pendingStartGeneration = cameraStartGeneration.begin();
+        pendingCameraStart = true;
+        startWorkerSubmitted = false;
+        applyCameraUiDecision(cameraUiSessionPolicy.begin());
+        showUserMessage("正在后台校验模型并启动相机…");
+        preparePreviewSurfaceBinding();
+        if (previewSurfaceReady && previewSurface.isAvailable()) {
+            finishStartCamera();
+        } else {
+            statusHandler.postDelayed(finishStartWhenPreviewReady, 750);
         }
     }
 
     private void finishStartCamera() {
-        if (!pendingCameraStart || started || nativeHandle == 0) {
+        if (!pendingCameraStart || started || startWorkerSubmitted
+                || pendingStartRequest == null) {
             return;
         }
         statusHandler.removeCallbacks(finishStartWhenPreviewReady);
-        pendingCameraStart = false;
-        try {
-            NativeBridge.nativeSetDisplayRotation(nativeHandle, displayRotationDegrees());
-            applyPreviewAspect();
-            if (previewSurfaceReady && previewSurface.isAvailable()) {
-                SurfaceTexture surfaceTexture = previewSurface.getSurfaceTexture();
-                if (surfaceTexture != null) {
-                    surfaceTexture.setDefaultBufferSize(
-                            CAMERA_CAPTURE_WIDTH, CAMERA_CAPTURE_HEIGHT);
-                    bindPreviewSurface(surfaceTexture);
-                }
+        pendingPreviewBinding = false;
+        Surface surface = null;
+        if (previewSurfaceReady && previewSurface.isAvailable()) {
+            SurfaceTexture surfaceTexture = previewSurface.getSurfaceTexture();
+            if (surfaceTexture != null) {
+                surfaceTexture.setDefaultBufferSize(
+                        CAMERA_CAPTURE_WIDTH, CAMERA_CAPTURE_HEIGHT);
+                surface = new Surface(surfaceTexture);
             }
-            sessionStartMonotonicSec = monotonicSec();
-            String result = NativeBridge.nativeStart(nativeHandle);
-            if (!result.contains("\"state\":\"running\"")) {
-                showUserMessage(result);
-                releasePreviewSurface();
-                sessionStartMonotonicSec = null;
+        }
+        startWorkerSubmitted = true;
+        CameraStartRequest request = pendingStartRequest;
+        long generation = pendingStartGeneration;
+        Surface capturedSurface = surface;
+        try {
+            cameraStartExecutor.execute(
+                    () -> runCameraStart(generation, request, capturedSurface));
+        } catch (RejectedExecutionException error) {
+            if (capturedSurface != null) {
+                capturedSurface.release();
+            }
+            if (cameraStartGeneration.isCurrent(generation)) {
+                pendingCameraStart = false;
+                startWorkerSubmitted = false;
+                pendingStartRequest = null;
+                applyCameraUiDecision(cameraUiSessionPolicy.fail());
+                showUserMessage("CAMERA_START_FAILED: background executor is unavailable");
+            }
+        }
+    }
+
+    private void runCameraStart(
+            long generation, CameraStartRequest request, Surface preview) {
+        long handle = 0;
+        boolean transferredToActivity = false;
+        try (PreparedModel prepared = PreparedModel.prepare(
+                request.deepSelection, request.modelFile)) {
+            if (!cameraStartGeneration.isCurrent(generation)) {
                 return;
             }
-            started = true;
-            applyPreviewAspect();
-            userMessage = "";
-            refreshCombinedStatus();
-            try {
-                if (!new JSONObject(result).optBoolean("preview_enabled", false)) {
-                    showUserMessage(
-                            "预览未接入（仅分析通路）。请看诊断里 preview_enabled / "
-                                    + "preview_unavailable。");
-                }
-            } catch (Exception ignored) {
-                // Status poll will refresh preview_enabled.
+            File cascade = ensureCascadeAsset(request.filesDirectory, request.assets);
+            handle =
+                    NativeBridge.nativeCreate(
+                            request.cameraId,
+                            CAMERA_CAPTURE_WIDTH,
+                            CAMERA_CAPTURE_HEIGHT,
+                            30);
+            String configured =
+                    NativeBridge.nativeConfigureProcessing(
+                            handle,
+                            request.method,
+                            cascade.getAbsolutePath(),
+                            request.sessionDirectory.getAbsolutePath(),
+                            request.deepSelection.canonicalName,
+                            prepared.nativePath());
+            if (!configured.startsWith("{")) {
+                throw new IllegalStateException(configured);
             }
+            NativeBridge.nativeSetDisplayRotation(handle, request.displayRotationDegrees);
+            if (preview != null) {
+                NativeBridge.nativeSetPreviewSurface(handle, preview);
+            }
+            if (!cameraStartGeneration.isCurrent(generation)) {
+                return;
+            }
+            double startMonotonicSec = monotonicSec();
+            String result = NativeBridge.nativeStart(handle);
+            if (!result.contains("\"state\":\"running\"")) {
+                throw new IllegalStateException(result);
+            }
+
+            AtomicBoolean deliveryOpen = new AtomicBoolean(true);
+            AtomicBoolean accepted = new AtomicBoolean(false);
+            CountDownLatch delivered = new CountDownLatch(1);
+            long completedHandle = handle;
+            boolean posted =
+                    statusHandler.post(
+                            () -> {
+                                try {
+                                    if (deliveryOpen.compareAndSet(true, false)
+                                            && cameraStartGeneration.isCurrent(generation)) {
+                                        // Transfer ownership before UI work can throw.
+                                        accepted.set(true);
+                                        acceptStartedCamera(
+                                                request,
+                                                completedHandle,
+                                                result,
+                                                startMonotonicSec);
+                                    }
+                                } finally {
+                                    delivered.countDown();
+                                }
+                            });
+            if (!posted) {
+                deliveryOpen.set(false);
+                delivered.countDown();
+            }
+            boolean interrupted = false;
+            while (true) {
+                try {
+                    delivered.await();
+                    break;
+                } catch (InterruptedException ignored) {
+                    interrupted = true;
+                }
+            }
+            if (interrupted) {
+                Thread.currentThread().interrupt();
+            }
+            transferredToActivity = accepted.get();
         } catch (Throwable error) {
-            showUserMessage("CAMERA_START_FAILED: " + error.getMessage());
+            if (!transferredToActivity) {
+                postCameraStartFailure(generation, error.getMessage());
+            }
+        } finally {
+            if (preview != null) {
+                preview.release();
+            }
+            if (handle != 0 && !transferredToActivity) {
+                stopAndDestroyNative(handle);
+            }
+        }
+    }
+
+    private void acceptStartedCamera(
+            CameraStartRequest request, long handle, String result, double startMonotonicSec) {
+        nativeHandle = handle;
+        activeDeepSelection = request.deepSelection;
+        sessionOutputDirectory = request.sessionDirectory;
+        sessionStartMonotonicSec = startMonotonicSec;
+        pendingCameraStart = false;
+        startWorkerSubmitted = false;
+        pendingStartRequest = null;
+        started = true;
+        alignmentHistory.clear();
+        latestAlignment = null;
+        lastAlignedWindowEndSec = null;
+        applyCameraUiDecision(cameraUiSessionPolicy.accept());
+        applyPreviewAspect();
+        userMessage = "";
+        refreshCombinedStatus();
+        try {
+            if (!new JSONObject(result).optBoolean("preview_enabled", false)) {
+                showUserMessage(
+                        "预览未接入（仅分析通路）。请看诊断里 preview_enabled / "
+                                + "preview_unavailable。");
+            }
+        } catch (Exception ignored) {
+            // Status poll will refresh preview_enabled.
+        }
+    }
+
+    private void postCameraStartFailure(long generation, String message) {
+        statusHandler.post(
+                () -> {
+                    if (!cameraStartGeneration.isCurrent(generation)) {
+                        return;
+                    }
+                    pendingCameraStart = false;
+                    startWorkerSubmitted = false;
+                    pendingStartRequest = null;
+                    pendingPreviewBinding = false;
+                    applyCameraUiDecision(cameraUiSessionPolicy.fail());
+                    previewContainer.setVisibility(View.GONE);
+                    showUserMessage("CAMERA_START_FAILED: " + message);
+                });
+    }
+
+    private static void stopAndDestroyNative(long handle) {
+        try {
+            NativeBridge.nativeStop(handle);
+        } catch (Throwable ignored) {
+            // The handle may have failed before reaching the running state.
+        }
+        try {
+            NativeBridge.nativeDestroy(handle);
+        } catch (Throwable ignored) {
+            // Best-effort cleanup for canceled/failed background starts.
         }
     }
 
     private void stopCamera() {
+        cameraStartGeneration.cancel();
+        CameraUiSessionPolicy.Decision uiDecision =
+                cameraUiSessionPolicy.stopRequested();
         pendingCameraStart = false;
+        startWorkerSubmitted = false;
+        pendingStartRequest = null;
         statusHandler.removeCallbacks(finishStartWhenPreviewReady);
+        pendingPreviewBinding = false;
         if (nativeHandle == 0) {
             started = false;
+            applyCameraUiDecision(uiDecision);
+            previewContainer.setVisibility(View.GONE);
             return;
         }
         try {
             String stopped = NativeBridge.nativeStop(nativeHandle);
+            if (uiDecision.requestFinalSnapshot && uiDecision.retainLastResult) {
+                retainLatestCameraResult(stopped);
+            }
             exportWatchCsv();
             showUserMessage(stopped + "\n" + formatWatchStatusLine());
         } catch (Throwable error) {
             showUserMessage("CAMERA_STOP_FAILED: " + error.getMessage());
         } finally {
             started = false;
+            applyCameraUiDecision(uiDecision);
             releasePreviewSurface();
             roiImage.setVisibility(View.GONE);
             roiPlaceholder.setVisibility(View.VISIBLE);
             previewContainer.setVisibility(View.GONE);
             faceBoxOverlay.clearFaceRect();
+        }
+    }
+
+    private void retainLatestCameraResult(String statusJson) {
+        try {
+            JSONObject status = new JSONObject(statusJson);
+            lastCameraJson = statusJson;
+            traditionalCard.bind("传统 rPPG", HrStatusFormatter.traditional(status));
+            deepCard.bind(
+                    deepCardTitle(activeDeepSelection), HrStatusFormatter.deep(status));
+            updateWaveformCards(status);
+        } catch (Throwable ignored) {
+            // Preserve the most recently polled result when the final status read fails.
         }
     }
 
@@ -1198,13 +1509,23 @@ public final class MainActivity extends Activity {
     }
 
     @Override
+    protected void onStart() {
+        super.onStart();
+        lifecycleStopped = false;
+    }
+
+    @Override
     protected void onStop() {
+        lifecycleStopped = true;
         stopCamera();
         super.onStop();
     }
 
     @Override
     protected void onDestroy() {
+        lifecycleStopped = true;
+        cameraStartGeneration.destroy();
+        cameraStartExecutor.shutdown();
         statusHandler.removeCallbacks(statusPoll);
         if (watchWorker != null) {
             watchWorker.close();
@@ -1262,6 +1583,46 @@ public final class MainActivity extends Activity {
         }
     }
 
+    private static final class CameraStartRequest {
+        private final String cameraId;
+        private final String method;
+        private final DeepModelSelection deepSelection;
+        private final File modelFile;
+        private final File filesDirectory;
+        private final AssetManager assets;
+        private final File sessionDirectory;
+        private final int displayRotationDegrees;
+
+        private CameraStartRequest(
+                String cameraId,
+                String method,
+                DeepModelSelection deepSelection,
+                File modelFile,
+                File filesDirectory,
+                AssetManager assets,
+                File sessionDirectory,
+                int displayRotationDegrees) {
+            this.cameraId = cameraId;
+            this.method = method;
+            this.deepSelection = deepSelection;
+            this.modelFile = modelFile;
+            this.filesDirectory = filesDirectory;
+            this.assets = assets;
+            this.sessionDirectory = sessionDirectory;
+            this.displayRotationDegrees = displayRotationDegrees;
+        }
+    }
+
+    private static String deepCardTitle(DeepModelSelection selection) {
+        return selection.enabled() ? "深度 " + selection.displayLabel() : "深度模型";
+    }
+
+    private String deepWaveformTitle(DeepModelSelection selection) {
+        return selection.enabled()
+                ? getString(R.string.waveform_deep_title, selection.displayLabel())
+                : getString(R.string.waveform_deep_disabled_title);
+    }
+
     private static String formatDouble(double value) {
         return String.format(Locale.US, "%.4g", value);
     }
@@ -1278,13 +1639,14 @@ public final class MainActivity extends Activity {
         hrChart.post(() -> hrChart.evaluateJavascript(js, null));
     }
 
-    private File ensureCascadeAsset() throws IOException {
-        File cascade = new File(getFilesDir(), "haarcascade_frontalface_default.xml");
+    private static File ensureCascadeAsset(File filesDirectory, AssetManager assets)
+            throws IOException {
+        File cascade = new File(filesDirectory, "haarcascade_frontalface_default.xml");
         if (cascade.isFile() && cascade.length() > 0) {
             return cascade;
         }
         File temporary = new File(cascade.getAbsolutePath() + ".tmp");
-        try (InputStream input = getAssets().open("haarcascade_frontalface_default.xml");
+        try (InputStream input = assets.open("haarcascade_frontalface_default.xml");
                 FileOutputStream output = new FileOutputStream(temporary)) {
             byte[] buffer = new byte[16 * 1024];
             int count;

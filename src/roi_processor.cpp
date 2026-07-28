@@ -3,8 +3,9 @@
 #include "rppg_qnn/error.hpp"
 
 #include <algorithm>
-#include <cstdint>
 #include <cmath>
+#include <cstdint>
+#include <limits>
 #include <memory>
 #include <system_error>
 #include <string>
@@ -17,6 +18,26 @@
 
 namespace rppg_qnn {
 namespace {
+
+std::optional<std::int64_t> python_round_to_int64(const double value) {
+  if (!std::isfinite(value)) {
+    return std::nullopt;
+  }
+
+  const double lower = std::floor(value);
+  const double fraction = value - lower;
+  double rounded = lower;
+  if (fraction > 0.5 ||
+      (fraction == 0.5 && std::fmod(std::abs(lower), 2.0) == 1.0)) {
+    rounded = lower + 1.0;
+  }
+  constexpr double kInt64LowerBound = -0x1p63;
+  constexpr double kInt64UpperBound = 0x1p63;
+  if (rounded < kInt64LowerBound || rounded >= kInt64UpperBound) {
+    return std::nullopt;
+  }
+  return static_cast<std::int64_t>(rounded);
+}
 
 std::optional<cv::Rect> clipped_face_rect(const FaceBox& face,
                                           const cv::Size frame_size) {
@@ -131,6 +152,52 @@ std::optional<cv::Rect> cheek_roi(const FaceBox& face, cv::Size frame_size) {
                   static_cast<int>(roi_y),
                   static_cast<int>(roi_width),
                   static_cast<int>(roi_height));
+}
+
+std::optional<cv::Rect> expanded_face_roi(const FaceBox& face,
+                                          const cv::Size frame_size,
+                                          const double scale) {
+  if (frame_size.width <= 0 || frame_size.height <= 0 || face.width <= 0 ||
+      face.height <= 0 || !std::isfinite(scale) || scale <= 0.0) {
+    return std::nullopt;
+  }
+
+  const auto side_width =
+      python_round_to_int64(static_cast<double>(face.width) * scale);
+  const auto side_height =
+      python_round_to_int64(static_cast<double>(face.height) * scale);
+  if (!side_width.has_value() || !side_height.has_value() || *side_width <= 0 ||
+      *side_height <= 0) {
+    return std::nullopt;
+  }
+
+  // Keep Python's operation order and bankers rounding from _expanded_face_crop.
+  const auto rounded_x = python_round_to_int64(
+      static_cast<double>(face.x) + static_cast<double>(face.width) / 2.0 -
+      static_cast<double>(*side_width) / 2.0);
+  const auto rounded_y = python_round_to_int64(
+      static_cast<double>(face.y) + static_cast<double>(face.height) / 2.0 -
+      static_cast<double>(*side_height) / 2.0);
+  if (!rounded_x.has_value() || !rounded_y.has_value()) {
+    return std::nullopt;
+  }
+
+  const std::int64_t x = std::max<std::int64_t>(0, *rounded_x);
+  const std::int64_t y = std::max<std::int64_t>(0, *rounded_y);
+  const std::int64_t x2 =
+      *side_width > std::numeric_limits<std::int64_t>::max() - x
+          ? frame_size.width
+          : std::min<std::int64_t>(frame_size.width, x + *side_width);
+  const std::int64_t y2 =
+      *side_height > std::numeric_limits<std::int64_t>::max() - y
+          ? frame_size.height
+          : std::min<std::int64_t>(frame_size.height, y + *side_height);
+  if (x2 <= x || y2 <= y) {
+    return std::nullopt;
+  }
+
+  return cv::Rect(static_cast<int>(x), static_cast<int>(y),
+                  static_cast<int>(x2 - x), static_cast<int>(y2 - y));
 }
 
 RoiProcessor::RoiProcessor(const std::filesystem::path& cascade_path)
@@ -248,7 +315,7 @@ RoiPacket RoiProcessor::process(const FramePacket& frame) {
     return empty_packet(frame);
   }
   const auto roi = cheek_roi(*last_face_, frame.bgr.size());
-  const auto deep_roi = clipped_face_rect(*last_face_, frame.bgr.size());
+  const auto deep_roi = expanded_face_roi(*last_face_, frame.bgr.size());
   if (!roi.has_value() || !deep_roi.has_value()) {
     last_face_.reset();
     fallback_frames_remaining_ = 0;

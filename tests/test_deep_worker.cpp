@@ -65,7 +65,18 @@ void expect_finite_result(const rppg_qnn::HeartRateResult& result) {
   EXPECT_TRUE(std::isfinite(result.confidence));
   EXPECT_TRUE(std::isfinite(result.source_fps));
   EXPECT_TRUE(std::isfinite(result.max_frame_gap_sec));
+  EXPECT_TRUE(std::isfinite(result.window_materialization_ms));
+  EXPECT_TRUE(result.window_materialization_ms >= 0.0);
+  EXPECT_TRUE(std::isfinite(result.preprocess_ms));
+  EXPECT_TRUE(result.preprocess_ms >= 0.0);
+  EXPECT_TRUE(std::isfinite(result.runtime_ms));
+  EXPECT_TRUE(result.runtime_ms >= 0.0);
+  EXPECT_TRUE(std::isfinite(result.postprocess_ms));
+  EXPECT_TRUE(result.postprocess_ms >= 0.0);
   EXPECT_TRUE(std::isfinite(result.inference_ms));
+  EXPECT_TRUE(result.inference_ms >= 0.0);
+  EXPECT_EQ(result.inference_ms, result.preprocess_ms + result.runtime_ms +
+                                     result.postprocess_ms);
   for (float value : result.waveform) {
     EXPECT_TRUE(std::isfinite(value));
   }
@@ -86,6 +97,7 @@ class ThrowingRuntime final : public rppg_qnn::IDeepRuntime {
  public:
   std::string backend_name() const override { return "throwing"; }
   rppg_qnn::HeartRateResult infer(const rppg_qnn::DeepInput&) override {
+    std::this_thread::sleep_for(50ms);
     throw std::runtime_error("inference failed");
   }
 };
@@ -308,7 +320,9 @@ void close_drains_the_latest_pending_input() {
 
 void worker_converts_runtime_exceptions_into_safe_invalid_results() {
   rppg_qnn::DeepWorker worker(std::make_unique<ThrowingRuntime>());
-  EXPECT_TRUE(worker.submit(valid_input(7.0)));
+  auto input = valid_input(7.0);
+  input.window_materialization_ms = 3.25;
+  EXPECT_TRUE(worker.submit(std::move(input)));
   EXPECT_TRUE(wait_for_result(worker, 7.0));
   const auto result = worker.latest_result();
   EXPECT_TRUE(result.has_value());
@@ -317,7 +331,14 @@ void worker_converts_runtime_exceptions_into_safe_invalid_results() {
     EXPECT_EQ(result->backend, std::string("throwing"));
     EXPECT_EQ(result->invalid_reason,
               std::string("model_inference_failed: inference failed"));
-    EXPECT_TRUE(std::isfinite(result->inference_ms));
+    EXPECT_EQ(result->window_materialization_ms, 3.25);
+    EXPECT_EQ(result->preprocess_ms, 0.0);
+    EXPECT_EQ(result->runtime_ms, 0.0);
+    EXPECT_EQ(result->postprocess_ms, 0.0);
+    EXPECT_TRUE(result->inference_ms >= 40.0);
+    EXPECT_TRUE(result->inference_ms > result->preprocess_ms +
+                                           result->runtime_ms +
+                                           result->postprocess_ms);
   }
 }
 

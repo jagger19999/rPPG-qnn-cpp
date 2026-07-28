@@ -7,6 +7,9 @@
 #include <string>
 #include <vector>
 
+#include "rppg_qnn/deep_model.hpp"
+#include "rppg_qnn/waveform_snapshot.hpp"
+
 struct ANativeWindow;
 
 namespace rppg_qnn::android {
@@ -22,7 +25,7 @@ struct TraditionalProcessingConfig {
   std::string method{"green"};
   std::string cascade_path;
   std::string output_directory;
-  bool deep_enabled{false};
+  DeepModel deep_model{DeepModel::Disabled};
   std::string model_path;
 };
 
@@ -66,16 +69,29 @@ struct CameraSessionStatus {
   double window_end_sec{0.0};
   int processing_exit_code{0};
   std::string output_directory;
+  std::string deep_model{"disabled"};
   bool deep_enabled{false};
   std::string deep_backend{"disabled"};
   bool deep_result_available{false};
   double deep_bpm{0.0};
+  double deep_raw_bpm{0.0};
+  double deep_display_bpm{0.0};
   double deep_confidence{0.0};
+  double deep_window_materialization_ms{0.0};
+  double deep_preprocess_ms{0.0};
+  double deep_runtime_ms{0.0};
+  double deep_postprocess_ms{0.0};
   double deep_inference_ms{0.0};
   bool deep_result_valid{false};
+  bool deep_stability_valid{false};
+  std::string deep_correction_reason;
   std::string deep_invalid_reason;
   bool measurement_available{false};
   MeasurementSnapshot measurement;
+  std::uint64_t traditional_waveform_revision{0};
+  std::uint64_t deep_waveform_revision{0};
+  std::size_t deep_frames_collected{0};
+  std::size_t deep_frames_required{180};
   std::string error_code;
   std::string error_message;
   std::string color_diagnostic_state{"idle"};
@@ -103,6 +119,7 @@ class AndroidCameraSession {
   [[nodiscard]] std::vector<std::uint8_t> latest_roi_jpeg() const;
   void request_color_diagnostic();
   void delete_color_diagnostics();
+  [[nodiscard]] WaveformSnapshot latest_waveform(bool deep) const;
 
  private:
   struct Impl;

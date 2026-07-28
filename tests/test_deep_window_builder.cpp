@@ -30,13 +30,13 @@ rppg_qnn::RoiPacket patterned_packet(double timestamp, int id) {
       roi.at<cv::Vec3b>(row, column) = bgr_at(id, row, column);
     }
   }
-  return rppg_qnn::RoiPacket{0, timestamp, roi, std::nullopt, false};
+  return rppg_qnn::RoiPacket{0, timestamp, roi, std::nullopt, false, {}};
 }
 
 rppg_qnn::RoiPacket flat_packet(double timestamp,
                                  const cv::Scalar& bgr = {3, 17, 251}) {
   cv::Mat roi(72, 72, CV_8UC3, bgr);
-  return rppg_qnn::RoiPacket{0, timestamp, roi, std::nullopt, false};
+  return rppg_qnn::RoiPacket{0, timestamp, roi, std::nullopt, false, {}};
 }
 
 std::vector<CapturedFrame> supported_frames(const std::vector<CapturedFrame>& frames,
@@ -181,12 +181,12 @@ void reports_capture_quality_and_rejects_invalid_rois() {
   EXPECT_TRUE(!invalid.add_roi(flat_packet(1.0)).has_value());
   EXPECT_TRUE(!invalid.add_roi(flat_packet(0.9)).has_value());
   EXPECT_EQ(invalid.status(), std::string("nonmonotonic_timestamp"));
-  rppg_qnn::RoiPacket empty{0, 2.0, {}, std::nullopt, false};
+  rppg_qnn::RoiPacket empty{0, 2.0, {}, std::nullopt, false, {}};
   EXPECT_TRUE(!invalid.add_roi(empty).has_value());
   EXPECT_EQ(invalid.status(), std::string("empty_roi"));
 
   cv::Mat float_roi(72, 72, CV_32FC3, cv::Scalar(1.0, 2.0, 3.0));
-  rppg_qnn::RoiPacket malformed{0, 3.0, float_roi, std::nullopt, false};
+  rppg_qnn::RoiPacket malformed{0, 3.0, float_roi, std::nullopt, false, {}};
   EXPECT_TRUE(!invalid.add_roi(malformed).has_value());
   EXPECT_EQ(invalid.status(), std::string("invalid_roi_format"));
 
@@ -201,7 +201,7 @@ void reports_capture_quality_and_rejects_invalid_rois() {
 
 void recovers_from_error_and_uses_earlier_frames_for_ties() {
   rppg_qnn::DeepWindowBuilder recovering(6.0, 180, {72, 72});
-  rppg_qnn::RoiPacket empty{0, 0.0, {}, std::nullopt, false};
+  rppg_qnn::RoiPacket empty{0, 0.0, {}, std::nullopt, false, {}};
   EXPECT_TRUE(!recovering.add_roi(empty).has_value());
   EXPECT_EQ(recovering.status(), std::string("empty_roi"));
   std::optional<rppg_qnn::DeepInput> recovered;
@@ -231,7 +231,7 @@ void owns_roi_pixels_after_the_caller_reuses_the_buffer() {
   cv::Mat roi(72, 72, CV_8UC3, cv::Scalar(9, 8, 7));
   std::optional<rppg_qnn::DeepInput> output;
   for (int index = 0; index <= 180; ++index) {
-    output = builder.add_roi({0, index / 30.0, roi, std::nullopt, false});
+    output = builder.add_roi({0, index / 30.0, roi, std::nullopt, false, {}});
     roi.setTo(cv::Scalar(1, 2, 3));
     if (index != 180) {
       roi.setTo(cv::Scalar(9, 8, 7));
@@ -253,6 +253,8 @@ void ingests_many_frames_without_materializing_until_requested() {
   EXPECT_EQ(builder.materialization_count(), static_cast<std::size_t>(0));
   const auto output = builder.build_latest();
   EXPECT_TRUE(output.has_value());
+  EXPECT_TRUE(std::isfinite(output->window_materialization_ms));
+  EXPECT_TRUE(output->window_materialization_ms >= 0.0);
   EXPECT_EQ(builder.materialization_count(), static_cast<std::size_t>(1));
 }
 

@@ -15,6 +15,7 @@ gradlew="$root/android/gradlew"
 gradle_wrapper_jar="$root/android/gradle/wrapper/gradle-wrapper.jar"
 gradle_wrapper_properties="$root/android/gradle/wrapper/gradle-wrapper.properties"
 haar_asset="$root/android/app/src/main/assets/haarcascade_frontalface_default.xml"
+onnx_runtime="$root/android/app/src/main/cpp/android_onnx_cpu_runtime.cpp"
 
 for required_file in \
   "$manifest" \
@@ -22,11 +23,36 @@ for required_file in \
   "$gitignore" \
   "$gradlew" \
   "$haar_asset" \
+  "$onnx_runtime" \
   "$root/android/gradlew.bat" \
   "$gradle_wrapper_jar" \
   "$gradle_wrapper_properties"; do
   if [[ ! -f "$required_file" ]]; then
     echo "android packaging check: required file is missing: $required_file" >&2
+    exit 1
+  fi
+done
+
+constructor_contract=$(sed -n \
+  '/OnnxCpuSession(DeepModel model/,/^  }$/p' "$onnx_runtime")
+if ! grep -Fq 'OnnxCpuSession(DeepModel model, const std::string& model_path,' \
+       <<<"$constructor_contract" ||
+   ! grep -Fq 'OrtThreadOptions thread_options) try' \
+       <<<"$constructor_contract" ||
+   ! grep -Fq 'catch (const AppError&) {' <<<"$constructor_contract" ||
+   ! grep -Fq 'catch (const Ort::Exception& error) {' <<<"$constructor_contract" ||
+   ! grep -Fq 'ErrorCode::ModelLoadFailed' <<<"$constructor_contract" ||
+   ! grep -Fq 'ONNX Runtime CPU model load failed:' <<<"$constructor_contract"; then
+  echo "android packaging check: ONNX constructor must use a function-try-block and translate Ort initialization errors" >&2
+  exit 1
+fi
+
+for required_thread_contract in \
+  'SetIntraOpNumThreads(thread_options.intra_op_threads)' \
+  'SetInterOpNumThreads(thread_options.inter_op_threads)' \
+  'valid_ort_thread_options(thread_options)'; do
+  if ! grep -Fq "$required_thread_contract" "$onnx_runtime"; then
+    echo "android packaging check: missing validated ORT thread contract: $required_thread_contract" >&2
     exit 1
   fi
 done
@@ -132,13 +158,26 @@ android/app/src/main/cpp/android_jni_handle.cpp
 android/app/src/main/cpp/android_jni_handle.hpp
 android/app/src/main/cpp/android_onnx_cpu_runtime.cpp
 android/app/src/main/cpp/android_onnx_cpu_runtime.hpp
+android/app/src/main/cpp/android_onnx_model_contract.cpp
+android/app/src/main/cpp/android_onnx_model_contract.hpp
 android/app/src/main/cpp/android_qnn_preflight_stub.cpp
 android/app/src/main/cpp/native_bridge.cpp
+android/app/src/main/java/com/jagger/rppgbench/CameraStartGeneration.java
+android/app/src/main/java/com/jagger/rppgbench/CameraUiSessionPolicy.java
+android/app/src/main/java/com/jagger/rppgbench/DeepModelSelection.java
 android/app/src/main/java/com/jagger/rppgbench/MainActivity.java
+android/app/src/main/java/com/jagger/rppgbench/ModelIntegrity.java
 android/app/src/main/java/com/jagger/rppgbench/NativeBridge.java
+android/app/src/main/java/com/jagger/rppgbench/PreparedModel.java
+android/app/src/main/java/com/jagger/rppgbench/PreviewRotation.java
 android/app/src/main/java/com/jagger/rppgbench/ui/FaceBoxOverlay.java
 android/app/src/main/java/com/jagger/rppgbench/ui/HrMetricCard.java
 android/app/src/main/java/com/jagger/rppgbench/ui/HrStatusFormatter.java
+android/app/src/main/java/com/jagger/rppgbench/ui/PpgWaveformCard.java
+android/app/src/main/java/com/jagger/rppgbench/ui/PpgWaveformGeometry.java
+android/app/src/main/java/com/jagger/rppgbench/ui/PpgWaveformSnapshot.java
+android/app/src/main/java/com/jagger/rppgbench/ui/PpgWaveformState.java
+android/app/src/main/java/com/jagger/rppgbench/ui/PpgWaveformView.java
 android/app/src/main/java/com/jagger/rppgbench/watch/AndroidBleBackend.java
 android/app/src/main/java/com/jagger/rppgbench/watch/HeartRateParser.java
 android/app/src/main/java/com/jagger/rppgbench/watch/WatchAligner.java
@@ -179,8 +218,108 @@ done
 
 camera_source="$root/android/app/src/main/cpp/android_camera_session.cpp"
 camera_cmake="$root/android/app/src/main/cpp/CMakeLists.txt"
+native_bridge_cpp="$root/android/app/src/main/cpp/native_bridge.cpp"
 native_bridge_java="$root/android/app/src/main/java/com/jagger/rppgbench/NativeBridge.java"
 activity_java="$root/android/app/src/main/java/com/jagger/rppgbench/MainActivity.java"
+prepared_model_java="$root/android/app/src/main/java/com/jagger/rppgbench/PreparedModel.java"
+strings_xml="$root/android/app/src/main/res/values/strings.xml"
+
+if ! grep -Fq 'Executors.newSingleThreadExecutor' "$activity_java" ||
+   ! grep -Fq 'PreparedModel.prepare' "$activity_java" ||
+   ! grep -Fq 'cameraStartGeneration.isCurrent' "$activity_java" ||
+   ! grep -Fq 'cameraStartGeneration.destroy()' "$activity_java" ||
+   ! grep -Fq 'cameraStartExecutor.shutdown()' "$activity_java" ||
+   ! grep -Fq 'ParcelFileDescriptor.open' "$prepared_model_java" ||
+   ! grep -Fq 'ParcelFileDescriptor.dup' "$prepared_model_java" ||
+   ! grep -Fq '"/proc/self/fd/"' "$prepared_model_java"; then
+  echo "android packaging check: background start and stable-FD model preparation are required" >&2
+  exit 1
+fi
+
+for field_mapping in \
+  'camera_id|camera ID' \
+  'method|traditional method' \
+  'cascade_path|cascade path' \
+  'output_directory|output directory' \
+  'deep_model|deep model' \
+  'model_path|model path'; do
+  field=${field_mapping%%|*}
+  label=${field_mapping#*|}
+  if ! grep -Fq "from_jstring(env, $field, \"$label\")" "$native_bridge_cpp"; then
+    echo "android packaging check: JNI string field $field must report as $label" >&2
+    exit 1
+  fi
+done
+
+deep_selection_java="$root/android/app/src/main/java/com/jagger/rppgbench/DeepModelSelection.java"
+activity_layout="$root/android/app/src/main/res/layout/activity_main.xml"
+if ! grep -Fq '<string name="deep_selector_label">深度模型</string>' "$strings_xml" ||
+   ! grep -Fq 'TSCAN (UBFC)' "$deep_selection_java" ||
+   ! grep -Fq 'EfficientPhys (PURE)' "$deep_selection_java" ||
+   ! grep -Fq 'DeepModelSelection.fromSpinnerPosition' "$activity_java" ||
+   ! grep -Fq 'private Spinner deepSelector;' "$activity_java" ||
+   grep -Fq 'CheckBox' "$activity_java" ||
+   grep -A4 'android:id="@+id/deep_selector"' "$activity_layout" |
+     grep -Fq '<CheckBox'; then
+  echo "android packaging check: selectable deep-model spinner contract is missing" >&2
+  exit 1
+fi
+
+camera_ui_policy_java="$root/android/app/src/main/java/com/jagger/rppgbench/CameraUiSessionPolicy.java"
+apply_ui_contract=$(sed -n '/private void applyCameraUiDecision(/,/^    }/p' "$activity_java")
+explicit_stop_contract=$(sed -n '/private void stopCamera() {/,/private void retainLatestCameraResult/p' "$activity_java")
+silent_stop_contract=$(sed -n '/private void stopCameraSilently() {/,/private final Runnable finishStartWhenPreviewReady/p' "$activity_java")
+if ! grep -Fq 'cameraUiSessionPolicy.begin()' "$activity_java" ||
+   ! grep -Fq 'cameraUiSessionPolicy.accept()' "$activity_java" ||
+   ! grep -Fq 'cameraUiSessionPolicy.fail()' "$activity_java" ||
+   ! grep -Fq 'cameraUiSessionPolicy.stopRequested()' "$activity_java" ||
+   ! grep -Fq 'uiDecision.requestFinalSnapshot && uiDecision.retainLastResult' "$activity_java" ||
+   ! grep -Fq 'if (decision.clearHistory)' "$activity_java" ||
+   [[ $(grep -Fc 'clearWaveformsForNewSession();' "$activity_java" || true) -ne 1 ]] ||
+   ! grep -Fq 'setCameraControlsLocked(decision.selectorsLocked)' "$activity_java" ||
+   ! grep -Fq 'public Decision stopRequested()' "$camera_ui_policy_java" ||
+   grep -Fq 'retainLatestCameraResult' <<<"$apply_ui_contract" ||
+   ! grep -Fq 'String stopped = NativeBridge.nativeStop(nativeHandle);' \
+     <<<"$explicit_stop_contract" ||
+   ! grep -Fq 'retainLatestCameraResult(stopped);' <<<"$explicit_stop_contract" ||
+   grep -Fq 'NativeBridge.nativeDestroy(nativeHandle)' <<<"$explicit_stop_contract" ||
+   ! grep -Fq 'String stopped = NativeBridge.nativeStop(nativeHandle);' \
+     <<<"$silent_stop_contract" ||
+   ! grep -Fq 'retainLatestCameraResult(stopped);' <<<"$silent_stop_contract" ||
+   ! grep -Fq 'NativeBridge.nativeDestroy(nativeHandle)' <<<"$silent_stop_contract"; then
+  echo "android packaging check: camera UI session policy is not wired to MainActivity" >&2
+  exit 1
+fi
+
+native_stop_line=$(grep -n 'String stopped = NativeBridge.nativeStop(nativeHandle);' \
+  <<<"$silent_stop_contract" | head -1 | cut -d: -f1)
+retain_line=$(grep -n 'retainLatestCameraResult(stopped);' \
+  <<<"$silent_stop_contract" | head -1 | cut -d: -f1)
+destroy_line=$(grep -n 'NativeBridge.nativeDestroy(nativeHandle)' \
+  <<<"$silent_stop_contract" | head -1 | cut -d: -f1)
+if [[ -z "$native_stop_line" || -z "$retain_line" || -z "$destroy_line" ]] ||
+   (( native_stop_line >= retain_line || retain_line >= destroy_line )); then
+  echo "android packaging check: silent stop must stop, retain final result, then destroy" >&2
+  exit 1
+fi
+
+explicit_native_stop_line=$(grep -n 'String stopped = NativeBridge.nativeStop(nativeHandle);' \
+  <<<"$explicit_stop_contract" | head -1 | cut -d: -f1)
+explicit_retain_line=$(grep -n 'retainLatestCameraResult(stopped);' \
+  <<<"$explicit_stop_contract" | head -1 | cut -d: -f1)
+if [[ -z "$explicit_native_stop_line" || -z "$explicit_retain_line" ]] ||
+   (( explicit_native_stop_line >= explicit_retain_line )); then
+  echo "android packaging check: explicit stop must stop before retaining final result" >&2
+  exit 1
+fi
+
+if ! grep -Fq 'android:labelFor="@id/deep_selector"' "$activity_layout" ||
+   ! grep -Fq 'android:prompt="@string/deep_selector_prompt"' "$activity_layout" ||
+   ! grep -Fq '<string name="deep_selector_prompt">选择深度模型</string>' "$strings_xml"; then
+  echo "android packaging check: deep-model spinner must have an accessible label and prompt" >&2
+  exit 1
+fi
+
 for required_symbol in \
   ACameraManager_getCameraIdList \
   AImageReader_new \
@@ -294,13 +433,26 @@ android/app/src/main/cpp/android_jni_handle.cpp
 android/app/src/main/cpp/android_jni_handle.hpp
 android/app/src/main/cpp/android_onnx_cpu_runtime.cpp
 android/app/src/main/cpp/android_onnx_cpu_runtime.hpp
+android/app/src/main/cpp/android_onnx_model_contract.cpp
+android/app/src/main/cpp/android_onnx_model_contract.hpp
 android/app/src/main/cpp/android_qnn_preflight_stub.cpp
 android/app/src/main/cpp/native_bridge.cpp
+android/app/src/main/java/com/jagger/rppgbench/CameraStartGeneration.java
+android/app/src/main/java/com/jagger/rppgbench/CameraUiSessionPolicy.java
+android/app/src/main/java/com/jagger/rppgbench/DeepModelSelection.java
 android/app/src/main/java/com/jagger/rppgbench/MainActivity.java
+android/app/src/main/java/com/jagger/rppgbench/ModelIntegrity.java
 android/app/src/main/java/com/jagger/rppgbench/NativeBridge.java
+android/app/src/main/java/com/jagger/rppgbench/PreparedModel.java
+android/app/src/main/java/com/jagger/rppgbench/PreviewRotation.java
 android/app/src/main/java/com/jagger/rppgbench/ui/FaceBoxOverlay.java
 android/app/src/main/java/com/jagger/rppgbench/ui/HrMetricCard.java
 android/app/src/main/java/com/jagger/rppgbench/ui/HrStatusFormatter.java
+android/app/src/main/java/com/jagger/rppgbench/ui/PpgWaveformCard.java
+android/app/src/main/java/com/jagger/rppgbench/ui/PpgWaveformGeometry.java
+android/app/src/main/java/com/jagger/rppgbench/ui/PpgWaveformSnapshot.java
+android/app/src/main/java/com/jagger/rppgbench/ui/PpgWaveformState.java
+android/app/src/main/java/com/jagger/rppgbench/ui/PpgWaveformView.java
 android/app/src/main/java/com/jagger/rppgbench/watch/AndroidBleBackend.java
 android/app/src/main/java/com/jagger/rppgbench/watch/HeartRateParser.java
 android/app/src/main/java/com/jagger/rppgbench/watch/WatchAligner.java
@@ -313,6 +465,7 @@ android/app/src/main/res/drawable/card_bg_rounded.xml
 android/app/src/main/res/drawable/card_traditional.xml
 android/app/src/main/res/layout/activity_main.xml
 android/app/src/main/res/layout/view_hr_metric_card.xml
+android/app/src/main/res/layout/view_ppg_waveform_card.xml
 android/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml
 android/app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml
 android/app/src/main/res/mipmap-hdpi/ic_launcher.png
@@ -328,7 +481,15 @@ android/app/src/main/res/mipmap-xxxhdpi/ic_launcher_foreground.png
 android/app/src/main/res/mipmap-xxxhdpi/ic_launcher_round.png
 android/app/src/main/res/values/colors.xml
 android/app/src/main/res/values/strings.xml
+android/app/src/test/java/com/jagger/rppgbench/CameraStartGenerationTest.java
+android/app/src/test/java/com/jagger/rppgbench/CameraUiSessionPolicyTest.java
+android/app/src/test/java/com/jagger/rppgbench/DeepModelSelectionTest.java
+android/app/src/test/java/com/jagger/rppgbench/ModelIntegrityTest.java
+android/app/src/test/java/com/jagger/rppgbench/PreviewRotationTest.java
 android/app/src/test/java/com/jagger/rppgbench/ui/HrStatusFormatterTest.java
+android/app/src/test/java/com/jagger/rppgbench/ui/PpgWaveformGeometryTest.java
+android/app/src/test/java/com/jagger/rppgbench/ui/PpgWaveformSnapshotTest.java
+android/app/src/test/java/com/jagger/rppgbench/ui/PpgWaveformStateTest.java
 android/app/src/test/java/com/jagger/rppgbench/watch/HeartRateParserTest.java
 android/app/src/test/java/com/jagger/rppgbench/watch/WatchAlignerTest.java
 android/app/src/test/java/com/jagger/rppgbench/watch/WatchBleWorkerTest.java

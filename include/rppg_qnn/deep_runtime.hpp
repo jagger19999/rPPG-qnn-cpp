@@ -15,6 +15,7 @@ struct DeepInput {
   double source_fps{0.0};
   double max_frame_gap_sec{0.0};
   std::size_t source_frame_count{0};
+  double window_materialization_ms{0.0};
   std::vector<float> tensor;
   std::vector<std::int64_t> shape;
 };

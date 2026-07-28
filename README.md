@@ -6,9 +6,38 @@
 
 ## Android 主线的当前 Camera2 切片
 
-仓库已完成可交叉构建的 Android Camera2/NDK 运行时切片：Gradle 源码脚手架、单一 `arm64-v8a` ABI、AGP 9.0.1、NDK 28.2.13676358、Java 运行时相机与蓝牙权限、Camera2 NDK 枚举与 `AImageReader`、`YUV_420_888` stride 校验和 BGR 转换、JNI opaque handle 生命周期、OpenCV Android 4.13.0 静态链接、Haar ROI、GREEN/POS/CHROM worker、ONNX Runtime Android 1.27.0 CPU EfficientPhys 后端、latest-only 深度 worker、HUAWEI GT 5 Pro 心率广播 BLE 参考对齐与会话 CSV、应用私有目录会话输出和低频状态 UI。Phase 1 Live HR UI 在 `MainActivity` 顶部呈现传统/深度/手表三路大号 BPM 卡片与 ROI 脸图缩略图，配置与诊断折叠收起。EfficientPhys 模型保持外部，必须按固定 SHA-256 导入应用私有目录。
+仓库已完成可交叉构建的 Android Camera2/NDK 运行时切片：Gradle 源码脚手架、单一 `arm64-v8a` ABI、AGP 9.0.1、NDK 28.2.13676358、Java 运行时相机与蓝牙权限、Camera2 NDK 枚举与 `AImageReader`、`YUV_420_888` stride 校验和 BGR 转换、JNI opaque handle 生命周期、OpenCV Android 4.13.0 静态链接、Haar ROI、GREEN/POS/CHROM worker、ONNX Runtime Android 1.27.0 CPU TSCAN 后端、latest-only 深度 worker、HUAWEI GT 5 Pro 心率广播 BLE 参考对齐与会话 CSV、应用私有目录会话输出和低频状态 UI。Phase 1 Live HR UI 在 `MainActivity` 顶部呈现传统/深度/手表三路大号 BPM 卡片与 ROI 脸图缩略图，配置与诊断折叠收起。TSCAN 模型保持外部，必须按固定 SHA-256 导入应用私有目录。
 
-当前 Mac 已实际生成传统算法 + ONNX Runtime CPU + 手表 BLE debug APK，但本机没有连接获授权的 Android 真机与手表广播验收，因此**尚未证明**模型冻结向量、目标摄像头、现场心率、手表对齐或生命周期。第一版手机演示不依赖 QNN/Adreno；`--deep fake` 始终只是 host 调度测试，Android 请求 CPU 后不会回退到 fake 或 QNN。
+当前 Mac 已实际生成传统算法 + ONNX Runtime CPU TSCAN + 手表 BLE debug APK，但本机没有连接获授权的 Android 真机与手表广播验收，因此**尚未证明**目标设备推理、目标摄像头、现场心率、手表对齐或生命周期。第一版手机演示不依赖 QNN/Adreno；`--deep fake` 始终只是 host 调度测试，Android 请求 CPU 后不会回退到 fake 或 QNN。
+
+## TSCAN numerical parity status（2026-07-26）
+
+本节记录可在 Mac host 重放的五阶段数值门禁，不把 host 结果外推为 Android 真机结论。精确输入模型 `ubfc_tscan_full_lr3e-5_Epoch10.onnx` 的 SHA-256 为 `342a3c8033dda9ab154e85d5a4e2a876a6461648b7fcb27c46a7023e662bcc64`；提交的 Python manifest SHA-256 为 `e61604b28df61c6a90175313d400660936a241e0030ba540e68866ec2a3a3f51`。使用该模型连续生成两次，生成 manifest 与提交版本逐字段完全相等，NPZ 各数组逐值完全相等；ONNX 波形重复运行 `max_abs=0`、Pearson `1.0`。当前没有匹配的 rPPG-Toolbox 源码可供既有验证流程加载，因此这里不声明 PyTorch→ONNX parity。
+
+- 预处理：独立解析公式覆盖完整 `[180,6,72,72]` tensor 的 5,598,720 个值，实测最大绝对误差 `2.38419e-07`，通过 `<1e-5` 门限；低方差成功路径的全部输出均验证为 finite。
+- 后处理：六个 NumPy 固定波形（含 `0.75 Hz`、`2.5 Hz` 边界）与 C++ 的最大 confidence 绝对误差为 `1.69533e-08`，通过 `<1e-4` 门限；BPM 固定值也通过测试。Android runtime 对 ONNX `[180,1]` 原始输出不作波形重写，因此波形保持是代码结构结论，不是 Android 真机上的 Python/C++ Pearson 实测。
+- Python：本机执行下面的精确命令通过 `7/7`。这些是本机绝对路径，不是可移植默认值；其他机器应替换 worktree、Python 3.12 环境和模型路径。未设置模型时 ONNX 用例可跳过；显式设置不存在路径时会清楚失败，不再静默 skip。
+
+```bash
+cd /Users/wangjie/.config/superpowers/worktrees/rPPG/tscan-reference
+RPPG_PYTHON=/Users/wangjie/Documents/keti/rPPG/.venv/bin/python
+RPPG_TSCAN_ONNX=/Users/wangjie/Documents/keti/rPPG/ubfc_tscan_full_lr3e-5_Epoch10.onnx \
+  "$RPPG_PYTHON" -m pytest tests/test_tscan_reference_vector.py -q
+```
+- C++ host：`cmake -S . -B build-task7-parity -DBUILD_TESTING=ON -DCMAKE_PREFIX_PATH=/opt/homebrew/opt/opencv@4 && cmake --build build-task7-parity -j4 && ctest --test-dir build-task7-parity --output-on-failure` 通过 `21/21`。
+- APK：本机使用下面的精确绝对路径调用成功；这些路径只记录本机验证环境，不是其他机器的安装约定。`app-debug.apk` SHA-256 为 `64a64d7eaf3570a8ef8a913704645d143d6a3716dfb9c1c91dc1f8de10bd06cd`，包含 `lib/arm64-v8a/librppg_qnn_android.so` 与 `libonnxruntime.so`，不包含 `.onnx` 模型。
+
+```bash
+cd android
+JAVA_HOME=/Users/wangjie/.local/jdks/zulu17.68.17-ca-jdk17.0.20-macosx_aarch64/Contents/Home \
+ANDROID_SDK_ROOT=/opt/homebrew/share/android-commandlinetools \
+ANDROID_HOME=/opt/homebrew/share/android-commandlinetools \
+RPPG_OPENCV_ANDROID_SDK=/Users/wangjie/.local/android-deps/OpenCV-android-sdk \
+RPPG_ONNXRUNTIME_ANDROID=/Users/wangjie/.local/android-deps/onnxruntime-android-1.27.0 \
+./gradlew :app:assembleDebug
+```
+
+仍未完成：授权 Android 目标设备上的真实 TSCAN 推理、摄像头链路、端到端生理准确性与性能验证。推理/预处理/后处理 timing 拆分及 chart 留待真机阶段；当前数据不得解释为医疗或车辆安全性能。
 
 以下相对链接只在源码 checkout 中可用；已安装的 Linux 四文件包不包含 `docs/` 或 `ANDROID_NEXT_STEPS.md`，也不应为此改动四文件 stage 白名单。源码 checkout 内的设计边界、基础实施计划和公司机后续交接分别见：
 

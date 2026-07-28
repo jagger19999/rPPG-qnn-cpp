@@ -149,7 +149,9 @@ ResultSink::ResultSink(std::filesystem::path output_dir) : output_dir_(std::move
   heart_rate_.imbue(std::locale::classic());
   heart_rate_ << "schema_version,method,window_start_sec,window_end_sec,bpm,confidence,"
                  "is_valid,invalid_reason,source_fps,source_frame_count,max_frame_gap_sec,"
-                 "inference_ms,backend,model_sha256\r\n";
+                 "window_materialization_ms,preprocess_ms,runtime_ms,postprocess_ms,"
+                 "inference_ms,backend,model_sha256,raw_bpm,display_bpm,"
+                 "stability_valid,correction_reason\r\n";
   if (!heart_rate_) {
     fail_permanently("could not write heart-rate CSV header");
   }
@@ -258,12 +260,21 @@ void ResultSink::publish(const HeartRateResult& result) {
           << ",\"window_start_sec\":" << json_number(result.window_start_sec)
           << ",\"window_end_sec\":" << json_number(result.window_end_sec)
           << ",\"bpm\":" << json_number(result.bpm)
+          << ",\"raw_bpm\":" << json_number(result.raw_bpm)
+          << ",\"display_bpm\":" << json_number(result.display_bpm)
           << ",\"confidence\":" << json_number(result.confidence)
           << ",\"is_valid\":" << json_bool(result.is_valid)
+          << ",\"stability_valid\":" << json_bool(result.stability_valid)
+          << ",\"correction_reason\":" << json_string(result.correction_reason)
           << ",\"invalid_reason\":" << json_string(result.invalid_reason)
           << ",\"source_fps\":" << json_number(result.source_fps)
           << ",\"source_frame_count\":" << result.source_frame_count
           << ",\"max_frame_gap_sec\":" << json_number(result.max_frame_gap_sec)
+          << ",\"window_materialization_ms\":"
+          << json_number(result.window_materialization_ms)
+          << ",\"preprocess_ms\":" << json_number(result.preprocess_ms)
+          << ",\"runtime_ms\":" << json_number(result.runtime_ms)
+          << ",\"postprocess_ms\":" << json_number(result.postprocess_ms)
           << ",\"inference_ms\":" << json_number(result.inference_ms)
           << ",\"backend\":" << json_string(result.backend)
           << ",\"model_sha256\":" << json_string(result.model_sha256) << "}\n";
@@ -273,8 +284,14 @@ void ResultSink::publish(const HeartRateResult& result) {
               << csv_number(result.confidence) << ',' << json_bool(result.is_valid) << ','
               << csv_field(result.invalid_reason) << ',' << csv_number(result.source_fps) << ','
               << result.source_frame_count << ',' << csv_number(result.max_frame_gap_sec) << ','
+              << csv_number(result.window_materialization_ms) << ','
+              << csv_number(result.preprocess_ms) << ',' << csv_number(result.runtime_ms) << ','
+              << csv_number(result.postprocess_ms) << ','
               << csv_number(result.inference_ms) << ',' << csv_field(result.backend) << ','
-              << csv_field(result.model_sha256) << "\r\n";
+              << csv_field(result.model_sha256) << ',' << csv_number(result.raw_bpm) << ','
+              << csv_number(result.display_bpm) << ','
+              << json_bool(result.stability_valid) << ','
+              << csv_field(result.correction_reason) << "\r\n";
   events_.flush();
   heart_rate_.flush();
   if (!events_) {
@@ -291,6 +308,8 @@ void ResultSink::publish(const HeartRateResult& result) {
   }
   std::ostringstream terminal = classic_output();
   terminal << "heart_rate bpm=" << json_number(result.bpm)
+           << " raw_bpm=" << json_number(result.raw_bpm)
+           << " display_bpm=" << json_number(result.display_bpm)
            << " confidence=" << json_number(result.confidence)
            << " valid=" << json_bool(result.is_valid) << '\n';
   std::lock_guard<std::mutex> terminal_lock(terminal_mutex);

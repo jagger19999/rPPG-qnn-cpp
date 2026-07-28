@@ -1,6 +1,7 @@
 #include "android_jni_handle.hpp"
 
 #include "android_camera_session.hpp"
+#include "rppg_qnn/deep_model.hpp"
 #include "rppg_qnn/error.hpp"
 
 #include <android/native_window.h>
@@ -190,21 +191,38 @@ std::string status_json(const CameraSessionStatus& status) {
          << ",\"processing_exit_code\":" << status.processing_exit_code
          << ",\"output_directory\":\""
          << json_escape(status.output_directory)
+         << "\",\"deep_model\":\"" << json_escape(status.deep_model)
          << "\",\"deep_enabled\":"
          << (status.deep_enabled ? "true" : "false")
          << ",\"deep_backend\":\"" << json_escape(status.deep_backend)
          << "\",\"deep_result_available\":"
          << (status.deep_result_available ? "true" : "false")
          << ",\"deep_bpm\":" << status.deep_bpm
+         << ",\"deep_raw_bpm\":" << status.deep_raw_bpm
+         << ",\"deep_display_bpm\":" << status.deep_display_bpm
          << ",\"deep_confidence\":" << status.deep_confidence
+         << ",\"deep_window_materialization_ms\":"
+         << status.deep_window_materialization_ms
+         << ",\"deep_preprocess_ms\":" << status.deep_preprocess_ms
+         << ",\"deep_runtime_ms\":" << status.deep_runtime_ms
+         << ",\"deep_postprocess_ms\":" << status.deep_postprocess_ms
          << ",\"deep_inference_ms\":" << status.deep_inference_ms
          << ",\"deep_result_valid\":"
          << (status.deep_result_valid ? "true" : "false")
+         << ",\"deep_stability_valid\":"
+         << (status.deep_stability_valid ? "true" : "false")
+         << ",\"deep_correction_reason\":\""
+         << json_escape(status.deep_correction_reason) << "\""
          << ",\"deep_invalid_reason\":\""
          << json_escape(status.deep_invalid_reason)
          << "\",\"measurement_available\":"
          << (status.measurement_available ? "true" : "false")
          << ",\"measurement\":" << measurement_json(status.measurement)
+         << ",\"traditional_waveform_revision\":"
+         << status.traditional_waveform_revision
+         << ",\"deep_waveform_revision\":" << status.deep_waveform_revision
+         << ",\"deep_frames_collected\":" << status.deep_frames_collected
+         << ",\"deep_frames_required\":" << status.deep_frames_required
          << ",\"error_code\":\"" << json_escape(status.error_code)
          << "\",\"error_message\":\"" << json_escape(status.error_message)
          << "\"}";
@@ -248,10 +266,11 @@ std::int64_t create_camera_session(const std::string& camera_id, int width,
 std::string configure_camera_processing(
     std::int64_t handle, const std::string& method,
     const std::string& cascade_path, const std::string& output_directory,
-    bool deep_enabled, const std::string& model_path) {
+    const std::string& deep_model, const std::string& model_path) {
   const auto session = lookup(handle);
   session->configure_processing(TraditionalProcessingConfig{
-      method, cascade_path, output_directory, deep_enabled, model_path});
+      method, cascade_path, output_directory, parse_deep_model(deep_model),
+      model_path});
   return status_json(session->status());
 }
 
@@ -309,6 +328,27 @@ std::string delete_camera_color_diagnostics(std::int64_t handle) {
   const auto session = lookup(handle);
   session->delete_color_diagnostics();
   return status_json(session->status());
+}
+
+std::string camera_session_waveform_metadata_json(std::int64_t handle,
+                                                  bool deep) {
+  const WaveformSnapshot waveform = lookup(handle)->latest_waveform(deep);
+  std::ostringstream output;
+  output << std::setprecision(10)
+         << "{\"available\":" << (waveform.available ? "true" : "false")
+         << ",\"revision\":" << waveform.revision << ",\"method\":\""
+         << json_escape(waveform.method) << "\",\"sample_rate_hz\":"
+         << waveform.sample_rate_hz << ",\"is_valid\":"
+         << (waveform.is_valid ? "true" : "false")
+         << ",\"invalid_reason\":\""
+         << json_escape(waveform.invalid_reason) << "\",\"sample_count\":"
+         << waveform.values.size() << "}";
+  return output.str();
+}
+
+std::vector<float> camera_session_waveform_values(std::int64_t handle,
+                                                  bool deep) {
+  return lookup(handle)->latest_waveform(deep).values;
 }
 
 }  // namespace rppg_qnn::android

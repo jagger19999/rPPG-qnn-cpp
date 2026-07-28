@@ -84,6 +84,28 @@
             android:text="@string/fps_line_idle"
             android:textSize="13sp" />
 
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:text="@string/waveform_section_title"
+            android:textSize="17sp"
+            android:textStyle="bold" />
+
+        <include
+            android:id="@+id/waveform_traditional"
+            layout="@layout/view_ppg_waveform_card"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp" />
+
+        <include
+            android:id="@+id/waveform_deep"
+            layout="@layout/view_ppg_waveform_card"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp" />
+
         <FrameLayout
             android:id="@+id/preview_container"
             android:layout_width="match_parent"
@@ -155,11 +177,19 @@
                 android:layout_height="wrap_content"
                 android:layout_marginTop="4dp" />
 
-            <CheckBox
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:labelFor="@id/deep_selector"
+                android:text="@string/deep_selector_label"
+                android:textSize="14sp" />
+
+            <Spinner
                 android:id="@+id/deep_selector"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="@string/deep_selector_label" />
+                android:prompt="@string/deep_selector_prompt" />
 
             <TextView
                 android:layout_width="match_parent"

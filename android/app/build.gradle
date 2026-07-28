@@ -8,6 +8,19 @@ if (onnxRuntimeRoot == null || onnxRuntimeRoot.isBlank()) {
             'RPPG_ONNXRUNTIME_ANDROID must point to onnxruntime-android-1.27.0')
 }
 
+def sharedOrtThreads = project.findProperty('rppgOrtIntraOpThreads') ?:
+        System.getenv('RPPG_ORT_INTRA_OP_THREADS')
+def tscanOrtThreads = project.findProperty('rppgTscanOrtIntraOpThreads') ?:
+        sharedOrtThreads ?: '2'
+def efficientPhysOrtThreads =
+        project.findProperty('rppgEfficientPhysOrtIntraOpThreads') ?:
+        sharedOrtThreads ?: '2'
+def supportedOrtThreads = ['2', '4', '6']
+if (!supportedOrtThreads.contains(tscanOrtThreads.toString()) ||
+        !supportedOrtThreads.contains(efficientPhysOrtThreads.toString())) {
+    throw new GradleException('ORT intra-op threads must be 2, 4, or 6')
+}
+
 android {
     namespace 'com.jagger.rppgbench'
     compileSdk 36
@@ -17,8 +30,8 @@ android {
         applicationId 'com.jagger.rppgbench'
         minSdk 26
         targetSdk 36
-        versionCode 2
-        versionName '0.4.0-gated'
+        versionCode 3
+        versionName '0.5.0-efficientphys-gated'
 
         ndk {
             abiFilters 'arm64-v8a'
@@ -27,6 +40,8 @@ android {
         externalNativeBuild {
             cmake {
                 cppFlags '-std=c++17'
+                arguments "-DRPPG_TSCAN_ORT_INTRA_OP_THREADS=${tscanOrtThreads}",
+                        "-DRPPG_EFFICIENTPHYS_ORT_INTRA_OP_THREADS=${efficientPhysOrtThreads}"
             }
         }
     }

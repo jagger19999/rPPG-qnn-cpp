@@ -47,19 +47,61 @@ public final class HrStatusFormatter {
         if (json == null || !json.optBoolean("deep_enabled", false)) {
             return new CardView("--", "未启用");
         }
-        if (!json.optBoolean("deep_result_available", false)
-                || !json.optBoolean("deep_result_valid", false)) {
-            String reason = json.optString("deep_invalid_reason", "不可用");
-            if (reason.isEmpty()) reason = "不可用";
-            return new CardView("--", reason);
+        boolean available = json.optBoolean("deep_result_available", false);
+        boolean waveformValid = json.optBoolean("deep_result_valid", false);
+        boolean stabilityValid = json.optBoolean("deep_stability_valid", false);
+        double displayBpm = json.optDouble("deep_display_bpm", Double.NaN);
+        if (!available) {
+            return new CardView("--", "等待结果");
         }
-        int bpm = (int) Math.round(json.optDouble("deep_bpm", Double.NaN));
-        double ms = json.optDouble("deep_inference_ms", Double.NaN);
-        String secondary = "ORT CPU";
-        if (Double.isFinite(ms)) {
-            secondary = String.format(Locale.US, "ORT CPU · %.0fms", ms);
+        boolean trusted = available && waveformValid && stabilityValid
+                && Double.isFinite(displayBpm) && displayBpm > 0.0;
+
+        String prefix;
+        if (trusted) {
+            prefix = "可信";
+        } else if (!waveformValid) {
+            prefix = nonEmpty(json.optString("deep_invalid_reason", ""), "信号无效");
+        } else {
+            prefix = nonEmpty(json.optString("deep_correction_reason", ""), "结果不稳定");
         }
-        return new CardView(Integer.toString(bpm), secondary);
+
+        StringBuilder secondary = new StringBuilder(prefix);
+        appendRoundedBpm(secondary, "原始", json.optDouble("deep_raw_bpm", Double.NaN));
+        appendDecimal(secondary, "置信", json.optDouble("deep_confidence", Double.NaN), 2, "");
+        appendDecimal(secondary, "窗口", json.optDouble(
+                "deep_window_materialization_ms", Double.NaN), 0, "ms");
+        appendDecimal(secondary, "预处理", json.optDouble(
+                "deep_preprocess_ms", Double.NaN), 0, "ms");
+        appendDecimal(secondary, "运行", json.optDouble("deep_runtime_ms", Double.NaN), 0, "ms");
+        appendDecimal(secondary, "后处理", json.optDouble(
+                "deep_postprocess_ms", Double.NaN), 0, "ms");
+        appendDecimal(secondary, "总计", json.optDouble(
+                "deep_inference_ms", Double.NaN), 0, "ms");
+
+        return new CardView(
+                trusted ? Integer.toString((int) Math.round(displayBpm)) : "--",
+                secondary.toString());
+    }
+
+    private static String nonEmpty(String value, String fallback) {
+        return value == null || value.isEmpty() ? fallback : value;
+    }
+
+    private static void appendRoundedBpm(StringBuilder builder, String label, double value) {
+        if (Double.isFinite(value) && value > 0.0) {
+            builder.append(" · ").append(label).append(' ').append(Math.round(value));
+        }
+    }
+
+    private static void appendDecimal(
+            StringBuilder builder, String label, double value, int decimals, String suffix) {
+        if (!Double.isFinite(value) || value < 0.0) {
+            return;
+        }
+        builder.append(" · ").append(label).append(' ')
+                .append(String.format(Locale.US, "%." + decimals + "f", value))
+                .append(suffix);
     }
 
     public static CardView watch(String status, Integer bpm, String errorCode) {

@@ -2,6 +2,19 @@ cmake_minimum_required(VERSION 3.22.1)
 
 project(rppg_qnn_android LANGUAGES CXX)
 
+set(RPPG_TSCAN_ORT_INTRA_OP_THREADS "2" CACHE STRING
+    "TSCAN ORT intra-op threads (benchmark-supported: 2, 4, 6)")
+set(RPPG_EFFICIENTPHYS_ORT_INTRA_OP_THREADS "2" CACHE STRING
+    "EfficientPhys ORT intra-op threads (benchmark-supported: 2, 4, 6)")
+set_property(CACHE RPPG_TSCAN_ORT_INTRA_OP_THREADS PROPERTY STRINGS 2 4 6)
+set_property(CACHE RPPG_EFFICIENTPHYS_ORT_INTRA_OP_THREADS PROPERTY STRINGS 2 4 6)
+foreach(thread_var RPPG_TSCAN_ORT_INTRA_OP_THREADS
+                   RPPG_EFFICIENTPHYS_ORT_INTRA_OP_THREADS)
+    if(NOT ${${thread_var}} MATCHES "^(2|4|6)$")
+        message(FATAL_ERROR "${thread_var} must be 2, 4, or 6")
+    endif()
+endforeach()
+
 get_filename_component(
     RPPG_REPOSITORY_ROOT
     "${CMAKE_CURRENT_LIST_DIR}/../../../../.."
@@ -34,22 +47,32 @@ add_library(
     SHARED
     android_camera_session.cpp
     android_jni_handle.cpp
+    android_onnx_model_contract.cpp
     android_onnx_cpu_runtime.cpp
     android_qnn_preflight_stub.cpp
     native_bridge.cpp
     "${RPPG_REPOSITORY_ROOT}/src/build_identity.cpp"
     "${RPPG_REPOSITORY_ROOT}/src/contracts.cpp"
+    "${RPPG_REPOSITORY_ROOT}/src/deep_model.cpp"
     "${RPPG_REPOSITORY_ROOT}/src/deep_preprocess_worker.cpp"
     "${RPPG_REPOSITORY_ROOT}/src/deep_runtime.cpp"
+    "${RPPG_REPOSITORY_ROOT}/src/deep_stabilizer.cpp"
     "${RPPG_REPOSITORY_ROOT}/src/deep_window_builder.cpp"
     "${RPPG_REPOSITORY_ROOT}/src/deep_worker.cpp"
+    "${RPPG_REPOSITORY_ROOT}/src/efficientphys_postprocessor.cpp"
+    "${RPPG_REPOSITORY_ROOT}/src/efficientphys_runtime.cpp"
     "${RPPG_REPOSITORY_ROOT}/src/error.cpp"
     "${RPPG_REPOSITORY_ROOT}/src/measurement_engine.cpp"
     "${RPPG_REPOSITORY_ROOT}/src/pipeline.cpp"
     "${RPPG_REPOSITORY_ROOT}/src/result_sink.cpp"
     "${RPPG_REPOSITORY_ROOT}/src/roi_processor.cpp"
+    "${RPPG_REPOSITORY_ROOT}/src/signal_processing.cpp"
     "${RPPG_REPOSITORY_ROOT}/src/traditional_ensemble.cpp"
     "${RPPG_REPOSITORY_ROOT}/src/traditional_predictor.cpp"
+    "${RPPG_REPOSITORY_ROOT}/src/tscan_postprocessor.cpp"
+    "${RPPG_REPOSITORY_ROOT}/src/tscan_preprocessor.cpp"
+    "${RPPG_REPOSITORY_ROOT}/src/tscan_runtime.cpp"
+    "${RPPG_REPOSITORY_ROOT}/src/waveform_snapshot.cpp"
     "${RPPG_REPOSITORY_ROOT}/src/yuv420.cpp")
 
 target_include_directories(
@@ -63,7 +86,9 @@ target_compile_definitions(
     rppg_qnn_android
     PRIVATE
     RPPG_ANDROID_CAMERA2=1
-    RPPG_ANDROID_ONNX_CPU=1)
+    RPPG_ANDROID_ONNX_CPU=1
+    RPPG_TSCAN_ORT_INTRA_OP_THREADS=${RPPG_TSCAN_ORT_INTRA_OP_THREADS}
+    RPPG_EFFICIENTPHYS_ORT_INTRA_OP_THREADS=${RPPG_EFFICIENTPHYS_ORT_INTRA_OP_THREADS})
 target_compile_options(
     rppg_qnn_android
     PRIVATE

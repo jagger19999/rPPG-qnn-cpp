@@ -2,8 +2,12 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <string>
+#include <utility>
 #include <vector>
+
+#include <opencv2/core.hpp>
 
 namespace rppg_qnn {
 
@@ -18,6 +22,46 @@ struct PerformanceMetrics {
   TimingDistribution roi;
   TimingDistribution traditional;
   TimingDistribution deep_preprocess;
+};
+
+struct FaceBox {
+  int x{0};
+  int y{0};
+  int width{0};
+  int height{0};
+  double confidence{0.0};
+};
+
+struct RoiPacket {
+  RoiPacket() = default;
+  RoiPacket(std::uint64_t requested_frame_id, double requested_timestamp_sec,
+            cv::Mat requested_roi_bgr, std::optional<FaceBox> requested_face,
+            bool requested_used_fallback, int requested_face_count = 0,
+            double requested_motion_px = 0.0,
+            cv::Mat requested_deep_roi_bgr = {})
+      : frame_id(requested_frame_id),
+        timestamp_sec(requested_timestamp_sec),
+        roi_bgr(std::move(requested_roi_bgr)),
+        face(std::move(requested_face)),
+        used_fallback(requested_used_fallback),
+        face_count(requested_face_count),
+        motion_px(requested_motion_px),
+        deep_roi_bgr(std::move(requested_deep_roi_bgr)) {}
+  RoiPacket(std::uint64_t requested_frame_id, double requested_timestamp_sec,
+            cv::Mat requested_roi_bgr, std::optional<FaceBox> requested_face,
+            bool requested_used_fallback, cv::Mat requested_deep_roi_bgr)
+      : RoiPacket(requested_frame_id, requested_timestamp_sec,
+                  std::move(requested_roi_bgr), std::move(requested_face),
+                  requested_used_fallback, 0, 0.0,
+                  std::move(requested_deep_roi_bgr)) {}
+  std::uint64_t frame_id{0};
+  double timestamp_sec{0.0};
+  cv::Mat roi_bgr;
+  std::optional<FaceBox> face;
+  bool used_fallback{false};
+  int face_count{0};
+  double motion_px{0.0};
+  cv::Mat deep_roi_bgr;
 };
 
 struct FrameHealth {
@@ -46,13 +90,21 @@ struct HeartRateResult {
   double window_start_sec{0.0};
   double window_end_sec{0.0};
   double bpm{0.0};
+  double raw_bpm{0.0};
+  double display_bpm{0.0};
   double confidence{0.0};
   double peak_ratio{0.0};
   bool is_valid{false};
+  bool stability_valid{false};
+  std::string correction_reason;
   std::string invalid_reason;
   double source_fps{0.0};
   std::size_t source_frame_count{0};
   double max_frame_gap_sec{0.0};
+  double window_materialization_ms{0.0};
+  double preprocess_ms{0.0};
+  double runtime_ms{0.0};
+  double postprocess_ms{0.0};
   double inference_ms{0.0};
   std::string backend;
   std::string model_sha256;

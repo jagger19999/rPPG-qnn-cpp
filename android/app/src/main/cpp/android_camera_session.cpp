@@ -10,6 +10,7 @@
 #include "rppg_qnn/result_sink.hpp"
 #include "rppg_qnn/roi_processor.hpp"
 #include "rppg_qnn/yuv420.hpp"
+#include "rppg_qnn/waveform_snapshot.hpp"
 
 #include <android/log.h>
 #include <android/native_window.h>
@@ -456,11 +457,12 @@ struct AndroidCameraSession::Impl {
       throw AppError(ErrorCode::ConfigInvalid,
                      "cascade path and output directory must not be empty");
     }
-    if (requested_config.deep_enabled &&
+    if (requested_config.deep_model != DeepModel::Disabled &&
         (requested_config.model_path.empty() ||
          !std::filesystem::is_regular_file(requested_config.model_path))) {
       throw AppError(ErrorCode::ModelLoadFailed,
-                     "TSCAN ONNX model is missing from app storage");
+                     std::string(to_string(requested_config.deep_model)) +
+                         " ONNX model is missing from app storage");
     }
     {
       RoiProcessor cascade_validator(requested_config.cascade_path);
@@ -484,9 +486,11 @@ struct AndroidCameraSession::Impl {
     snapshot.processing_enabled = true;
     snapshot.traditional_method = processing_config->method;
     snapshot.output_directory = processing_config->output_directory;
-    snapshot.deep_enabled = processing_config->deep_enabled;
+    snapshot.deep_model = std::string(to_string(processing_config->deep_model));
+    snapshot.deep_enabled =
+        processing_config->deep_model != DeepModel::Disabled;
     snapshot.deep_backend =
-        processing_config->deep_enabled ? "ONNX_RUNTIME_CPU" : "disabled";
+        snapshot.deep_enabled ? "ONNX_RUNTIME_CPU" : "disabled";
   }
 
   void start_processing() {
@@ -507,8 +511,7 @@ struct AndroidCameraSession::Impl {
     pipeline_config.height = config.height;
     pipeline_config.fps = static_cast<double>(config.fps);
     pipeline_config.traditional = requested.method;
-    pipeline_config.deep =
-        requested.deep_enabled ? "onnxruntime_cpu" : "disabled";
+    pipeline_config.deep = std::string(to_string(requested.deep_model));
     pipeline_config.output = requested.output_directory;
 
     PipelineDependencies dependencies;
@@ -525,10 +528,23 @@ struct AndroidCameraSession::Impl {
       return std::make_unique<ThumbnailRoi>(
           std::make_unique<RoiProcessor>(cascade), std::move(publish));
     };
-    if (requested.deep_enabled) {
-      dependencies.make_deep_runtime = [model = requested.model_path] {
-        return make_onnx_cpu_runtime(model);
-      };
+    switch (requested.deep_model) {
+      case DeepModel::Disabled:
+        break;
+      case DeepModel::Tscan:
+      case DeepModel::EfficientPhys:
+        // Construct synchronously before Camera2 starts accepting frames. This
+        // makes ORT's name/type/shape inspection a true start-time gate.
+        {
+          auto runtime_holder =
+              std::make_shared<std::unique_ptr<IDeepRuntime>>(
+                  make_onnx_cpu_runtime(requested.deep_model,
+                                        requested.model_path));
+          dependencies.make_deep_runtime = [runtime_holder] {
+            return std::move(*runtime_holder);
+          };
+        }
+        break;
     }
     dependencies.make_sink = [this](
                                  const std::filesystem::path& output_directory) {
@@ -541,13 +557,32 @@ struct AndroidCameraSession::Impl {
           },
           [this](const HeartRateResult& result) {
             std::lock_guard<std::mutex> lock(status_mutex);
-            if (result.method == "TSCAN" || result.method == "DEEP") {
+            const double sample_rate = waveform_sample_rate_hz(result);
+            WaveformSnapshot waveform = make_waveform_snapshot(
+                result.waveform, result.method, sample_rate, result.is_valid,
+                result.invalid_reason);
+            if (result.method == "TSCAN" ||
+                result.method == "EFFICIENTPHYS" || result.method == "DEEP") {
               snapshot.deep_result_available = true;
               snapshot.deep_bpm = result.bpm;
+              snapshot.deep_raw_bpm = result.raw_bpm;
+              snapshot.deep_display_bpm = result.display_bpm;
               snapshot.deep_confidence = result.confidence;
+              snapshot.deep_window_materialization_ms =
+                  result.window_materialization_ms;
+              snapshot.deep_preprocess_ms = result.preprocess_ms;
+              snapshot.deep_runtime_ms = result.runtime_ms;
+              snapshot.deep_postprocess_ms = result.postprocess_ms;
               snapshot.deep_inference_ms = result.inference_ms;
               snapshot.deep_result_valid = result.is_valid;
+              snapshot.deep_stability_valid = result.stability_valid;
+              snapshot.deep_correction_reason = result.correction_reason;
               snapshot.deep_invalid_reason = result.invalid_reason;
+              if (waveform.available) {
+                waveform.revision = ++deep_waveform_revision_;
+                deep_waveform_ = std::move(waveform);
+                snapshot.deep_waveform_revision = deep_waveform_revision_;
+              }
             } else {
               snapshot.heart_rate_available = true;
               snapshot.bpm = result.bpm;
@@ -556,6 +591,12 @@ struct AndroidCameraSession::Impl {
               snapshot.heart_rate_invalid_reason = result.invalid_reason;
               snapshot.window_start_sec = result.window_start_sec;
               snapshot.window_end_sec = result.window_end_sec;
+              if (waveform.available) {
+                waveform.revision = ++traditional_waveform_revision_;
+                traditional_waveform_ = std::move(waveform);
+                snapshot.traditional_waveform_revision =
+                    traditional_waveform_revision_;
+              }
             }
           },
           [this](const MeasurementSnapshot& result) {
@@ -840,6 +881,11 @@ struct AndroidCameraSession::Impl {
     return latest_roi_jpeg_;
   }
 
+  WaveformSnapshot latest_waveform(bool deep) const {
+    std::lock_guard<std::mutex> lock(status_mutex);
+    return deep ? deep_waveform_ : traditional_waveform_;
+  }
+
   void start() {
     if (config.camera_id.empty()) {
       throw AppError(ErrorCode::CameraIdUnavailable,
@@ -881,11 +927,26 @@ struct AndroidCameraSession::Impl {
       snapshot.deep_result_available = false;
       snapshot.deep_bpm = 0.0;
       snapshot.deep_confidence = 0.0;
+      snapshot.deep_raw_bpm = 0.0;
+      snapshot.deep_display_bpm = 0.0;
+      snapshot.deep_window_materialization_ms = 0.0;
+      snapshot.deep_preprocess_ms = 0.0;
+      snapshot.deep_runtime_ms = 0.0;
+      snapshot.deep_postprocess_ms = 0.0;
       snapshot.deep_inference_ms = 0.0;
       snapshot.deep_result_valid = false;
+      snapshot.deep_stability_valid = false;
+      snapshot.deep_correction_reason.clear();
       snapshot.deep_invalid_reason.clear();
       snapshot.measurement_available = false;
       snapshot.measurement = MeasurementSnapshot{};
+      traditional_waveform_ = {};
+      deep_waveform_ = {};
+      snapshot.traditional_waveform_revision = 0;
+      snapshot.deep_waveform_revision = 0;
+      snapshot.deep_frames_collected = 0;
+      traditional_waveform_revision_ = 0;
+      deep_waveform_revision_ = 0;
       timestamps.clear();
     }
     clear_roi_jpeg();
@@ -1247,6 +1308,10 @@ struct AndroidCameraSession::Impl {
       }
       snapshot.last_timestamp_sec = timestamp_sec;
       frame_id = ++snapshot.accepted_frames;
+      if (snapshot.deep_enabled && !snapshot.deep_result_available) {
+        snapshot.deep_frames_collected = static_cast<std::size_t>(
+            std::min<std::uint64_t>(snapshot.accepted_frames, 180U));
+      }
       timestamps.push_back(timestamp_sec);
       while (timestamps.size() > kFpsWindow) {
         timestamps.pop_front();
@@ -1328,6 +1393,10 @@ struct AndroidCameraSession::Impl {
   int frame_rotation_degrees_{0};
   mutable std::mutex status_mutex;
   CameraSessionStatus snapshot;
+  WaveformSnapshot traditional_waveform_;
+  WaveformSnapshot deep_waveform_;
+  std::uint64_t traditional_waveform_revision_{0};
+  std::uint64_t deep_waveform_revision_{0};
   std::deque<double> timestamps;
   std::shared_ptr<LatestFrameQueue> frame_queue;
   std::atomic<bool> processing_stop{false};
@@ -1453,6 +1522,10 @@ void AndroidCameraSession::request_color_diagnostic() {
 
 void AndroidCameraSession::delete_color_diagnostics() {
   impl_->delete_color_diagnostics();
+}
+
+WaveformSnapshot AndroidCameraSession::latest_waveform(bool deep) const {
+  return impl_->latest_waveform(deep);
 }
 
 }  // namespace rppg_qnn::android

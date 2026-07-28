@@ -21,7 +21,7 @@ if(RPPG_ENABLE_SANITIZERS AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
                       -fsanitize=address,undefined)
 endif()
 
-add_library(rppg_qnn_core src/build_identity.cpp src/config.cpp src/contracts.cpp src/deep_preprocess_worker.cpp src/deep_runtime.cpp src/deep_window_builder.cpp src/deep_worker.cpp src/error.cpp src/frame_source.cpp src/measurement_engine.cpp src/pipeline.cpp src/qnn_preflight.cpp src/result_sink.cpp src/roi_processor.cpp src/traditional_ensemble.cpp src/traditional_predictor.cpp src/yuv420.cpp)
+add_library(rppg_qnn_core src/build_identity.cpp src/config.cpp src/contracts.cpp src/deep_model.cpp src/deep_preprocess_worker.cpp src/deep_runtime.cpp src/deep_stabilizer.cpp src/deep_window_builder.cpp src/deep_worker.cpp src/efficientphys_postprocessor.cpp src/efficientphys_runtime.cpp src/error.cpp src/frame_source.cpp src/measurement_engine.cpp src/pipeline.cpp src/qnn_preflight.cpp src/result_sink.cpp src/roi_processor.cpp src/signal_processing.cpp src/traditional_ensemble.cpp src/traditional_predictor.cpp src/tscan_postprocessor.cpp src/tscan_preprocessor.cpp src/tscan_runtime.cpp src/waveform_snapshot.cpp src/yuv420.cpp)
 target_include_directories(rppg_qnn_core PUBLIC include)
 target_link_libraries(rppg_qnn_core PUBLIC ${OpenCV_LIBS} ${CMAKE_DL_LIBS} Threads::Threads)
 target_compile_options(rppg_qnn_core PRIVATE -Wall -Wextra -Wpedantic -Werror)
@@ -65,6 +65,26 @@ if(BUILD_TESTING)
   target_compile_options(test_config PRIVATE -Wall -Wextra -Wpedantic -Werror)
 
   add_test(NAME config COMMAND test_config)
+
+  add_executable(test_deep_model tests/test_deep_model.cpp)
+  target_link_libraries(test_deep_model PRIVATE rppg_qnn_core)
+  target_include_directories(test_deep_model PRIVATE tests)
+  target_compile_options(test_deep_model PRIVATE -Wall -Wextra -Wpedantic -Werror)
+
+  add_test(NAME deep_model COMMAND test_deep_model)
+
+  add_executable(
+    test_android_onnx_model_contract
+    tests/test_android_onnx_model_contract.cpp
+    android/app/src/main/cpp/android_onnx_model_contract.cpp)
+  target_link_libraries(test_android_onnx_model_contract PRIVATE rppg_qnn_core)
+  target_include_directories(
+    test_android_onnx_model_contract
+    PRIVATE tests android/app/src/main/cpp)
+  target_compile_options(
+    test_android_onnx_model_contract PRIVATE -Wall -Wextra -Wpedantic -Werror)
+
+  add_test(NAME android_onnx_model_contract COMMAND test_android_onnx_model_contract)
 
   add_executable(test_build_identity tests/test_build_identity.cpp)
   target_link_libraries(test_build_identity PRIVATE rppg_qnn_core)
@@ -130,11 +150,57 @@ if(BUILD_TESTING)
   target_compile_options(test_traditional_ensemble PRIVATE -Wall -Wextra -Wpedantic -Werror)
   add_test(NAME traditional_ensemble COMMAND test_traditional_ensemble)
 
+  add_executable(test_waveform_snapshot tests/test_waveform_snapshot.cpp)
+  target_link_libraries(test_waveform_snapshot PRIVATE rppg_qnn_core)
+  target_include_directories(test_waveform_snapshot PRIVATE tests)
+  target_compile_options(test_waveform_snapshot PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  add_test(NAME waveform_snapshot COMMAND test_waveform_snapshot)
+
   add_executable(test_deep_window_builder tests/test_deep_window_builder.cpp)
   target_link_libraries(test_deep_window_builder PRIVATE rppg_qnn_core)
   target_include_directories(test_deep_window_builder PRIVATE tests)
   target_compile_options(test_deep_window_builder PRIVATE -Wall -Wextra -Wpedantic -Werror)
   add_test(NAME deep_window_builder COMMAND test_deep_window_builder)
+
+  add_executable(test_tscan_preprocessor tests/test_tscan_preprocessor.cpp)
+  target_link_libraries(test_tscan_preprocessor PRIVATE rppg_qnn_core)
+  target_include_directories(test_tscan_preprocessor PRIVATE tests)
+  target_compile_options(test_tscan_preprocessor PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  add_test(NAME tscan_preprocessor COMMAND test_tscan_preprocessor)
+
+  add_executable(test_tscan_postprocessor tests/test_tscan_postprocessor.cpp)
+  target_link_libraries(test_tscan_postprocessor PRIVATE rppg_qnn_core)
+  target_include_directories(test_tscan_postprocessor PRIVATE tests)
+  target_compile_options(test_tscan_postprocessor PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  add_test(NAME tscan_postprocessor COMMAND test_tscan_postprocessor)
+
+  add_executable(test_deep_stabilizer tests/test_deep_stabilizer.cpp)
+  target_link_libraries(test_deep_stabilizer PRIVATE rppg_qnn_core)
+  target_include_directories(test_deep_stabilizer PRIVATE tests)
+  target_compile_options(test_deep_stabilizer PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  add_test(NAME deep_stabilizer COMMAND test_deep_stabilizer)
+
+  add_executable(test_tscan_runtime tests/test_tscan_runtime.cpp)
+  target_link_libraries(test_tscan_runtime PRIVATE rppg_qnn_core)
+  target_include_directories(test_tscan_runtime PRIVATE tests)
+  target_compile_options(test_tscan_runtime PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  add_test(NAME tscan_runtime COMMAND test_tscan_runtime)
+
+  add_executable(test_efficientphys_runtime tests/test_efficientphys_runtime.cpp)
+  target_link_libraries(test_efficientphys_runtime PRIVATE rppg_qnn_core)
+  target_include_directories(test_efficientphys_runtime PRIVATE tests)
+  target_compile_options(test_efficientphys_runtime PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  add_test(NAME efficientphys_runtime COMMAND test_efficientphys_runtime)
+
+  add_executable(test_efficientphys_postprocessor
+                 tests/test_efficientphys_postprocessor.cpp)
+  target_link_libraries(test_efficientphys_postprocessor PRIVATE rppg_qnn_core)
+  target_include_directories(test_efficientphys_postprocessor PRIVATE tests)
+  target_compile_definitions(
+      test_efficientphys_postprocessor PRIVATE
+      RPPG_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures")
+  target_compile_options(test_efficientphys_postprocessor PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  add_test(NAME efficientphys_postprocessor COMMAND test_efficientphys_postprocessor)
 
   add_executable(test_deep_worker tests/test_deep_worker.cpp)
   target_link_libraries(test_deep_worker PRIVATE rppg_qnn_core)
@@ -142,9 +208,6 @@ if(BUILD_TESTING)
   target_compile_options(test_deep_worker PRIVATE -Wall -Wextra -Wpedantic -Werror)
   add_test(NAME deep_worker COMMAND test_deep_worker)
   set_tests_properties(deep_worker PROPERTIES TIMEOUT 30)
-
-  # Host EfficientPhys session abstraction tests land with shared runtime work.
-  # Android currently uses android/app/.../android_onnx_cpu_runtime.cpp.
 
   add_library(fake_opencl SHARED tests/test_qnn_preflight.cpp)
   target_compile_definitions(fake_opencl PRIVATE RPPG_FAKE_OPENCL_LIBRARY)

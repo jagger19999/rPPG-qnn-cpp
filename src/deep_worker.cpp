@@ -20,6 +20,11 @@ HeartRateResult worker_failure(const DeepInput& input,
   result.source_frame_count = input.source_frame_count;
   result.max_frame_gap_sec =
       std::isfinite(input.max_frame_gap_sec) ? input.max_frame_gap_sec : 0.0;
+  result.window_materialization_ms =
+      std::isfinite(input.window_materialization_ms) &&
+              input.window_materialization_ms >= 0.0
+          ? input.window_materialization_ms
+          : 0.0;
   result.invalid_reason = "model_inference_failed";
   if (!detail.empty()) {
     result.invalid_reason += ": " + detail;
@@ -71,22 +76,24 @@ void DeepWorker::run() {
         return;
       }
     }
-    const auto started = std::chrono::steady_clock::now();
+    const auto inference_started = std::chrono::steady_clock::now();
     try {
       publish(runtime_->infer(*input));
     } catch (const std::exception& error) {
       HeartRateResult result =
           worker_failure(*input, runtime_->backend_name(), error.what());
       result.inference_ms = std::chrono::duration<double, std::milli>(
-                              std::chrono::steady_clock::now() - started)
-                              .count();
+                                std::chrono::steady_clock::now() -
+                                inference_started)
+                                .count();
       publish(std::move(result));
     } catch (...) {
       HeartRateResult result =
           worker_failure(*input, runtime_->backend_name(), "unknown exception");
       result.inference_ms = std::chrono::duration<double, std::milli>(
-                              std::chrono::steady_clock::now() - started)
-                              .count();
+                                std::chrono::steady_clock::now() -
+                                inference_started)
+                                .count();
       publish(std::move(result));
     }
   }
