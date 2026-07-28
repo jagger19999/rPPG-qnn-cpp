@@ -11,7 +11,7 @@ if(NOT DEFINED ENV{RPPG_OPENCV_ANDROID_SDK})
     message(FATAL_ERROR "RPPG_OPENCV_ANDROID_SDK must point to OpenCV-android-sdk")
 endif()
 set(OpenCV_DIR "$ENV{RPPG_OPENCV_ANDROID_SDK}/sdk/native/jni")
-find_package(OpenCV 4.13.0 EXACT REQUIRED COMPONENTS core imgproc imgcodecs objdetect)
+find_package(OpenCV 4.13.0 EXACT REQUIRED COMPONENTS core imgproc imgcodecs objdetect video)
 
 if(NOT DEFINED ENV{RPPG_ONNXRUNTIME_ANDROID})
     message(FATAL_ERROR
@@ -39,13 +39,16 @@ add_library(
     native_bridge.cpp
     "${RPPG_REPOSITORY_ROOT}/src/build_identity.cpp"
     "${RPPG_REPOSITORY_ROOT}/src/contracts.cpp"
+    "${RPPG_REPOSITORY_ROOT}/src/deep_preprocess_worker.cpp"
     "${RPPG_REPOSITORY_ROOT}/src/deep_runtime.cpp"
     "${RPPG_REPOSITORY_ROOT}/src/deep_window_builder.cpp"
     "${RPPG_REPOSITORY_ROOT}/src/deep_worker.cpp"
     "${RPPG_REPOSITORY_ROOT}/src/error.cpp"
+    "${RPPG_REPOSITORY_ROOT}/src/measurement_engine.cpp"
     "${RPPG_REPOSITORY_ROOT}/src/pipeline.cpp"
     "${RPPG_REPOSITORY_ROOT}/src/result_sink.cpp"
     "${RPPG_REPOSITORY_ROOT}/src/roi_processor.cpp"
+    "${RPPG_REPOSITORY_ROOT}/src/traditional_ensemble.cpp"
     "${RPPG_REPOSITORY_ROOT}/src/traditional_predictor.cpp"
     "${RPPG_REPOSITORY_ROOT}/src/yuv420.cpp")
 

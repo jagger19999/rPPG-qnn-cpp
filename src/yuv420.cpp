@@ -1,6 +1,7 @@
 #include "rppg_qnn/yuv420.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <limits>
 #include <stdexcept>
 
@@ -62,6 +63,11 @@ std::uint8_t clamp_byte(int value) {
 }  // namespace
 
 std::vector<std::uint8_t> yuv420_to_bgr(const Yuv420View& image) {
+  return yuv420_to_bgr(image, {});
+}
+
+std::vector<std::uint8_t> yuv420_to_bgr(const Yuv420View& image,
+                                        YuvColorSpec spec) {
   if (image.width <= 0 || image.height <= 0) {
     throw std::invalid_argument("YUV image dimensions must be positive");
   }
@@ -92,12 +98,35 @@ std::vector<std::uint8_t> yuv420_to_bgr(const Yuv420View& image) {
           v_row + chroma_column * static_cast<std::size_t>(image.v.pixel_stride);
 
       const int c = static_cast<int>(image.y.data[y_offset]) - 16;
-      const int d = static_cast<int>(image.u.data[u_offset]) - 128;
-      const int e = static_cast<int>(image.v.data[v_offset]) - 128;
-      const int red = divide_by_256_floor(298 * c + 409 * e + 128);
-      const int green =
-          divide_by_256_floor(298 * c - 100 * d - 208 * e + 128);
-      const int blue = divide_by_256_floor(298 * c + 516 * d + 128);
+      const int first = static_cast<int>(image.u.data[u_offset]) - 128;
+      const int second = static_cast<int>(image.v.data[v_offset]) - 128;
+      const int d = spec.chroma_order == ChromaOrder::Uv ? first : second;
+      const int e = spec.chroma_order == ChromaOrder::Uv ? second : first;
+      int red = 0;
+      int green = 0;
+      int blue = 0;
+      if (spec.range == YuvRange::Limited && spec.matrix == YuvMatrix::Bt601) {
+        red = divide_by_256_floor(298 * c + 409 * e + 128);
+        green = divide_by_256_floor(298 * c - 100 * d - 208 * e + 128);
+        blue = divide_by_256_floor(298 * c + 516 * d + 128);
+      } else if (spec.range == YuvRange::Limited) {
+        red = divide_by_256_floor(298 * c + 459 * e + 128);
+        green = divide_by_256_floor(298 * c - 55 * d - 136 * e + 128);
+        blue = divide_by_256_floor(298 * c + 541 * d + 128);
+      } else {
+        const double luminance = static_cast<double>(image.y.data[y_offset]);
+        if (spec.matrix == YuvMatrix::Bt709) {
+          red = static_cast<int>(std::lround(luminance + 1.5748 * e));
+          green = static_cast<int>(
+              std::lround(luminance - 0.187324 * d - 0.468124 * e));
+          blue = static_cast<int>(std::lround(luminance + 1.8556 * d));
+        } else {
+          red = static_cast<int>(std::lround(luminance + 1.402 * e));
+          green = static_cast<int>(
+              std::lround(luminance - 0.344136 * d - 0.714136 * e));
+          blue = static_cast<int>(std::lround(luminance + 1.772 * d));
+        }
+      }
 
       bgr[destination++] = clamp_byte(blue);
       bgr[destination++] = clamp_byte(green);

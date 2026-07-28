@@ -360,6 +360,35 @@ std::vector<double> chrom_bvp(const std::vector<cv::Vec3d>& rgb) {
   return output;
 }
 
+std::vector<double> lgi_bvp(const std::vector<cv::Vec3d>& rgb) {
+  if (rgb.empty()) {
+    return {};
+  }
+  cv::Mat signal(3, static_cast<int>(rgb.size()), CV_64F);
+  for (std::size_t index = 0; index < rgb.size(); ++index) {
+    for (int channel = 0; channel < 3; ++channel) {
+      signal.at<double>(channel, static_cast<int>(index)) = rgb[index][channel];
+    }
+  }
+  cv::Mat singular_values;
+  cv::Mat left_vectors;
+  cv::SVD::compute(signal, singular_values, left_vectors, cv::noArray(),
+                   cv::SVD::FULL_UV);
+  if (left_vectors.rows != 3 || left_vectors.cols != 3) {
+    return std::vector<double>(rgb.size(), 0.0);
+  }
+  const cv::Mat skin_direction = left_vectors.col(0);
+  const cv::Mat projection = cv::Mat::eye(3, 3, CV_64F) -
+                             skin_direction * skin_direction.t();
+  const cv::Mat projected = projection * signal;
+  std::vector<double> output(rgb.size(), 0.0);
+  for (std::size_t index = 0; index < output.size(); ++index) {
+    output[index] = projected.at<double>(1, static_cast<int>(index));
+  }
+  demean(&output);
+  return output;
+}
+
 }  // namespace
 
 TraditionalMethod traditional_method_from_string(const std::string& method) {
@@ -371,6 +400,9 @@ TraditionalMethod traditional_method_from_string(const std::string& method) {
   }
   if (method == "chrom" || method == "CHROM") {
     return TraditionalMethod::Chrom;
+  }
+  if (method == "lgi" || method == "LGI") {
+    return TraditionalMethod::Lgi;
   }
   throw AppError(ErrorCode::ConfigInvalid,
                  "unsupported traditional method: " + method);
@@ -384,6 +416,8 @@ std::string traditional_method_name(TraditionalMethod method) {
       return "POS";
     case TraditionalMethod::Chrom:
       return "CHROM";
+    case TraditionalMethod::Lgi:
+      return "LGI";
   }
   throw std::invalid_argument("unknown traditional method enum");
 }
@@ -400,11 +434,24 @@ std::vector<double> extract_traditional_bvp(const std::vector<cv::Vec3d>& rgb,
       return pos_bvp(rgb);
     case TraditionalMethod::Chrom:
       return chrom_bvp(rgb);
+    case TraditionalMethod::Lgi:
+      return lgi_bvp(rgb);
   }
   return std::vector<double>(rgb.size(), 0.0);
 }
 
 TraditionalPredictor::TraditionalPredictor(TraditionalMethod method) : method_(method) {}
+
+void TraditionalPredictor::set_spectral_smoothing(bool enabled, double alpha) {
+  spectral_smoothing_enabled_ = enabled;
+  if (alpha > 0.0 && alpha < 1.0) {
+    spectral_smoothing_alpha_ = alpha;
+  }
+  if (!enabled) {
+    smoothing_initialized_ = false;
+    smoothed_power_.fill(0.0);
+  }
+}
 
 void TraditionalPredictor::add_sample(double timestamp_sec,
                                       const cv::Scalar& mean_bgr) {
@@ -458,6 +505,8 @@ void TraditionalPredictor::reset() {
   latest_.reset();
   last_evaluation_timestamp_sec_.reset();
   evaluation_count_ = 0;
+  smoothing_initialized_ = false;
+  smoothed_power_.fill(0.0);
 }
 
 void TraditionalPredictor::set_sampling_result() {
@@ -637,9 +686,8 @@ void TraditionalPredictor::evaluate() {
       result.waveform.push_back(static_cast<float>(normalized));
     }
 
-    double total_power = 0.0;
-    double peak_power = 0.0;
-    double peak_frequency = 0.0;
+    // Phase 1: compute raw DFT power for each frequency bin
+    std::array<double, kMaximumBin - kMinimumBin + 1> raw_power{};
     for (int frequency_bin = kMinimumFrequencyBin;
          frequency_bin <= kMaximumFrequencyBin; ++frequency_bin) {
       const double frequency = static_cast<double>(frequency_bin) / 10.0;
@@ -655,20 +703,49 @@ void TraditionalPredictor::evaluate() {
         real += weighted * std::cos(phase);
         imaginary += weighted * std::sin(phase);
       }
-      const double power = real * real + imaginary * imaginary;
-      total_power += power;
-      const bool higher_power = power > peak_power;
+      raw_power[static_cast<std::size_t>(frequency_bin - kMinimumBin)] =
+          real * real + imaginary * imaginary;
+    }
+
+    // Phase 2: apply ES spectral smoothing, then find dominant frequency
+    double total_power = 0.0;
+    double peak_power = 0.0;
+    double peak_frequency = 0.0;
+    for (int frequency_bin = kMinimumFrequencyBin;
+         frequency_bin <= kMaximumFrequencyBin; ++frequency_bin) {
+      const std::size_t bin_idx =
+          static_cast<std::size_t>(frequency_bin - kMinimumBin);
+      const double raw = raw_power[bin_idx];
+
+      double effective_power = raw;
+      if (spectral_smoothing_enabled_) {
+        if (!smoothing_initialized_ || !std::isfinite(smoothed_power_[bin_idx])) {
+          smoothed_power_[bin_idx] = raw;
+        } else {
+          smoothed_power_[bin_idx] =
+              spectral_smoothing_alpha_ * smoothed_power_[bin_idx] +
+              (1.0 - spectral_smoothing_alpha_) * raw;
+        }
+        effective_power = smoothed_power_[bin_idx];
+      }
+
+      total_power += effective_power;
+
+      const double frequency = static_cast<double>(frequency_bin) / 10.0;
+      const bool higher_power = effective_power > peak_power;
       const bool near_equal_higher_frequency =
           frequency > peak_frequency && peak_power > 0.0 &&
-          peak_power - power <= peak_power * kPeakTieRelativeTolerance;
+          peak_power - effective_power <= peak_power * kPeakTieRelativeTolerance;
       if (higher_power || near_equal_higher_frequency) {
-        peak_power = power;
+        peak_power = effective_power;
         peak_frequency = frequency;
       }
     }
+    smoothing_initialized_ = true;
     result.bpm = peak_frequency * 60.0;
     result.confidence =
         total_power > kEpsilon ? peak_power / total_power : 0.0;
+    result.peak_ratio = result.confidence;
     if (result.confidence >= kMinimumConfidence && result.bpm >= kMinimumBpm &&
         result.bpm <= kMaximumBpm) {
       result.is_valid = true;

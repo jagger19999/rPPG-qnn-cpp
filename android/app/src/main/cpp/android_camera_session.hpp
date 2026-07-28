@@ -1,5 +1,7 @@
 #pragma once
 
+#include "rppg_qnn/contracts.hpp"
+
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -42,6 +44,7 @@ struct CameraSessionStatus {
   int display_rotation{0};
   int frame_rotation{0};
   double measured_fps{0.0};
+  PerformanceMetrics performance;
   std::uint64_t accepted_frames{0};
   std::uint64_t dropped_frames{0};
   double last_timestamp_sec{0.0};
@@ -71,8 +74,13 @@ struct CameraSessionStatus {
   double deep_inference_ms{0.0};
   bool deep_result_valid{false};
   std::string deep_invalid_reason;
+  bool measurement_available{false};
+  MeasurementSnapshot measurement;
   std::string error_code;
   std::string error_message;
+  std::string color_diagnostic_state{"idle"};
+  std::string color_diagnostic_path;
+  std::string color_diagnostic_finding;
 };
 
 class AndroidCameraSession {
@@ -93,6 +101,8 @@ class AndroidCameraSession {
   void stop() noexcept;
   [[nodiscard]] CameraSessionStatus status() const;
   [[nodiscard]] std::vector<std::uint8_t> latest_roi_jpeg() const;
+  void request_color_diagnostic();
+  void delete_color_diagnostics();
 
  private:
   struct Impl;

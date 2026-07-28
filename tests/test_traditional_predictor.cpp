@@ -99,7 +99,8 @@ void chrom_bvp_matches_python_reference() {
 
 void selected_predictors_estimate_72_bpm() {
   for (const auto method : {rppg_qnn::TraditionalMethod::Pos,
-                            rppg_qnn::TraditionalMethod::Chrom}) {
+                            rppg_qnn::TraditionalMethod::Chrom,
+                            rppg_qnn::TraditionalMethod::Lgi}) {
     rppg_qnn::TraditionalPredictor predictor(method);
     const std::vector<cv::Vec3d> rgb = python_reference_rgb(601U);
     for (std::size_t index = 0; index < rgb.size(); ++index) {
@@ -189,5 +190,9 @@ int main() {
   selected_predictors_estimate_72_bpm();
   flat_rgb_is_invalid_without_fallback();
   invalid_sampling_preserves_selected_method();
+  EXPECT_EQ(rppg_qnn::traditional_method_from_string("lgi"),
+            rppg_qnn::TraditionalMethod::Lgi);
+  EXPECT_EQ(rppg_qnn::traditional_method_name(rppg_qnn::TraditionalMethod::Lgi),
+            "LGI");
   return test_support::finish();
 }

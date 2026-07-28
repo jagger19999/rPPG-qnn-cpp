@@ -21,6 +21,18 @@ struct Yuv420View {
   YuvPlaneView v;
 };
 
+enum class YuvMatrix { Bt601, Bt709 };
+enum class YuvRange { Limited, Full };
+enum class ChromaOrder { Uv, Vu };
+
+struct YuvColorSpec {
+  YuvMatrix matrix{YuvMatrix::Bt601};
+  YuvRange range{YuvRange::Limited};
+  ChromaOrder chroma_order{ChromaOrder::Uv};
+};
+
 std::vector<std::uint8_t> yuv420_to_bgr(const Yuv420View& image);
+std::vector<std::uint8_t> yuv420_to_bgr(const Yuv420View& image,
+                                        YuvColorSpec spec);
 
 }  // namespace rppg_qnn

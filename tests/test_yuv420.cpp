@@ -90,6 +90,24 @@ void converts_odd_3x3_dimensions_using_ceil_chroma_extent() {
   EXPECT_EQ(rppg_qnn::yuv420_to_bgr(image), expected);
 }
 
+void supports_explicit_full_range_and_chroma_order() {
+  const std::vector<std::uint8_t> y(4, 128);
+  const std::vector<std::uint8_t> u(1, 90);
+  const std::vector<std::uint8_t> v(1, 240);
+  const Yuv420View image{2, 2, plane(y, 2, 1), plane(u, 1, 1), plane(v, 1, 1)};
+  const auto uv = rppg_qnn::yuv420_to_bgr(
+      image, {rppg_qnn::YuvMatrix::Bt709, rppg_qnn::YuvRange::Full,
+              rppg_qnn::ChromaOrder::Uv});
+  const auto vu = rppg_qnn::yuv420_to_bgr(
+      image, {rppg_qnn::YuvMatrix::Bt709, rppg_qnn::YuvRange::Full,
+              rppg_qnn::ChromaOrder::Vu});
+  EXPECT_EQ(uv.size(), std::size_t{12});
+  EXPECT_EQ(vu.size(), std::size_t{12});
+  EXPECT_TRUE(uv != vu);
+  EXPECT_TRUE(uv[2] > uv[0]);
+  EXPECT_TRUE(vu[0] > vu[2]);
+}
+
 void rejects_truncated_planes() {
   const std::vector<std::uint8_t> y(9, 128);
   const std::vector<std::uint8_t> chroma(4, 128);
@@ -181,6 +199,7 @@ int main() {
   ignores_padding_at_the_end_of_plane_rows();
   supports_pixel_stride_two_interleaved_chroma_views();
   converts_odd_3x3_dimensions_using_ceil_chroma_extent();
+  supports_explicit_full_range_and_chroma_order();
   rejects_truncated_planes();
   rejects_invalid_strides_and_dimensions();
   rejects_null_planes_and_impossible_large_layouts();

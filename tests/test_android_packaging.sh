@@ -209,7 +209,7 @@ for required_api in \
     exit 1
   fi
 done
-if ! grep -Fq 'find_package(OpenCV 4.13.0 EXACT REQUIRED COMPONENTS core imgproc imgcodecs objdetect)' "$camera_cmake" ||
+if ! grep -Fq 'find_package(OpenCV 4.13.0 EXACT REQUIRED COMPONENTS core imgproc imgcodecs objdetect video)' "$camera_cmake" ||
    ! grep -Fq 'RPPG_OPENCV_ANDROID_SDK' "$camera_cmake"; then
   echo "android packaging check: Android CMake must pin the OpenCV 4.13.0 SDK" >&2
   exit 1
@@ -286,6 +286,7 @@ android/app/build.gradle
 android/app/proguard-rules.pro
 android/app/src/main/AndroidManifest.xml
 android/app/src/main/assets/haarcascade_frontalface_default.xml
+android/app/src/main/assets/hr_chart.html
 android/app/src/main/cpp/CMakeLists.txt
 android/app/src/main/cpp/android_camera_session.cpp
 android/app/src/main/cpp/android_camera_session.hpp
@@ -308,6 +309,8 @@ android/app/src/main/java/com/jagger/rppgbench/watch/WatchBleWorker.java
 android/app/src/main/java/com/jagger/rppgbench/watch/WatchContracts.java
 android/app/src/main/java/com/jagger/rppgbench/watch/WatchCsvExport.java
 android/app/src/main/java/com/jagger/rppgbench/watch/WatchSampleStore.java
+android/app/src/main/res/drawable/card_bg_rounded.xml
+android/app/src/main/res/drawable/card_traditional.xml
 android/app/src/main/res/layout/activity_main.xml
 android/app/src/main/res/layout/view_hr_metric_card.xml
 android/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml

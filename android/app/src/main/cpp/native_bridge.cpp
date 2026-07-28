@@ -213,3 +213,19 @@ Java_com_jagger_rppgbench_NativeBridge_nativeGetRoiJpeg(JNIEnv* env, jclass,
     return env->NewByteArray(0);
   }
 }
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_jagger_rppgbench_NativeBridge_nativeRequestColorDiagnostic(
+    JNIEnv* env, jclass, jlong handle) noexcept {
+  return string_result(env, [handle] {
+    return rppg_qnn::android::request_camera_color_diagnostic(handle);
+  });
+}
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_jagger_rppgbench_NativeBridge_nativeDeleteColorDiagnostics(
+    JNIEnv* env, jclass, jlong handle) noexcept {
+  return string_result(env, [handle] {
+    return rppg_qnn::android::delete_camera_color_diagnostics(handle);
+  });
+}

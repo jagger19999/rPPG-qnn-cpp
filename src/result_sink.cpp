@@ -224,6 +224,13 @@ void ResultSink::publish(const FrameHealth& result) {
           << ",\"capture_fps\":" << json_number(result.capture_fps)
           << ",\"face_found\":" << json_bool(result.face_found)
           << ",\"face_confidence\":" << json_number(result.face_confidence)
+          << ",\"processing_fps\":"
+          << json_number(result.performance.processing_fps)
+          << ",\"roi_p95_ms\":" << json_number(result.performance.roi.p95_ms)
+          << ",\"traditional_p95_ms\":"
+          << json_number(result.performance.traditional.p95_ms)
+          << ",\"deep_preprocess_p95_ms\":"
+          << json_number(result.performance.deep_preprocess.p95_ms)
           << ",\"status\":" << json_string(result.status) << "}\n";
   if (!events_) {
     fail_permanently("could not write frame-health result");
@@ -288,6 +295,83 @@ void ResultSink::publish(const HeartRateResult& result) {
            << " valid=" << json_bool(result.is_valid) << '\n';
   std::lock_guard<std::mutex> terminal_lock(terminal_mutex);
   std::cout << terminal.str();
+}
+
+void ResultSink::publish(const MeasurementSnapshot& result) {
+  std::lock_guard<std::mutex> lock(mutex_);
+  ensure_open_for_publish();
+  events_ << "{\"schema_version\":" << result.schema_version
+          << ",\"event_type\":\"measurement_snapshot\""
+          << ",\"window_end_sec\":" << json_number(result.window_end_sec)
+          << ",\"measured_available\":" << json_bool(result.measured_available)
+          << ",\"measured_bpm\":" << json_number(result.measured_bpm)
+          << ",\"accepted_available\":" << json_bool(result.accepted_available)
+          << ",\"accepted_bpm\":" << json_number(result.accepted_bpm)
+          << ",\"display_available\":" << json_bool(result.display_available)
+          << ",\"display_bpm\":" << json_number(result.display_bpm)
+          << ",\"display_is_held\":" << json_bool(result.display_is_held)
+          << ",\"selected_method\":" << json_string(result.selected_method)
+          << ",\"consensus\":{\"methods\":[";
+  for (std::size_t index = 0; index < result.consensus_methods.size(); ++index) {
+    if (index != 0U) events_ << ',';
+    events_ << json_string(result.consensus_methods[index]);
+  }
+  events_ << "],\"spread_bpm\":" << json_number(result.consensus_spread_bpm)
+          << ",\"artifact_correction\":"
+          << json_string(result.consensus_artifact_correction)
+          << ",\"rejection_reason\":"
+          << json_string(result.consensus_rejection_reason) << '}'
+          << ",\"gate\":{\"accepted\":" << json_bool(result.gate.accepted)
+          << ",\"quality_score\":" << json_number(result.gate.quality_score)
+          << ",\"reason\":" << json_string(result.gate.reason)
+          << ",\"flags\":[";
+  for (std::size_t index = 0; index < result.gate.flags.size(); ++index) {
+    if (index != 0U) events_ << ',';
+    events_ << json_string(result.gate.flags[index]);
+  }
+  events_ << "]},\"vqa\":{\"score\":" << json_number(result.vqa.score_0_10)
+          << ",\"label\":" << json_string(result.vqa.label)
+          << "},\"router_shadow\":{\"active\":"
+          << json_bool(result.router_shadow.active)
+          << ",\"model_loaded\":"
+          << json_bool(result.router_shadow.model_loaded)
+          << ",\"backend\":" << json_string(result.router_shadow.backend)
+          << ",\"recommended_method\":"
+          << json_string(result.router_shadow.recommended_method)
+          << ",\"gate_probability\":"
+          << json_number(result.router_shadow.gate_probability)
+          << ",\"evaluation_ms\":"
+          << json_number(result.router_shadow.evaluation_ms)
+          << "},\"quality\":{\"brightness\":"
+          << json_number(result.quality.brightness)
+          << ",\"brightness_std\":" << json_number(result.quality.brightness_std)
+          << ",\"signal_std\":" << json_number(result.quality.signal_std)
+          << ",\"spectral_peak_ratio\":"
+          << json_number(result.quality.spectral_peak_ratio)
+          << ",\"face_area_ratio\":"
+          << json_number(result.quality.face_area_ratio)
+          << ",\"motion_px\":" << json_number(result.quality.motion_px)
+          << ",\"source_fps\":" << json_number(result.quality.source_fps)
+          << ",\"max_frame_gap_sec\":"
+          << json_number(result.quality.max_frame_gap_sec)
+          << ",\"face_count\":" << result.quality.face_count
+          << "},\"candidates\":[";
+  for (std::size_t index = 0; index < result.candidates.size(); ++index) {
+    if (index != 0U) events_ << ',';
+    const CandidateResult& candidate = result.candidates[index];
+    events_ << "{\"method\":" << json_string(candidate.method)
+            << ",\"bpm\":" << json_number(candidate.bpm)
+            << ",\"confidence\":" << json_number(candidate.confidence)
+            << ",\"peak_ratio\":" << json_number(candidate.peak_ratio)
+            << ",\"valid\":" << json_bool(candidate.valid)
+            << ",\"invalid_reason\":"
+            << json_string(candidate.invalid_reason) << '}';
+  }
+  events_ << "]}\n";
+  events_.flush();
+  if (!events_) {
+    fail_permanently("could not write measurement snapshot");
+  }
 }
 
 void ResultSink::close(int exit_code) {

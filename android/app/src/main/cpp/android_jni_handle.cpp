@@ -74,6 +74,69 @@ std::shared_ptr<AndroidCameraSession> lookup(std::int64_t handle) {
   return found->second;
 }
 
+std::string measurement_json(const MeasurementSnapshot& measurement) {
+  std::ostringstream output;
+  output << std::setprecision(10)
+         << "{\"measured_available\":"
+         << (measurement.measured_available ? "true" : "false")
+         << ",\"measured_bpm\":" << measurement.measured_bpm
+         << ",\"accepted_available\":"
+         << (measurement.accepted_available ? "true" : "false")
+         << ",\"accepted_bpm\":" << measurement.accepted_bpm
+         << ",\"display_available\":"
+         << (measurement.display_available ? "true" : "false")
+         << ",\"display_bpm\":" << measurement.display_bpm
+         << ",\"display_is_held\":"
+         << (measurement.display_is_held ? "true" : "false")
+         << ",\"selected_method\":\""
+         << json_escape(measurement.selected_method)
+         << "\",\"quality_score\":" << measurement.gate.quality_score
+         << ",\"gate_accepted\":"
+         << (measurement.gate.accepted ? "true" : "false")
+         << ",\"gate_reason\":\"" << json_escape(measurement.gate.reason)
+         << "\",\"vqa_score\":" << measurement.vqa.score_0_10
+         << ",\"vqa_label\":\"" << json_escape(measurement.vqa.label)
+         << "\",\"router_method\":\""
+         << json_escape(measurement.router_shadow.recommended_method)
+         << "\",\"router_gate_probability\":"
+         << measurement.router_shadow.gate_probability
+         << ",\"router_backend\":\""
+         << json_escape(measurement.router_shadow.backend)
+         << "\",\"router_model_loaded\":"
+         << (measurement.router_shadow.model_loaded ? "true" : "false")
+         << ",\"consensus_spread_bpm\":"
+         << measurement.consensus_spread_bpm
+         << ",\"consensus_artifact_correction\":\""
+         << json_escape(measurement.consensus_artifact_correction)
+         << "\",\"consensus_rejection_reason\":\""
+         << json_escape(measurement.consensus_rejection_reason)
+         << "\",\"consensus_methods\":[";
+  for (std::size_t index = 0; index < measurement.consensus_methods.size();
+       ++index) {
+    if (index != 0U) output << ',';
+    output << "\"" << json_escape(measurement.consensus_methods[index]) << "\"";
+  }
+  output << "],\"flags\":[";
+  for (std::size_t index = 0; index < measurement.gate.flags.size(); ++index) {
+    if (index != 0U) output << ',';
+    output << "\"" << json_escape(measurement.gate.flags[index]) << "\"";
+  }
+  output << "],\"candidates\":[";
+  for (std::size_t index = 0; index < measurement.candidates.size(); ++index) {
+    if (index != 0U) output << ',';
+    const CandidateResult& candidate = measurement.candidates[index];
+    output << "{\"method\":\"" << json_escape(candidate.method)
+           << "\",\"bpm\":" << candidate.bpm
+           << ",\"confidence\":" << candidate.confidence
+           << ",\"peak_ratio\":" << candidate.peak_ratio
+           << ",\"valid\":" << (candidate.valid ? "true" : "false")
+           << ",\"invalid_reason\":\""
+           << json_escape(candidate.invalid_reason) << "\"}";
+  }
+  output << "]}";
+  return output.str();
+}
+
 std::string status_json(const CameraSessionStatus& status) {
   std::ostringstream output;
   output << std::setprecision(10)
@@ -88,6 +151,18 @@ std::string status_json(const CameraSessionStatus& status) {
          << ",\"display_rotation\":" << status.display_rotation
          << ",\"frame_rotation\":" << status.frame_rotation
          << ",\"measured_fps\":" << status.measured_fps
+         << ",\"processing_fps\":" << status.performance.processing_fps
+         << ",\"roi_p95_ms\":" << status.performance.roi.p95_ms
+         << ",\"traditional_p95_ms\":"
+         << status.performance.traditional.p95_ms
+         << ",\"deep_preprocess_p95_ms\":"
+         << status.performance.deep_preprocess.p95_ms
+         << ",\"color_diagnostic_state\":\""
+         << json_escape(status.color_diagnostic_state)
+         << "\",\"color_diagnostic_path\":\""
+         << json_escape(status.color_diagnostic_path)
+         << "\",\"color_diagnostic_finding\":\""
+         << json_escape(status.color_diagnostic_finding) << "\""
          << ",\"accepted_frames\":" << status.accepted_frames
          << ",\"dropped_frames\":" << status.dropped_frames
          << ",\"last_timestamp_sec\":" << status.last_timestamp_sec
@@ -127,7 +202,10 @@ std::string status_json(const CameraSessionStatus& status) {
          << (status.deep_result_valid ? "true" : "false")
          << ",\"deep_invalid_reason\":\""
          << json_escape(status.deep_invalid_reason)
-         << "\",\"error_code\":\"" << json_escape(status.error_code)
+         << "\",\"measurement_available\":"
+         << (status.measurement_available ? "true" : "false")
+         << ",\"measurement\":" << measurement_json(status.measurement)
+         << ",\"error_code\":\"" << json_escape(status.error_code)
          << "\",\"error_message\":\"" << json_escape(status.error_message)
          << "\"}";
   return output.str();
@@ -219,6 +297,18 @@ std::string camera_session_status_json(std::int64_t handle) {
 
 std::vector<std::uint8_t> camera_session_roi_jpeg(std::int64_t handle) {
   return lookup(handle)->latest_roi_jpeg();
+}
+
+std::string request_camera_color_diagnostic(std::int64_t handle) {
+  const auto session = lookup(handle);
+  session->request_color_diagnostic();
+  return status_json(session->status());
+}
+
+std::string delete_camera_color_diagnostics(std::int64_t handle) {
+  const auto session = lookup(handle);
+  session->delete_color_diagnostics();
+  return status_json(session->status());
 }
 
 }  // namespace rppg_qnn::android

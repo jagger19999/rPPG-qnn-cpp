@@ -10,7 +10,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 option(RPPG_ENABLE_SANITIZERS "Enable AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
 
-find_package(OpenCV 4 REQUIRED COMPONENTS core imgproc videoio objdetect)
+find_package(OpenCV 4 REQUIRED COMPONENTS core imgproc video videoio objdetect)
 find_package(Threads REQUIRED)
 
 if(RPPG_ENABLE_SANITIZERS AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
@@ -21,7 +21,7 @@ if(RPPG_ENABLE_SANITIZERS AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
                       -fsanitize=address,undefined)
 endif()
 
-add_library(rppg_qnn_core src/build_identity.cpp src/config.cpp src/contracts.cpp src/deep_runtime.cpp src/deep_window_builder.cpp src/deep_worker.cpp src/error.cpp src/frame_source.cpp src/pipeline.cpp src/qnn_preflight.cpp src/result_sink.cpp src/roi_processor.cpp src/traditional_predictor.cpp src/yuv420.cpp)
+add_library(rppg_qnn_core src/build_identity.cpp src/config.cpp src/contracts.cpp src/deep_preprocess_worker.cpp src/deep_runtime.cpp src/deep_window_builder.cpp src/deep_worker.cpp src/error.cpp src/frame_source.cpp src/measurement_engine.cpp src/pipeline.cpp src/qnn_preflight.cpp src/result_sink.cpp src/roi_processor.cpp src/traditional_ensemble.cpp src/traditional_predictor.cpp src/yuv420.cpp)
 target_include_directories(rppg_qnn_core PUBLIC include)
 target_link_libraries(rppg_qnn_core PUBLIC ${OpenCV_LIBS} ${CMAKE_DL_LIBS} Threads::Threads)
 target_compile_options(rppg_qnn_core PRIVATE -Wall -Wextra -Wpedantic -Werror)
@@ -117,6 +117,18 @@ if(BUILD_TESTING)
   target_compile_options(test_traditional_predictor PRIVATE -Wall -Wextra -Wpedantic -Werror)
 
   add_test(NAME traditional_predictor COMMAND test_traditional_predictor)
+
+  add_executable(test_measurement_engine tests/test_measurement_engine.cpp)
+  target_link_libraries(test_measurement_engine PRIVATE rppg_qnn_core)
+  target_include_directories(test_measurement_engine PRIVATE tests)
+  target_compile_options(test_measurement_engine PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  add_test(NAME measurement_engine COMMAND test_measurement_engine)
+
+  add_executable(test_traditional_ensemble tests/test_traditional_ensemble.cpp)
+  target_link_libraries(test_traditional_ensemble PRIVATE rppg_qnn_core)
+  target_include_directories(test_traditional_ensemble PRIVATE tests)
+  target_compile_options(test_traditional_ensemble PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  add_test(NAME traditional_ensemble COMMAND test_traditional_ensemble)
 
   add_executable(test_deep_window_builder tests/test_deep_window_builder.cpp)
   target_link_libraries(test_deep_window_builder PRIVATE rppg_qnn_core)

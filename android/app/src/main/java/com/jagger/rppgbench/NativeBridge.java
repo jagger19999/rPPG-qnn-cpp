@@ -21,4 +21,6 @@ public final class NativeBridge {
     public static native void nativeDestroy(long handle);
     public static native String nativeGetStatus(long handle);
     public static native byte[] nativeGetRoiJpeg(long handle);
+    public static native String nativeRequestColorDiagnostic(long handle);
+    public static native String nativeDeleteColorDiagnostics(long handle);
 }

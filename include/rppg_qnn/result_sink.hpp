@@ -17,6 +17,7 @@ class IResultSink {
                                      const std::string& message) = 0;
   virtual void publish(const FrameHealth& result) = 0;
   virtual void publish(const HeartRateResult& result) = 0;
+  virtual void publish(const MeasurementSnapshot&) {}
   virtual void close(int exit_code) = 0;
 };
 
@@ -39,6 +40,7 @@ class ResultSink final : public IResultSink {
   // discarded so they cannot defeat the throttle.
   void publish(const FrameHealth& result) override;
   void publish(const HeartRateResult& result) override;
+  void publish(const MeasurementSnapshot& result) override;
   void close(int exit_code) override;
 
  private:

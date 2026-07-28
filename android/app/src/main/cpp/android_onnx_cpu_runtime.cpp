@@ -20,8 +20,9 @@ namespace rppg_qnn::android {
 namespace {
 
 constexpr std::size_t kSourceFrames = 180U;
-constexpr std::size_t kModelFrames = 181U;
-constexpr std::size_t kChannels = 3U;
+constexpr std::size_t kModelFrames = 180U;
+constexpr std::size_t kInChannels = 6U;
+constexpr std::size_t kRgbChannels = 3U;
 constexpr std::size_t kHeight = 72U;
 constexpr std::size_t kWidth = 72U;
 constexpr double kSampleRateHz = 30.0;
@@ -35,7 +36,7 @@ HeartRateResult make_result(const DeepInput& input,
                             std::vector<float> waveform,
                             double inference_ms) {
   HeartRateResult result;
-  result.method = "EFFICIENTPHYS";
+  result.method = "TSCAN";
   result.backend = "ONNX_RUNTIME_CPU";
   result.window_start_sec = input.start_sec;
   result.window_end_sec = input.end_sec;
@@ -94,49 +95,105 @@ HeartRateResult make_result(const DeepInput& input,
 }
 
 std::vector<float> preprocess(const DeepInput& input) {
+  // Input is [180, 72, 72, 3] NHWC RGB.
   const std::vector<std::int64_t> expected_shape{
       static_cast<std::int64_t>(kSourceFrames),
       static_cast<std::int64_t>(kHeight),
       static_cast<std::int64_t>(kWidth),
-      static_cast<std::int64_t>(kChannels)};
+      static_cast<std::int64_t>(kRgbChannels)};
   const std::size_t source_values =
-      kSourceFrames * kHeight * kWidth * kChannels;
+      kSourceFrames * kHeight * kWidth * kRgbChannels;
   if (input.shape != expected_shape || input.tensor.size() != source_values ||
       !std::all_of(input.tensor.begin(), input.tensor.end(),
                    [](float value) { return std::isfinite(value); })) {
     throw AppError(ErrorCode::InferenceFailed,
-                   "EfficientPhys requires finite float32 [180,72,72,3] RGB");
+                   "TSCAN requires finite float32 [180,72,72,3] RGB");
   }
 
-  const double mean =
-      std::accumulate(input.tensor.begin(), input.tensor.end(), 0.0) /
-      static_cast<double>(input.tensor.size());
-  double variance = 0.0;
-  for (float value : input.tensor) {
-    const double centered = static_cast<double>(value) - mean;
-    variance += centered * centered;
+  const std::size_t pixels_per_frame = kHeight * kWidth;
+  const std::size_t frame_stride = pixels_per_frame * kRgbChannels;
+
+  // --- Compute diff frames: diff[t] = frame[t] - frame[t-1], diff[0] = 0 ---
+  // Also compute per-frame channel means for the first-frame diff fill.
+  std::vector<double> diff_data(source_values, 0.0);
+  double diff_sum = 0.0;
+  for (std::size_t f = 1; f < kSourceFrames; ++f) {
+    for (std::size_t p = 0; p < pixels_per_frame; ++p) {
+      for (std::size_t c = 0; c < kRgbChannels; ++c) {
+        const std::size_t idx_curr = f * frame_stride + p * kRgbChannels + c;
+        const std::size_t idx_prev = (f - 1) * frame_stride + p * kRgbChannels + c;
+        const double d = static_cast<double>(input.tensor[idx_curr]) -
+                         static_cast<double>(input.tensor[idx_prev]);
+        diff_data[idx_curr] = d;
+        diff_sum += d;
+      }
+    }
   }
-  variance /= static_cast<double>(input.tensor.size());
-  const double standard_deviation = std::sqrt(variance);
-  if (!std::isfinite(standard_deviation) || standard_deviation <= kEpsilon) {
+  // Fill frame 0 diff with the mean diff value to avoid all-zeros.
+  const double diff_mean =
+      diff_sum / static_cast<double>((kSourceFrames - 1) * pixels_per_frame * kRgbChannels);
+  for (std::size_t p = 0; p < pixels_per_frame; ++p) {
+    for (std::size_t c = 0; c < kRgbChannels; ++c) {
+      diff_data[p * kRgbChannels + c] = diff_mean;
+    }
+  }
+
+  // --- Standardize diff frames ---
+  double diff_var = 0.0;
+  for (double v : diff_data) {
+    const double centered = v - diff_mean;
+    diff_var += centered * centered;
+  }
+  diff_var /= static_cast<double>(diff_data.size());
+  const double diff_std = std::sqrt(diff_var);
+  if (!std::isfinite(diff_std) || diff_std <= kEpsilon) {
     throw AppError(ErrorCode::InferenceFailed,
-                   "EfficientPhys input standard deviation is zero");
+                   "TSCAN diff standard deviation is zero");
   }
 
-  std::vector<float> model_input(kModelFrames * kChannels * kHeight * kWidth);
-  for (std::size_t frame = 0; frame < kModelFrames; ++frame) {
-    const std::size_t source_frame = std::min(frame, kSourceFrames - 1U);
-    for (std::size_t channel = 0; channel < kChannels; ++channel) {
-      for (std::size_t row = 0; row < kHeight; ++row) {
-        for (std::size_t column = 0; column < kWidth; ++column) {
-          const std::size_t source_index =
-              ((source_frame * kHeight + row) * kWidth + column) * kChannels +
-              channel;
-          const std::size_t destination_index =
-              ((frame * kChannels + channel) * kHeight + row) * kWidth + column;
-          model_input[destination_index] = static_cast<float>(
-              (static_cast<double>(input.tensor[source_index]) - mean) /
-              standard_deviation);
+  // --- Standardize raw frames ---
+  double raw_sum = 0.0;
+  for (float v : input.tensor) {
+    raw_sum += static_cast<double>(v);
+  }
+  const double raw_mean = raw_sum / static_cast<double>(input.tensor.size());
+  double raw_var = 0.0;
+  for (float v : input.tensor) {
+    const double centered = static_cast<double>(v) - raw_mean;
+    raw_var += centered * centered;
+  }
+  raw_var /= static_cast<double>(input.tensor.size());
+  const double raw_std = std::sqrt(raw_var);
+  if (!std::isfinite(raw_std) || raw_std <= kEpsilon) {
+    throw AppError(ErrorCode::InferenceFailed,
+                   "TSCAN raw standard deviation is zero");
+  }
+
+  // --- Pack into NCHW [180, 6, 72, 72] ---
+  // Channel layout: [diff_R, diff_G, diff_B, raw_R, raw_G, raw_B]
+  std::vector<float> model_input(kModelFrames * kInChannels * kHeight * kWidth, 0.0f);
+  for (std::size_t f = 0; f < kModelFrames; ++f) {
+    for (std::size_t row = 0; row < kHeight; ++row) {
+      for (std::size_t col = 0; col < kWidth; ++col) {
+        const std::size_t px = row * kWidth + col;
+        const std::size_t fp = f * pixels_per_frame + px;
+        const std::size_t base =
+            (f * kInChannels * kHeight + row) * kWidth + col;
+
+        // Channels 0-2: diff-normalized RGB
+        for (std::size_t c = 0; c < kRgbChannels; ++c) {
+          const std::size_t src = fp * kRgbChannels + c;
+          const std::size_t dst = base + c * kHeight * kWidth;
+          model_input[dst] = static_cast<float>(
+              (diff_data[src] - diff_mean) / diff_std);
+        }
+
+        // Channels 3-5: standardized raw RGB
+        for (std::size_t c = 0; c < kRgbChannels; ++c) {
+          const std::size_t src = f * frame_stride + px * kRgbChannels + c;
+          const std::size_t dst = base + (kRgbChannels + c) * kHeight * kWidth;
+          model_input[dst] = static_cast<float>(
+              (static_cast<double>(input.tensor[src]) - raw_mean) / raw_std);
         }
       }
     }
@@ -147,12 +204,12 @@ std::vector<float> preprocess(const DeepInput& input) {
 class OnnxCpuRuntime final : public IDeepRuntime {
  public:
   explicit OnnxCpuRuntime(const std::string& model_path)
-      : environment_(ORT_LOGGING_LEVEL_WARNING, "rppg-efficientphys"),
+      : environment_(ORT_LOGGING_LEVEL_WARNING, "rppg-tscan"),
         session_options_(),
         session_(nullptr) {
     if (!std::filesystem::is_regular_file(model_path)) {
       throw AppError(ErrorCode::ModelLoadFailed,
-                     "EfficientPhys ONNX model is missing: " + model_path);
+                     "TSCAN ONNX model is missing: " + model_path);
     }
     session_options_.SetIntraOpNumThreads(2);
     session_options_.SetInterOpNumThreads(1);
@@ -171,7 +228,7 @@ class OnnxCpuRuntime final : public IDeepRuntime {
       std::vector<float> model_input = preprocess(input);
       const std::array<std::int64_t, 4> input_shape{
           static_cast<std::int64_t>(kModelFrames),
-          static_cast<std::int64_t>(kChannels),
+          static_cast<std::int64_t>(kInChannels),
           static_cast<std::int64_t>(kHeight),
           static_cast<std::int64_t>(kWidth)};
       Ort::MemoryInfo memory =
@@ -186,7 +243,7 @@ class OnnxCpuRuntime final : public IDeepRuntime {
                        output_names, 1U);
       if (outputs.size() != 1U || !outputs.front().IsTensor()) {
         throw AppError(ErrorCode::InferenceFailed,
-                       "EfficientPhys did not return one pulse tensor");
+                       "TSCAN did not return one pulse tensor");
       }
       const Ort::TensorTypeAndShapeInfo info =
           outputs.front().GetTensorTypeAndShapeInfo();
@@ -196,14 +253,14 @@ class OnnxCpuRuntime final : public IDeepRuntime {
               std::vector<std::int64_t>{
                   static_cast<std::int64_t>(kSourceFrames), 1}) {
         throw AppError(ErrorCode::InferenceFailed,
-                       "EfficientPhys output must be float32 [180,1]");
+                       "TSCAN output must be float32 [180,1]");
       }
       const float* output = outputs.front().GetTensorData<float>();
       std::vector<float> waveform(output, output + kSourceFrames);
       if (!std::all_of(waveform.begin(), waveform.end(),
                        [](float value) { return std::isfinite(value); })) {
         throw AppError(ErrorCode::InferenceFailed,
-                       "EfficientPhys output contains non-finite values");
+                       "TSCAN output contains non-finite values");
       }
       const double inference_ms =
           std::chrono::duration<double, std::milli>(

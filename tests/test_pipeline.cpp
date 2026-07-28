@@ -424,7 +424,15 @@ void configured_pos_and_chrom_are_emitted_without_green_fallback() {
     const std::string expected_method = method == "pos" ? "POS" : "CHROM";
     EXPECT_TRUE(events.find("\"method\":\"" + expected_method + "\"") !=
                 std::string::npos);
-    EXPECT_TRUE(events.find("\"method\":\"GREEN\"") == std::string::npos);
+    EXPECT_TRUE(events.find("\"event_type\":\"measurement_snapshot\"") !=
+                std::string::npos);
+    for (const std::string& event : json_events(events)) {
+      if (event.find("\"event_type\":\"heart_rate_result\"") !=
+          std::string::npos) {
+        EXPECT_TRUE(event.find("\"method\":\"GREEN\"") ==
+                    std::string::npos);
+      }
+    }
     bool valid_72_bpm = false;
     for (const std::string& event : json_events(events)) {
       if (event.find("\"method\":\"" + expected_method + "\"") !=

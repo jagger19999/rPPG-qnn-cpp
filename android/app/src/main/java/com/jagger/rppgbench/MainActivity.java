@@ -16,6 +16,9 @@ import android.view.Surface;
 import android.view.TextureView;
 import android.view.View;
 import android.view.ViewGroup;
+import android.webkit.WebView;
+import android.webkit.WebViewClient;
+import android.webkit.WebSettings;
 import android.widget.AdapterView;
 import android.widget.ArrayAdapter;
 import android.widget.Button;
@@ -71,6 +74,7 @@ public final class MainActivity extends Activity {
     private HrMetricCard traditionalCard;
     private HrMetricCard deepCard;
     private HrMetricCard watchCard;
+    private WebView hrChart;
     private TextView alignmentView;
     private TextView fpsLine;
     private FrameLayout previewContainer;
@@ -92,6 +96,7 @@ public final class MainActivity extends Activity {
     private final List<WatchContracts.WatchDevice> watchDevices = new ArrayList<>();
     private final List<WatchContracts.WatchAlignmentResult> alignmentHistory = new ArrayList<>();
 
+    private boolean webViewLoaded;
     private boolean cameraExpanded = true;
     private boolean watchExpanded = true;
     private boolean diagnosticExpanded = false;
@@ -118,9 +123,23 @@ public final class MainActivity extends Activity {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
 
-        traditionalCard = new HrMetricCard(findViewById(R.id.card_traditional));
-        deepCard = new HrMetricCard(findViewById(R.id.card_deep));
-        watchCard = new HrMetricCard(findViewById(R.id.card_watch));
+        traditionalCard = new HrMetricCard(findViewById(R.id.card_traditional), 0xFF378ADD);
+        deepCard = new HrMetricCard(findViewById(R.id.card_deep), 0xFF7F77DD);
+        watchCard = new HrMetricCard(findViewById(R.id.card_watch), 0xFFD85A30);
+
+        hrChart = findViewById(R.id.hr_chart);
+        WebSettings ws = hrChart.getSettings();
+        ws.setJavaScriptEnabled(true);
+        ws.setAllowFileAccess(false);
+        ws.setAllowContentAccess(false);
+        hrChart.setWebViewClient(new WebViewClient() {
+            @Override
+            public void onPageFinished(WebView view, String url) {
+                webViewLoaded = true;
+            }
+        });
+        hrChart.loadUrl("file:///android_asset/hr_chart.html");
+
         alignmentView = findViewById(R.id.alignment_line);
         fpsLine = findViewById(R.id.fps_line);
         previewContainer = findViewById(R.id.preview_container);
@@ -250,6 +269,8 @@ public final class MainActivity extends Activity {
         Button toggleCamera = findViewById(R.id.toggle_camera);
         Button toggleWatch = findViewById(R.id.toggle_watch);
         Button toggleDiagnostic = findViewById(R.id.toggle_diagnostic);
+        Button captureColorDiagnostic = findViewById(R.id.capture_color_diagnostic);
+        Button deleteColorDiagnostics = findViewById(R.id.delete_color_diagnostics);
 
         cameraSection.setVisibility(cameraExpanded ? View.VISIBLE : View.GONE);
         watchSection.setVisibility(watchExpanded ? View.VISIBLE : View.GONE);
@@ -271,6 +292,34 @@ public final class MainActivity extends Activity {
                     diagnosticText.setVisibility(diagnosticExpanded ? View.VISIBLE : View.GONE);
                     if (diagnosticExpanded) {
                         refreshDiagnosticContent(lastCameraJson);
+                    }
+                });
+        captureColorDiagnostic.setOnClickListener(
+                view -> {
+                    if (!started || nativeHandle == 0) {
+                        showUserMessage("请先启动摄像头和处理链路");
+                        return;
+                    }
+                    try {
+                        lastCameraJson = NativeBridge.nativeRequestColorDiagnostic(nativeHandle);
+                        showUserMessage("已请求采集一帧颜色诊断，文件将在后台生成");
+                        refreshDiagnosticContent(lastCameraJson);
+                    } catch (Throwable error) {
+                        showUserMessage("COLOR_DIAGNOSTIC_FAILED: " + error.getMessage());
+                    }
+                });
+        deleteColorDiagnostics.setOnClickListener(
+                view -> {
+                    if (nativeHandle == 0) {
+                        showUserMessage("当前没有相机会话");
+                        return;
+                    }
+                    try {
+                        lastCameraJson = NativeBridge.nativeDeleteColorDiagnostics(nativeHandle);
+                        showUserMessage("颜色诊断包已删除");
+                        refreshDiagnosticContent(lastCameraJson);
+                    } catch (Throwable error) {
+                        showUserMessage("DELETE_DIAGNOSTICS_FAILED: " + error.getMessage());
                     }
                 });
     }
@@ -316,13 +365,27 @@ public final class MainActivity extends Activity {
         }
         lastCameraJson = cameraJson;
 
+        Double tradBpm = null, deepBpm = null, watchBpm = null;
         try {
             JSONObject json = new JSONObject(cameraJson);
-            traditionalCard.bind("传统 rPPG", HrStatusFormatter.traditional(json));
-            deepCard.bind("深度 EfficientPhys", HrStatusFormatter.deep(json));
+            traditionalCard.bind("传统", HrStatusFormatter.traditional(json));
+            deepCard.bind("深度", HrStatusFormatter.deep(json));
+            JSONObject measurement = json.optJSONObject("measurement");
+            if (json.optBoolean("measurement_available", false) && measurement != null
+                    && measurement.optBoolean("accepted_available", false)) {
+                tradBpm = measurement.optDouble("accepted_bpm", Double.NaN);
+                if (!Double.isFinite(tradBpm)) tradBpm = null;
+            } else if (json.optBoolean("heart_rate_available", false) && json.optBoolean("heart_rate_valid", false)) {
+                tradBpm = json.optDouble("bpm", Double.NaN);
+                if (!Double.isFinite(tradBpm)) tradBpm = null;
+            }
+            if (json.optBoolean("deep_result_available", false) && json.optBoolean("deep_result_valid", false)) {
+                deepBpm = json.optDouble("deep_bpm", Double.NaN);
+                if (!Double.isFinite(deepBpm)) deepBpm = null;
+            }
         } catch (Exception error) {
-            traditionalCard.bind("传统 rPPG", new HrStatusFormatter.CardView("--", "不可用"));
-            deepCard.bind("深度 EfficientPhys", new HrStatusFormatter.CardView("--", "不可用"));
+            traditionalCard.bind("传统", new HrStatusFormatter.CardView("--", "不可用"));
+            deepCard.bind("深度", new HrStatusFormatter.CardView("--", "不可用"));
         }
 
         WatchContracts.WatchHeartRateSnapshot snapshot =
@@ -331,12 +394,17 @@ public final class MainActivity extends Activity {
             Integer bpm =
                     snapshot.latestSample != null ? snapshot.latestSample.bpm : null;
             watchCard.bind(
-                    "广播心率",
+                    "手表",
                     HrStatusFormatter.watch(snapshot.status.name(), bpm, snapshot.errorCode));
+            if (bpm != null && bpm > 0) {
+                watchBpm = bpm.doubleValue();
+            }
         } else {
             watchCard.bind(
-                    "广播心率", HrStatusFormatter.watch("DISCONNECTED", null, null));
+                    "手表", HrStatusFormatter.watch("DISCONNECTED", null, null));
         }
+
+        pushChartData(tradBpm, deepBpm, watchBpm);
 
         if (latestAlignment != null) {
             alignmentView.setText(
@@ -366,6 +434,7 @@ public final class MainActivity extends Activity {
         try {
             JSONObject json = new JSONObject(cameraJson);
             double measured = json.optDouble("measured_fps", 0.0);
+            double processing = json.optDouble("processing_fps", 0.0);
             int targetMin = json.optInt("target_fps_min", 0);
             int targetMax = json.optInt("target_fps_max", 0);
             long dropped = json.optLong("dropped_frames", 0L);
@@ -378,8 +447,9 @@ public final class MainActivity extends Activity {
             fpsLine.setText(
                     String.format(
                             Locale.CHINA,
-                            "采集 FPS: %s · 目标 %s · 丢帧 %d",
+                            "采集 FPS: %s · 处理 %.1f · 目标 %s · 丢帧 %d",
                             measuredText,
+                            processing,
                             targetText,
                             dropped));
         } catch (Exception error) {
@@ -995,10 +1065,10 @@ public final class MainActivity extends Activity {
                             new File(getFilesDir(), "sessions"),
                             "session-" + System.currentTimeMillis());
             File model =
-                    new File(new File(getFilesDir(), "models"), "efficientphys_pure.onnx");
+                    new File(new File(getFilesDir(), "models"), "ubfc_tscan_full_lr3e-5_Epoch10.onnx");
             if (deepSelector.isChecked() && !model.isFile()) {
                 showUserMessage(
-                        "MODEL_LOAD_FAILED: import models/efficientphys_pure.onnx "
+                        "MODEL_LOAD_FAILED: import models/ubfc_tscan_full_lr3e-5_Epoch10.onnx "
                                 + "to app-private storage with adb run-as");
                 return;
             }
@@ -1194,6 +1264,18 @@ public final class MainActivity extends Activity {
 
     private static String formatDouble(double value) {
         return String.format(Locale.US, "%.4g", value);
+    }
+
+    private void pushChartData(Double tradBpm, Double deepBpm, Double watchBpm) {
+        if (hrChart == null || !webViewLoaded) return;
+        double now = monotonicSec();
+        String js = String.format(Locale.US,
+                "addDataPoint(%s, %s, %s, %.3f)",
+                tradBpm == null ? "null" : String.format(Locale.US, "%.1f", tradBpm),
+                deepBpm == null ? "null" : String.format(Locale.US, "%.1f", deepBpm),
+                watchBpm == null ? "null" : String.format(Locale.US, "%.1f", watchBpm),
+                now);
+        hrChart.post(() -> hrChart.evaluateJavascript(js, null));
     }
 
     private File ensureCascadeAsset() throws IOException {

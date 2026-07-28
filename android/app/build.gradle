@@ -17,8 +17,8 @@ android {
         applicationId 'com.jagger.rppgbench'
         minSdk 26
         targetSdk 36
-        versionCode 1
-        versionName '0.3.0-traditional'
+        versionCode 2
+        versionName '0.4.0-gated'
 
         ndk {
             abiFilters 'arm64-v8a'

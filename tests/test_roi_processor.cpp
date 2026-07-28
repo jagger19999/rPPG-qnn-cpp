@@ -8,6 +8,7 @@
 #include <vector>
 
 #include <opencv2/core.hpp>
+#include <opencv2/imgproc.hpp>
 
 #include "test_support.hpp"
 
@@ -255,6 +256,36 @@ void detector_exception_leaves_the_next_valid_frame_due_for_detection() {
   EXPECT_TRUE(!retry.roi_bgr.empty());
 }
 
+void optical_flow_tracks_a_textured_face_between_detections() {
+  int detector_calls = 0;
+  FaceDetector detector = [&detector_calls](const cv::Mat&) {
+    ++detector_calls;
+    return std::vector<FaceBox>{FaceBox{40, 40, 100, 100, 1.0}};
+  };
+  RoiProcessor processor(detector, true);
+  cv::Mat first(200, 200, CV_8UC3, cv::Scalar());
+  for (int y = 45; y < 135; y += 10) {
+    for (int x = 45; x < 135; x += 10) {
+      cv::rectangle(first, cv::Rect(x, y, 4, 4), cv::Scalar(255, 255, 255), -1);
+    }
+  }
+  const auto detected = processor.process(FramePacket{1, 0.0, first});
+  EXPECT_TRUE(detected.face.has_value());
+  cv::Mat shifted;
+  cv::Mat transform = cv::Mat::zeros(2, 3, CV_64F);
+  transform.at<double>(0, 0) = 1.0;
+  transform.at<double>(0, 2) = 5.0;
+  transform.at<double>(1, 1) = 1.0;
+  transform.at<double>(1, 2) = 3.0;
+  cv::warpAffine(first, shifted, transform, first.size());
+  const auto tracked = processor.process(FramePacket{2, 1.0 / 30.0, shifted});
+  EXPECT_EQ(detector_calls, 1);
+  EXPECT_TRUE(tracked.face.has_value());
+  EXPECT_TRUE(tracked.used_fallback);
+  EXPECT_TRUE(tracked.motion_px > 3.0);
+  EXPECT_TRUE(!tracked.deep_roi_bgr.empty());
+}
+
 }  // namespace
 
 int main() {
@@ -268,5 +299,6 @@ int main() {
   empty_frame_clears_cached_face_and_forces_the_next_detection();
   size_change_discards_the_cached_face_and_redetects_immediately();
   detector_exception_leaves_the_next_valid_frame_due_for_detection();
+  optical_flow_tracks_a_textured_face_between_detections();
   return test_support::finish();
 }

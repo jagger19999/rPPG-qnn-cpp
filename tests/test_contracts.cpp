@@ -11,6 +11,22 @@ int main() {
 
   EXPECT_EQ(result.schema_version, 1);
   EXPECT_TRUE(result.method.empty());
+  EXPECT_EQ(result.peak_ratio, 0.0);
+
+  const rppg_qnn::QualityProfile profile;
+  EXPECT_EQ(profile.schema_version, 1);
+  EXPECT_EQ(profile.min_brightness, 0.10);
+  EXPECT_EQ(profile.max_brightness, 0.92);
+  EXPECT_EQ(profile.min_face_area_ratio, 0.015);
+  EXPECT_EQ(profile.max_motion_px, 32.0);
+  EXPECT_EQ(profile.max_bpm_jump, 18.0);
+
+  const rppg_qnn::MeasurementSnapshot snapshot;
+  EXPECT_EQ(snapshot.schema_version, 1);
+  EXPECT_TRUE(snapshot.candidates.empty());
+  EXPECT_TRUE(!snapshot.gate.accepted);
+  EXPECT_TRUE(!snapshot.display_available);
+  EXPECT_TRUE(!snapshot.display_is_held);
 
   rppg_qnn::FrameHealth health{};
   EXPECT_EQ(health.schema_version, 1);

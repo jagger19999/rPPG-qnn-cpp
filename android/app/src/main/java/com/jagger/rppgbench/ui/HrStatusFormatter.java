@@ -16,6 +16,23 @@ public final class HrStatusFormatter {
     private HrStatusFormatter() {}
 
     public static CardView traditional(JSONObject json) {
+        if (json != null && json.optBoolean("measurement_available", false)) {
+            JSONObject measurement = json.optJSONObject("measurement");
+            if (measurement != null && measurement.optBoolean("display_available", false)) {
+                int bpm = (int) Math.round(measurement.optDouble("display_bpm", Double.NaN));
+                if (measurement.optBoolean("display_is_held", false)) {
+                    String reason = measurement.optString("gate_reason", "质量不足");
+                    return new CardView(Integer.toString(bpm), "保持上一可信值 · " + reason);
+                }
+                String method = measurement.optString("selected_method", "CONSENSUS");
+                String vqa = measurement.optString("vqa_label", "");
+                String suffix = vqa.isEmpty() ? "可信" : vqa + " · 可信";
+                return new CardView(Integer.toString(bpm), method + " · " + suffix);
+            }
+            String reason = measurement == null ? "采样中"
+                    : measurement.optString("gate_reason", "采样中");
+            return new CardView("--", "不可用 · " + reason);
+        }
         if (json == null || !json.optBoolean("heart_rate_available", false)
                 || !json.optBoolean("heart_rate_valid", false)) {
             String method = json == null ? "" : json.optString("traditional_method", "");

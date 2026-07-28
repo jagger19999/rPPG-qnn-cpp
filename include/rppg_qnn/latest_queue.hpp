@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include <condition_variable>
+#include <cstddef>
 #include <mutex>
 #include <optional>
 #include <utility>
@@ -52,6 +53,11 @@ class LatestQueue {
   bool closed() const {
     std::lock_guard<std::mutex> lock(mutex_);
     return closed_;
+  }
+
+  std::size_t size() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return value_.has_value() ? 1U : 0U;
   }
 
  private:

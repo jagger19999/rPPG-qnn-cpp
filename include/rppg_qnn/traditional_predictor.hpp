@@ -2,6 +2,7 @@
 
 #include "rppg_qnn/contracts.hpp"
 
+#include <array>
 #include <cstddef>
 #include <deque>
 #include <optional>
@@ -12,7 +13,7 @@
 
 namespace rppg_qnn {
 
-enum class TraditionalMethod { Green, Pos, Chrom };
+enum class TraditionalMethod { Green, Pos, Chrom, Lgi };
 
 [[nodiscard]] TraditionalMethod traditional_method_from_string(
     const std::string& method);
@@ -38,6 +39,12 @@ class TraditionalPredictor {
   [[nodiscard]] TraditionalMethod method() const;
   void reset();
 
+  // Enable/disable exponential spectral smoothing (default: enabled, α=0.85).
+  // When enabled, power at each frequency bin is smoothed across evaluations:
+  //   smoothed_power[f] = α * smoothed_power[f] + (1-α) * raw_power[f]
+  // This stabilises the selected BPM and reduces jump-to-jump variance.
+  void set_spectral_smoothing(bool enabled, double alpha = 0.85);
+
  private:
   struct Sample {
     double timestamp_sec;
@@ -52,6 +59,14 @@ class TraditionalPredictor {
   std::optional<HeartRateResult> latest_;
   std::optional<double> last_evaluation_timestamp_sec_;
   std::size_t evaluation_count_{0};
+
+  // ES spectral smoothing (Python ExponentialSpectrumSmoother equivalent)
+  bool spectral_smoothing_enabled_{true};
+  double spectral_smoothing_alpha_{0.85};
+  static constexpr int kMinimumBin = 7;
+  static constexpr int kMaximumBin = 30;
+  std::array<double, kMaximumBin - kMinimumBin + 1> smoothed_power_{};
+  bool smoothing_initialized_{false};
 };
 
 }  // namespace rppg_qnn

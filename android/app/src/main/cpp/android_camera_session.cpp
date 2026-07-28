@@ -5,6 +5,7 @@
 #include "rppg_qnn/contracts.hpp"
 #include "rppg_qnn/error.hpp"
 #include "rppg_qnn/frame_source.hpp"
+#include "rppg_qnn/latest_queue.hpp"
 #include "rppg_qnn/pipeline.hpp"
 #include "rppg_qnn/result_sink.hpp"
 #include "rppg_qnn/roi_processor.hpp"
@@ -19,16 +20,21 @@
 #include <media/NdkImageReader.h>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cmath>
+#include <chrono>
 #include <condition_variable>
 #include <cstdint>
 #include <deque>
 #include <filesystem>
 #include <functional>
+#include <fstream>
+#include <iomanip>
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -310,16 +316,19 @@ class StatusResultSink final : public IResultSink {
  public:
   using FrameCallback = std::function<void(const FrameHealth&)>;
   using HeartRateCallback = std::function<void(const HeartRateResult&)>;
+  using MeasurementCallback = std::function<void(const MeasurementSnapshot&)>;
   using ErrorCallback =
       std::function<void(const std::string&, const std::string&)>;
 
   StatusResultSink(const std::filesystem::path& output_directory,
                    FrameCallback frame_callback,
                    HeartRateCallback heart_rate_callback,
+                   MeasurementCallback measurement_callback,
                    ErrorCallback error_callback)
       : sink_(output_directory),
         frame_callback_(std::move(frame_callback)),
         heart_rate_callback_(std::move(heart_rate_callback)),
+        measurement_callback_(std::move(measurement_callback)),
         error_callback_(std::move(error_callback)) {}
 
   void publish(const PreflightResult& result) override {
@@ -342,12 +351,18 @@ class StatusResultSink final : public IResultSink {
     heart_rate_callback_(result);
   }
 
+  void publish(const MeasurementSnapshot& result) override {
+    sink_.publish(result);
+    measurement_callback_(result);
+  }
+
   void close(int exit_code) override { sink_.close(exit_code); }
 
  private:
   ResultSink sink_;
   FrameCallback frame_callback_;
   HeartRateCallback heart_rate_callback_;
+  MeasurementCallback measurement_callback_;
   ErrorCallback error_callback_;
 };
 
@@ -364,6 +379,41 @@ class ThumbnailRoi final : public IRoiProcessor {
   std::unique_ptr<IRoiProcessor> inner_;
   PublishCallback publish_;
 };
+
+struct ColorDiagnosticJob {
+  std::uint64_t frame_id{0};
+  int width{0};
+  int height{0};
+  int rotation_degrees{0};
+  std::array<int, 3> row_strides{};
+  std::array<int, 3> pixel_strides{};
+  std::array<std::vector<std::uint8_t>, 3> planes;
+  std::vector<std::uint8_t> roi_jpeg;
+  std::filesystem::path root;
+};
+
+void write_bytes(const std::filesystem::path& path,
+                 const std::vector<std::uint8_t>& values) {
+  std::ofstream output(path, std::ios::binary | std::ios::trunc);
+  if (!output) throw std::runtime_error("could not open " + path.string());
+  output.write(reinterpret_cast<const char*>(values.data()),
+               static_cast<std::streamsize>(values.size()));
+  if (!output) throw std::runtime_error("could not write " + path.string());
+}
+
+std::pair<double, double> byte_mean_std(
+    const std::vector<std::uint8_t>& values) {
+  if (values.empty()) return {0.0, 0.0};
+  double mean = 0.0;
+  for (std::uint8_t value : values) mean += value;
+  mean /= static_cast<double>(values.size());
+  double variance = 0.0;
+  for (std::uint8_t value : values) {
+    const double centered = static_cast<double>(value) - mean;
+    variance += centered * centered;
+  }
+  return {mean, std::sqrt(variance / static_cast<double>(values.size()))};
+}
 
 }  // namespace
 
@@ -410,7 +460,7 @@ struct AndroidCameraSession::Impl {
         (requested_config.model_path.empty() ||
          !std::filesystem::is_regular_file(requested_config.model_path))) {
       throw AppError(ErrorCode::ModelLoadFailed,
-                     "EfficientPhys ONNX model is missing from app storage");
+                     "TSCAN ONNX model is missing from app storage");
     }
     {
       RoiProcessor cascade_validator(requested_config.cascade_path);
@@ -447,6 +497,9 @@ struct AndroidCameraSession::Impl {
     const TraditionalProcessingConfig requested = *processing_config;
     frame_queue = std::make_shared<LatestFrameQueue>();
     processing_stop.store(false);
+    color_diagnostic_queue =
+        std::make_unique<LatestQueue<ColorDiagnosticJob>>();
+    color_diagnostic_thread = std::thread([this] { run_color_diagnostics(); });
 
     AppConfig pipeline_config;
     pipeline_config.camera = config.camera_id;
@@ -484,10 +537,11 @@ struct AndroidCameraSession::Impl {
           [this](const FrameHealth& health) {
             std::lock_guard<std::mutex> lock(status_mutex);
             snapshot.face_found = health.face_found;
+            snapshot.performance = health.performance;
           },
           [this](const HeartRateResult& result) {
             std::lock_guard<std::mutex> lock(status_mutex);
-            if (result.method == "EFFICIENTPHYS" || result.method == "DEEP") {
+            if (result.method == "TSCAN" || result.method == "DEEP") {
               snapshot.deep_result_available = true;
               snapshot.deep_bpm = result.bpm;
               snapshot.deep_confidence = result.confidence;
@@ -503,6 +557,11 @@ struct AndroidCameraSession::Impl {
               snapshot.window_start_sec = result.window_start_sec;
               snapshot.window_end_sec = result.window_end_sec;
             }
+          },
+          [this](const MeasurementSnapshot& result) {
+            std::lock_guard<std::mutex> lock(status_mutex);
+            snapshot.measurement_available = true;
+            snapshot.measurement = result;
           },
           [this](const std::string& code, const std::string& message) {
             std::lock_guard<std::mutex> lock(status_mutex);
@@ -539,8 +598,161 @@ struct AndroidCameraSession::Impl {
     if (processing_thread.joinable()) {
       processing_thread.join();
     }
+    if (color_diagnostic_queue != nullptr) {
+      color_diagnostic_queue->close();
+    }
+    if (color_diagnostic_thread.joinable()) {
+      color_diagnostic_thread.join();
+    }
+    color_diagnostic_queue.reset();
     frame_queue.reset();
     clear_roi_jpeg();
+  }
+
+  void request_color_diagnostic() {
+    std::lock_guard<std::mutex> lock(status_mutex);
+    if (snapshot.state != "running" || !processing_config.has_value()) {
+      throw AppError(ErrorCode::NativeStateInvalid,
+                     "color diagnostic requires a running processed camera");
+    }
+    color_diagnostic_requested.store(true);
+    snapshot.color_diagnostic_state = "pending";
+    snapshot.color_diagnostic_path.clear();
+    snapshot.color_diagnostic_finding.clear();
+  }
+
+  void delete_color_diagnostics() {
+    std::filesystem::path diagnostics;
+    {
+      std::lock_guard<std::mutex> lock(status_mutex);
+      if (!processing_config.has_value()) return;
+      diagnostics = std::filesystem::path(processing_config->output_directory) /
+                    "color_diagnostics";
+    }
+    std::error_code error;
+    std::filesystem::remove_all(diagnostics, error);
+    std::lock_guard<std::mutex> lock(status_mutex);
+    snapshot.color_diagnostic_state = error ? "delete_failed" : "idle";
+    snapshot.color_diagnostic_path.clear();
+    snapshot.color_diagnostic_finding =
+        error ? error.message() : "diagnostics_deleted";
+  }
+
+  void run_color_diagnostics() noexcept {
+    while (color_diagnostic_queue != nullptr) {
+      auto job = color_diagnostic_queue->wait_pop(std::chrono::hours(24));
+      if (!job.has_value()) {
+        if (color_diagnostic_queue->closed()) return;
+        continue;
+      }
+      try {
+        const std::filesystem::path base =
+            job->root / "color_diagnostics" /
+            ("frame-" + std::to_string(job->frame_id));
+        std::filesystem::create_directories(base);
+        for (std::size_t index = 0; index < job->planes.size(); ++index) {
+          write_bytes(base / (std::string(1, "yuv"[index]) + "_plane.bin"),
+                      job->planes[index]);
+        }
+        if (!job->roi_jpeg.empty()) {
+          write_bytes(base / "roi.jpg", job->roi_jpeg);
+        }
+        const Yuv420View view{
+            job->width,
+            job->height,
+            {job->planes[0].data(), job->planes[0].size(),
+             job->row_strides[0], job->pixel_strides[0]},
+            {job->planes[1].data(), job->planes[1].size(),
+             job->row_strides[1], job->pixel_strides[1]},
+            {job->planes[2].data(), job->planes[2].size(),
+             job->row_strides[2], job->pixel_strides[2]}};
+        struct Variant {
+          const char* name;
+          YuvColorSpec spec;
+        };
+        const std::array<Variant, 8> variants{{
+            {"bt601_limited_uv", {YuvMatrix::Bt601, YuvRange::Limited,
+                                   ChromaOrder::Uv}},
+            {"bt601_limited_vu", {YuvMatrix::Bt601, YuvRange::Limited,
+                                   ChromaOrder::Vu}},
+            {"bt709_limited_uv", {YuvMatrix::Bt709, YuvRange::Limited,
+                                   ChromaOrder::Uv}},
+            {"bt709_limited_vu", {YuvMatrix::Bt709, YuvRange::Limited,
+                                   ChromaOrder::Vu}},
+            {"bt601_full_uv", {YuvMatrix::Bt601, YuvRange::Full,
+                                ChromaOrder::Uv}},
+            {"bt601_full_vu", {YuvMatrix::Bt601, YuvRange::Full,
+                                ChromaOrder::Vu}},
+            {"bt709_full_uv", {YuvMatrix::Bt709, YuvRange::Full,
+                                ChromaOrder::Uv}},
+            {"bt709_full_vu", {YuvMatrix::Bt709, YuvRange::Full,
+                                ChromaOrder::Vu}},
+        }};
+        std::ostringstream manifest;
+        manifest << std::setprecision(8)
+                 << "{\"schema_version\":1,\"frame_id\":" << job->frame_id
+                 << ",\"width\":" << job->width << ",\"height\":"
+                 << job->height << ",\"rotation_degrees\":"
+                 << job->rotation_degrees << ",\"planes\":[";
+        for (std::size_t index = 0; index < job->planes.size(); ++index) {
+          if (index != 0U) manifest << ',';
+          const auto [mean, standard_deviation] =
+              byte_mean_std(job->planes[index]);
+          manifest << "{\"index\":" << index << ",\"size\":"
+                   << job->planes[index].size() << ",\"row_stride\":"
+                   << job->row_strides[index] << ",\"pixel_stride\":"
+                   << job->pixel_strides[index] << ",\"mean\":" << mean
+                   << ",\"std\":" << standard_deviation << '}';
+        }
+        manifest << "],\"variants\":[";
+        for (std::size_t index = 0; index < variants.size(); ++index) {
+          if (index != 0U) manifest << ',';
+          std::vector<std::uint8_t> converted =
+              yuv420_to_bgr(view, variants[index].spec);
+          cv::Mat wrapped(job->height, job->width, CV_8UC3, converted.data());
+          cv::Mat oriented;
+          orient_bgr_frame(wrapped, job->rotation_degrees, &oriented);
+          const cv::Scalar mean = cv::mean(oriented);
+          const std::string filename =
+              std::string(variants[index].name) + ".png";
+          if (!cv::imwrite((base / filename).string(), oriented)) {
+            throw std::runtime_error("could not encode diagnostic PNG");
+          }
+          manifest << "{\"name\":\"" << variants[index].name
+                   << "\",\"b_mean\":" << mean[0]
+                   << ",\"g_mean\":" << mean[1]
+                   << ",\"r_mean\":" << mean[2] << '}';
+        }
+        manifest << "],\"finding\":\"INSUFFICIENT_EVIDENCE\","
+                    "\"note\":\"Compare the eight PNG variants with the camera preview; no automatic correction was applied.\"}";
+        std::ofstream manifest_file(base / "manifest.json",
+                                    std::ios::out | std::ios::trunc);
+        manifest_file << manifest.str();
+        if (!manifest_file) {
+          throw std::runtime_error("could not write diagnostic manifest");
+        }
+
+        std::vector<std::filesystem::path> packages;
+        for (const auto& entry :
+             std::filesystem::directory_iterator(base.parent_path())) {
+          if (entry.is_directory()) packages.push_back(entry.path());
+        }
+        std::sort(packages.begin(), packages.end());
+        while (packages.size() > 10U) {
+          std::error_code remove_error;
+          std::filesystem::remove_all(packages.front(), remove_error);
+          packages.erase(packages.begin());
+        }
+        std::lock_guard<std::mutex> lock(status_mutex);
+        snapshot.color_diagnostic_state = "complete";
+        snapshot.color_diagnostic_path = base.string();
+        snapshot.color_diagnostic_finding = "INSUFFICIENT_EVIDENCE";
+      } catch (const std::exception& error) {
+        std::lock_guard<std::mutex> lock(status_mutex);
+        snapshot.color_diagnostic_state = "failed";
+        snapshot.color_diagnostic_finding = error.what();
+      }
+    }
   }
 
   void clear_roi_jpeg() {
@@ -672,6 +884,8 @@ struct AndroidCameraSession::Impl {
       snapshot.deep_inference_ms = 0.0;
       snapshot.deep_result_valid = false;
       snapshot.deep_invalid_reason.clear();
+      snapshot.measurement_available = false;
+      snapshot.measurement = MeasurementSnapshot{};
       timestamps.clear();
     }
     clear_roi_jpeg();
@@ -1050,6 +1264,31 @@ struct AndroidCameraSession::Impl {
       cv::Mat wrapped(height, width, CV_8UC3, bgr.data());
       cv::Mat oriented;
       orient_bgr_frame(wrapped, frame_rotation_degrees_, &oriented);
+      if (color_diagnostic_requested.exchange(false) &&
+          color_diagnostic_queue != nullptr && processing_config.has_value()) {
+        ColorDiagnosticJob job;
+        job.frame_id = frame_id;
+        job.width = width;
+        job.height = height;
+        job.rotation_degrees = frame_rotation_degrees_;
+        job.root = processing_config->output_directory;
+        for (std::size_t index = 0; index < job.planes.size(); ++index) {
+          job.row_strides[index] = planes[index].row_stride;
+          job.pixel_strides[index] = planes[index].pixel_stride;
+          job.planes[index].assign(planes[index].data,
+                                   planes[index].data + planes[index].size);
+        }
+        {
+          std::lock_guard<std::mutex> lock(status_mutex);
+          job.roi_jpeg = latest_roi_jpeg_;
+          snapshot.color_diagnostic_state = "writing";
+        }
+        if (!color_diagnostic_queue->push(std::move(job))) {
+          std::lock_guard<std::mutex> lock(status_mutex);
+          snapshot.color_diagnostic_state = "failed";
+          snapshot.color_diagnostic_finding = "diagnostic_worker_unavailable";
+        }
+      }
       bool replaced = false;
       if (frame_queue->push(
               FramePacket{frame_id, timestamp_sec, oriented.clone()},
@@ -1093,6 +1332,9 @@ struct AndroidCameraSession::Impl {
   std::shared_ptr<LatestFrameQueue> frame_queue;
   std::atomic<bool> processing_stop{false};
   std::thread processing_thread;
+  std::atomic<bool> color_diagnostic_requested{false};
+  std::unique_ptr<LatestQueue<ColorDiagnosticJob>> color_diagnostic_queue;
+  std::thread color_diagnostic_thread;
 
   std::mutex callback_mutex;
   std::condition_variable callback_condition;
@@ -1203,6 +1445,14 @@ CameraSessionStatus AndroidCameraSession::status() const {
 
 std::vector<std::uint8_t> AndroidCameraSession::latest_roi_jpeg() const {
   return impl_->latest_roi_jpeg();
+}
+
+void AndroidCameraSession::request_color_diagnostic() {
+  impl_->request_color_diagnostic();
+}
+
+void AndroidCameraSession::delete_color_diagnostics() {
+  impl_->delete_color_diagnostics();
 }
 
 }  // namespace rppg_qnn::android
