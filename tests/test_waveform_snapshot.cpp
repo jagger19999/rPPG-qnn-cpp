@@ -11,7 +11,7 @@ namespace {
 
 void normalizes_finite_waveform() {
   const auto snapshot = rppg_qnn::make_waveform_snapshot(
-      {2.0F, 3.0F, 4.0F}, "POS", 30.0, true, "");
+      {2.0F, 3.0F, 4.0F}, "POS", 30.0, true, "", 42.5);
   EXPECT_TRUE(snapshot.available);
   EXPECT_EQ(snapshot.values.size(), std::size_t{3});
   EXPECT_TRUE(std::abs(snapshot.values[0] + 1.0F) < 1e-6F);
@@ -19,6 +19,7 @@ void normalizes_finite_waveform() {
   EXPECT_TRUE(std::abs(snapshot.values[2] - 1.0F) < 1e-6F);
   EXPECT_EQ(snapshot.method, std::string("POS"));
   EXPECT_EQ(snapshot.sample_rate_hz, 30.0);
+  EXPECT_EQ(snapshot.window_end_sec, 42.5);
   EXPECT_TRUE(snapshot.is_valid);
 }
 

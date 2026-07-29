@@ -527,11 +527,21 @@ public final class MainActivity extends Activity {
 
         String traditionalState = getString(R.string.waveform_traditional_sampling);
         if (traditionalWaveform != null) {
-            traditionalState = traditionalWaveform.valid
+            JSONObject measurement = status.optJSONObject("measurement");
+            double measurementEnd = measurement == null ? Double.NaN
+                    : measurement.optDouble("window_end_sec", Double.NaN);
+            boolean historical = Double.isFinite(measurementEnd)
+                    && measurementEnd - traditionalWaveform.windowEndSec > 0.5;
+            if (historical) {
+                String reason = measurement.optString("gate_reason", "当前窗口未通过");
+                traditionalState = "历史波形 · 当前 Gate 拒绝：" + reason;
+            } else {
+                traditionalState = traditionalWaveform.valid
                     ? traditionalWaveform.method + " · " + traditionalWaveform.sampleCount()
                             + " 点 · " + String.format(Locale.US, "%.1f 秒",
                                     -traditionalWaveform.relativeStartSeconds())
                     : "信号质量低：" + traditionalWaveform.invalidReason;
+            }
         }
         traditionalWaveformCard.bind(getString(R.string.waveform_traditional_title),
                 traditionalState, traditionalWaveform);
@@ -573,7 +583,8 @@ public final class MainActivity extends Activity {
                     metadata.optLong("revision", 0), metadata.optString("method", ""),
                     metadata.optDouble("sample_rate_hz", 30.0),
                     metadata.optBoolean("is_valid", false),
-                    metadata.optString("invalid_reason", ""), values);
+                    metadata.optString("invalid_reason", ""),
+                    metadata.optDouble("window_end_sec", 0.0), values);
         } catch (Throwable error) {
             return null;
         }
@@ -839,6 +850,13 @@ public final class MainActivity extends Activity {
             builder.append(userMessage).append('\n');
         }
         if (started && nativeHandle != 0) {
+            try {
+                builder.append(HrStatusFormatter.traditionalDiagnostic(
+                        new JSONObject(cameraJson))).append('\n');
+            } catch (Exception error) {
+                builder.append("传统诊断: 状态解析失败(")
+                        .append(error.getClass().getSimpleName()).append(")\n");
+            }
             builder.append(cameraJson);
         } else {
             try {

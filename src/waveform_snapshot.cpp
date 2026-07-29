@@ -21,7 +21,8 @@ double waveform_sample_rate_hz(const HeartRateResult& result) {
 WaveformSnapshot make_waveform_snapshot(const std::vector<float>& values,
                                         std::string method,
                                         double sample_rate_hz, bool is_valid,
-                                        std::string invalid_reason) {
+                                        std::string invalid_reason,
+                                        double window_end_sec) {
   WaveformSnapshot snapshot;
   if (values.size() < 2U || !std::isfinite(sample_rate_hz) ||
       sample_rate_hz <= 0.0 ||
@@ -47,6 +48,8 @@ WaveformSnapshot make_waveform_snapshot(const std::vector<float>& values,
   snapshot.available = true;
   snapshot.method = std::move(method);
   snapshot.sample_rate_hz = sample_rate_hz;
+  snapshot.window_end_sec =
+      std::isfinite(window_end_sec) ? window_end_sec : 0.0;
   snapshot.is_valid = is_valid;
   snapshot.invalid_reason = std::move(invalid_reason);
   return snapshot;

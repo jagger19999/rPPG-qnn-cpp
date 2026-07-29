@@ -78,7 +78,8 @@ std::shared_ptr<AndroidCameraSession> lookup(std::int64_t handle) {
 std::string measurement_json(const MeasurementSnapshot& measurement) {
   std::ostringstream output;
   output << std::setprecision(10)
-         << "{\"measured_available\":"
+         << "{\"window_end_sec\":" << measurement.window_end_sec
+         << ",\"measured_available\":"
          << (measurement.measured_available ? "true" : "false")
          << ",\"measured_bpm\":" << measurement.measured_bpm
          << ",\"accepted_available\":"
@@ -117,7 +118,19 @@ std::string measurement_json(const MeasurementSnapshot& measurement) {
     if (index != 0U) output << ',';
     output << "\"" << json_escape(measurement.consensus_methods[index]) << "\"";
   }
-  output << "],\"flags\":[";
+  output << "],\"quality\":{\"brightness\":"
+         << measurement.quality.brightness
+         << ",\"brightness_std\":" << measurement.quality.brightness_std
+         << ",\"signal_std\":" << measurement.quality.signal_std
+         << ",\"spectral_peak_ratio\":"
+         << measurement.quality.spectral_peak_ratio
+         << ",\"face_area_ratio\":" << measurement.quality.face_area_ratio
+         << ",\"motion_px\":" << measurement.quality.motion_px
+         << ",\"source_fps\":" << measurement.quality.source_fps
+         << ",\"max_frame_gap_sec\":"
+         << measurement.quality.max_frame_gap_sec
+         << ",\"face_count\":" << measurement.quality.face_count
+         << "},\"flags\":[";
   for (std::size_t index = 0; index < measurement.gate.flags.size(); ++index) {
     if (index != 0U) output << ',';
     output << "\"" << json_escape(measurement.gate.flags[index]) << "\"";
@@ -220,6 +233,8 @@ std::string status_json(const CameraSessionStatus& status) {
          << ",\"measurement\":" << measurement_json(status.measurement)
          << ",\"traditional_waveform_revision\":"
          << status.traditional_waveform_revision
+         << ",\"traditional_waveform_window_end_sec\":"
+         << status.traditional_waveform_window_end_sec
          << ",\"deep_waveform_revision\":" << status.deep_waveform_revision
          << ",\"deep_frames_collected\":" << status.deep_frames_collected
          << ",\"deep_frames_required\":" << status.deep_frames_required
@@ -342,7 +357,8 @@ std::string camera_session_waveform_metadata_json(std::int64_t handle,
          << (waveform.is_valid ? "true" : "false")
          << ",\"invalid_reason\":\""
          << json_escape(waveform.invalid_reason) << "\",\"sample_count\":"
-         << waveform.values.size() << "}";
+         << waveform.values.size() << ",\"window_end_sec\":"
+         << waveform.window_end_sec << "}";
   return output.str();
 }
 

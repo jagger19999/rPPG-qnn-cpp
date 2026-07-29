@@ -89,6 +89,7 @@ struct CameraSessionStatus {
   bool measurement_available{false};
   MeasurementSnapshot measurement;
   std::uint64_t traditional_waveform_revision{0};
+  double traditional_waveform_window_end_sec{0.0};
   std::uint64_t deep_waveform_revision{0};
   std::size_t deep_frames_collected{0};
   std::size_t deep_frames_required{180};

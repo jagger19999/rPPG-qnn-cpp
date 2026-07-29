@@ -1,5 +1,6 @@
 package com.jagger.rppgbench.ui;
 
+import org.json.JSONArray;
 import org.json.JSONObject;
 import java.util.Locale;
 
@@ -14,6 +15,83 @@ public final class HrStatusFormatter {
     }
 
     private HrStatusFormatter() {}
+
+    public static String traditionalDiagnostic(JSONObject status) {
+        if (status == null || !status.optBoolean("measurement_available", false)) {
+            return "传统诊断: 等待首个 10 秒窗口";
+        }
+        JSONObject measurement = status.optJSONObject("measurement");
+        if (measurement == null) {
+            return "传统诊断: Snapshot 缺失";
+        }
+
+        long waveformRevision = status.optLong("traditional_waveform_revision", 0L);
+        double measurementEnd = measurement.optDouble("window_end_sec", Double.NaN);
+        double waveformEnd = status.optDouble(
+                "traditional_waveform_window_end_sec", Double.NaN);
+        boolean staleWaveform = waveformRevision > 0L
+                && Double.isFinite(measurementEnd) && Double.isFinite(waveformEnd)
+                && measurementEnd - waveformEnd > 0.5;
+        String waveform = waveformRevision <= 0L ? "无"
+                : (staleWaveform ? "历史" : "当前") + "(rev " + waveformRevision
+                        + " end " + decimal(waveformEnd, 1) + "s)";
+        boolean accepted = measurement.optBoolean("gate_accepted", false);
+        String gateReason = measurement.optString("gate_reason", "unknown");
+        String gate = accepted ? "接受" : "拒绝(" + gateReason + ")";
+        String display = measurement.optBoolean("display_is_held", false)
+                ? "保持旧值"
+                : measurement.optBoolean("display_available", false) ? "新结果" : "无结果";
+
+        StringBuilder output = new StringBuilder("传统诊断: 波形=")
+                .append(waveform).append(" · Gate=").append(gate)
+                .append(" · 显示=").append(display);
+        JSONObject quality = measurement.optJSONObject("quality");
+        if (quality != null) {
+            output.append('\n').append("质量: ROI FPS=")
+                    .append(decimal(quality.optDouble("source_fps", Double.NaN), 1))
+                    .append(" · gap=")
+                    .append(decimal(quality.optDouble("max_frame_gap_sec", Double.NaN), 3))
+                    .append("s · face=").append(quality.optInt("face_count", 0))
+                    .append(" · area=")
+                    .append(decimal(quality.optDouble("face_area_ratio", Double.NaN), 3))
+                    .append(" · motion=")
+                    .append(decimal(quality.optDouble("motion_px", Double.NaN), 1))
+                    .append("px · brightness=")
+                    .append(decimal(quality.optDouble("brightness", Double.NaN), 3))
+                    .append(" · signal_std=")
+                    .append(decimal(quality.optDouble("signal_std", Double.NaN), 4))
+                    .append(" · peak=")
+                    .append(decimal(quality.optDouble("spectral_peak_ratio", Double.NaN), 3));
+        }
+        JSONArray candidates = measurement.optJSONArray("candidates");
+        if (candidates != null && candidates.length() > 0) {
+            output.append('\n').append("候选: ");
+            for (int index = 0; index < candidates.length(); index++) {
+                if (index > 0) output.append(" · ");
+                JSONObject candidate = candidates.optJSONObject(index);
+                if (candidate == null) continue;
+                output.append(candidate.optString("method", "?"));
+                if (candidate.optBoolean("valid", false)) {
+                    output.append('=').append(decimal(
+                            candidate.optDouble("bpm", Double.NaN), 1))
+                            .append(" bpm(conf ")
+                            .append(decimal(candidate.optDouble(
+                                    "confidence", Double.NaN), 2)).append(')');
+                } else {
+                    output.append("=无效(")
+                            .append(nonEmpty(candidate.optString(
+                                    "invalid_reason", ""), "unknown"))
+                            .append(')');
+                }
+            }
+        }
+        return output.toString();
+    }
+
+    private static String decimal(double value, int decimals) {
+        return Double.isFinite(value)
+                ? String.format(Locale.US, "%." + decimals + "f", value) : "--";
+    }
 
     public static CardView traditional(JSONObject json) {
         if (json != null && json.optBoolean("measurement_available", false)) {

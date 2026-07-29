@@ -6,6 +6,38 @@ import static org.junit.Assert.*;
 
 public class HrStatusFormatterTest {
     @Test
+    public void traditionalDiagnosticExplainsWaveformWithoutAcceptedBpm() throws Exception {
+        JSONObject json = new JSONObject(
+                "{\"measurement_available\":true,\"traditional_waveform_revision\":8,"
+                        + "\"traditional_waveform_window_end_sec\":30.0,"
+                        + "\"measurement\":{\"window_end_sec\":31.5,"
+                        + "\"gate_accepted\":false,\"gate_reason\":\"low_fps\","
+                        + "\"display_available\":false,\"display_is_held\":false,"
+                        + "\"quality\":{\"source_fps\":12.4,\"max_frame_gap_sec\":0.18,"
+                        + "\"brightness\":0.48,\"signal_std\":0.012,"
+                        + "\"spectral_peak_ratio\":0.22,\"face_area_ratio\":0.16,"
+                        + "\"motion_px\":3.2,\"face_count\":1},"
+                        + "\"candidates\":[{\"method\":\"GREEN\",\"valid\":false,"
+                        + "\"invalid_reason\":\"low_source_fps\",\"bpm\":0,"
+                        + "\"confidence\":0,\"peak_ratio\":0}]}}");
+
+        String diagnostic = HrStatusFormatter.traditionalDiagnostic(json);
+
+        assertTrue(diagnostic.contains("波形=历史(rev 8"));
+        assertTrue(diagnostic.contains("Gate=拒绝(low_fps)"));
+        assertTrue(diagnostic.contains("ROI FPS=12.4"));
+        assertTrue(diagnostic.contains("GREEN=无效(low_source_fps)"));
+    }
+
+    @Test
+    public void traditionalDiagnosticExplainsWaitingForFirstWindow() throws Exception {
+        JSONObject json = new JSONObject(
+                "{\"measurement_available\":false,\"traditional_waveform_revision\":0}");
+
+        assertTrue(HrStatusFormatter.traditionalDiagnostic(json).contains("等待首个 10 秒窗口"));
+    }
+
+    @Test
     public void measurementSnapshotDistinguishesAcceptedAndHeldValues() throws Exception {
         JSONObject accepted = new JSONObject(
                 "{\"measurement_available\":true,\"measurement\":{" +

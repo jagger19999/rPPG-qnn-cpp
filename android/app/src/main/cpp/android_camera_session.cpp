@@ -53,6 +53,44 @@ constexpr char kLogTag[] = "rPPGCamera2";
 constexpr int kMaxImages = 3;
 constexpr std::size_t kFpsWindow = 120U;
 
+void log_traditional_window(const MeasurementSnapshot& snapshot) {
+  std::ostringstream message;
+  message << std::fixed << std::setprecision(3)
+          << "event=traditional_window"
+          << " window_end_sec=" << snapshot.window_end_sec
+          << " gate=" << (snapshot.gate.accepted ? "accepted" : "rejected")
+          << " reason=" << snapshot.gate.reason
+          << " measured=" << (snapshot.measured_available ? "true" : "false")
+          << " accepted=" << (snapshot.accepted_available ? "true" : "false")
+          << " display=" << (snapshot.display_available ? "true" : "false")
+          << " held=" << (snapshot.display_is_held ? "true" : "false")
+          << " source_fps=" << snapshot.quality.source_fps
+          << " max_gap_sec=" << snapshot.quality.max_frame_gap_sec
+          << " face_count=" << snapshot.quality.face_count
+          << " face_area=" << snapshot.quality.face_area_ratio
+          << " motion_px=" << snapshot.quality.motion_px
+          << " brightness=" << snapshot.quality.brightness
+          << " signal_std=" << snapshot.quality.signal_std
+          << " peak_ratio=" << snapshot.quality.spectral_peak_ratio
+          << " candidates=";
+  for (std::size_t index = 0; index < snapshot.candidates.size(); ++index) {
+    if (index != 0U) message << '|';
+    const CandidateResult& candidate = snapshot.candidates[index];
+    message << candidate.method << ':'
+            << (candidate.valid ? "valid" : "invalid") << ':';
+    if (candidate.valid) {
+      message << candidate.bpm << ":conf=" << candidate.confidence
+              << ":peak=" << candidate.peak_ratio;
+    } else {
+      message << (candidate.invalid_reason.empty() ? "unknown"
+                                                    : candidate.invalid_reason);
+    }
+  }
+  __android_log_print(snapshot.gate.accepted ? ANDROID_LOG_INFO
+                                             : ANDROID_LOG_WARN,
+                      kLogTag, "%s", message.str().c_str());
+}
+
 void require_camera_ok(camera_status_t result, ErrorCode code,
                        const char* operation) {
   if (result != ACAMERA_OK) {
@@ -560,7 +598,7 @@ struct AndroidCameraSession::Impl {
             const double sample_rate = waveform_sample_rate_hz(result);
             WaveformSnapshot waveform = make_waveform_snapshot(
                 result.waveform, result.method, sample_rate, result.is_valid,
-                result.invalid_reason);
+                result.invalid_reason, result.window_end_sec);
             if (result.method == "TSCAN" ||
                 result.method == "EFFICIENTPHYS" || result.method == "DEEP") {
               snapshot.deep_result_available = true;
@@ -596,10 +634,13 @@ struct AndroidCameraSession::Impl {
                 traditional_waveform_ = std::move(waveform);
                 snapshot.traditional_waveform_revision =
                     traditional_waveform_revision_;
+                snapshot.traditional_waveform_window_end_sec =
+                    traditional_waveform_.window_end_sec;
               }
             }
           },
           [this](const MeasurementSnapshot& result) {
+            log_traditional_window(result);
             std::lock_guard<std::mutex> lock(status_mutex);
             snapshot.measurement_available = true;
             snapshot.measurement = result;
@@ -943,6 +984,7 @@ struct AndroidCameraSession::Impl {
       traditional_waveform_ = {};
       deep_waveform_ = {};
       snapshot.traditional_waveform_revision = 0;
+      snapshot.traditional_waveform_window_end_sec = 0.0;
       snapshot.deep_waveform_revision = 0;
       snapshot.deep_frames_collected = 0;
       traditional_waveform_revision_ = 0;

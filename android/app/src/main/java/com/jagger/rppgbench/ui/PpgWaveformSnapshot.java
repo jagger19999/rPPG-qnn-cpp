@@ -6,12 +6,13 @@ public final class PpgWaveformSnapshot {
     public final double sampleRateHz;
     public final boolean valid;
     public final String invalidReason;
+    public final double windowEndSec;
     private final float[] values;
 
     public PpgWaveformSnapshot(long revision, String method, double sampleRateHz,
-            boolean valid, String invalidReason, float[] values) {
+            boolean valid, String invalidReason, double windowEndSec, float[] values) {
         if (revision < 0 || !Double.isFinite(sampleRateHz) || sampleRateHz <= 0
-                || values == null || values.length < 2) {
+                || !Double.isFinite(windowEndSec) || values == null || values.length < 2) {
             throw new IllegalArgumentException("invalid waveform metadata");
         }
         for (float value : values) {
@@ -24,6 +25,7 @@ public final class PpgWaveformSnapshot {
         this.sampleRateHz = sampleRateHz;
         this.valid = valid;
         this.invalidReason = invalidReason == null ? "" : invalidReason;
+        this.windowEndSec = windowEndSec;
         this.values = values.clone();
     }
 
